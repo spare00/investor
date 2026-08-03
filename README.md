@@ -230,7 +230,7 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 | 4 | Full risk / emergency stop | **Complete** |
 | 5 | Premarket / Intraday / Postmarket workflows | **Complete** |
 | 6 | Paper trading execution | **Complete** |
-| 7 | Dashboard \& metrics | **Complete** |
+| 7 | Dashboard and metrics | **Complete** |
 
 ---
 
