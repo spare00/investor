@@ -125,7 +125,9 @@ async def test_full_flow_with_fake_analysis(session: AsyncSession) -> None:
     reval = await svc.revalidate(session_date="2026-08-03", now=now)
     assert reval["revalidation"]["result"] == "VALID"
     assert reval["current_state"] == DailyWorkflowState.INTRADAY.value
-    intra = await svc.evaluate_intraday(session_date="2026-08-03", trigger="interval", now=now)
+    intra = await svc.evaluate_intraday(
+        session_date="2026-08-03", trigger="interval", now=now, fake_llm=True
+    )
     assert intra["intraday"]["broker_orders"] is False
     closing = await svc.start_closing(
         session_date="2026-08-03", positions=[{"symbol": "SPY", "quantity": 1}]
@@ -249,6 +251,48 @@ async def test_closing_policy_no_broker() -> None:
 async def test_scheduler_disabled_by_default() -> None:
     assert _scheduler_enabled(get_settings()) is False
     assert start_scheduler(get_settings()) is None
+
+
+def test_coalesce_keeps_latest_intraday_only() -> None:
+    from app.core.scheduler import _coalesce_due_jobs
+
+    class Job:
+        def __init__(self, key: str, planned: datetime) -> None:
+            self.job_key = key
+            self.planned_at = planned
+            self.status = "planned"
+            self.error = None
+            self.completed_at = None
+
+    t0 = datetime(2026, 8, 3, 14, 0, tzinfo=UTC)
+    jobs = [
+        Job("premarket_analysis", t0),
+        Job("intraday_eval_0", t0 + timedelta(minutes=20)),
+        Job("intraday_eval_1", t0 + timedelta(minutes=40)),
+        Job("intraday_eval_2", t0 + timedelta(minutes=60)),
+        Job("closing_window", t0 + timedelta(hours=6)),
+    ]
+    out = _coalesce_due_jobs(jobs)
+    assert [j.job_key for j in out] == [
+        "premarket_analysis",
+        "intraday_eval_2",
+        "closing_window",
+    ]
+    assert jobs[1].status == "skipped"
+    assert jobs[2].status == "skipped"
+    assert jobs[3].status == "planned"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_bootstrap_prepares_sessions(session: AsyncSession) -> None:
+    from app.core.scheduler import _ensure_sessions_prepared
+
+    svc = DailyWorkflowService(session, settings=get_settings())
+    prepared = await _ensure_sessions_prepared(svc, get_settings())
+    assert len(prepared) == 2
+    # Idempotent
+    again = await _ensure_sessions_prepared(svc, get_settings())
+    assert again == prepared
 
 
 @pytest.mark.asyncio

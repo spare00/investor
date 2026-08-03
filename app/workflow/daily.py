@@ -356,6 +356,7 @@ class DailyWorkflowService:
         session_date: str | None = None,
         trigger: str = "interval",
         now: datetime | None = None,
+        fake_llm: bool = False,
     ) -> dict[str, Any]:
         self._broker_guard()
         now = now or datetime.now(UTC)
@@ -370,6 +371,7 @@ class DailyWorkflowService:
         status = self.calendar.get_market_status(now)
         result = IntradayEvalResult.NO_CHANGE
         reason = "ok"
+        agent_result: dict[str, Any] | None = None
         meta = dict(run.metadata_json or {})
         last = meta.get("last_intraday_eval_at")
         if last:
@@ -395,10 +397,35 @@ class DailyWorkflowService:
         elif trigger in {"volatility", "news_high_importance", "risk_change"}:
             result = IntradayEvalResult.REANALYZE
             reason = f"event:{trigger}"
-            run.intraday_reanalysis_count = int(run.intraday_reanalysis_count) + 1
         elif trigger == "stale_data":
             result = IntradayEvalResult.RISK_REVIEW_REQUIRED
             reason = "stale_data"
+        elif trigger == "interval" and self.settings.enable_intraday_agent_reanalysis:
+            # Unattended paper path: interval jobs drive CIO reanalysis (cooldown inside agents).
+            result = IntradayEvalResult.REANALYZE
+            reason = "interval_agent_reeval"
+
+        if result == IntradayEvalResult.REANALYZE and self.settings.enable_intraday_agent_reanalysis:
+            from app.intraday.agents import IntradayAgentService
+
+            agent_result = await IntradayAgentService(
+                self.session, settings=self.settings, controls=self.controls
+            ).evaluate(
+                fake_llm=fake_llm,
+                parent_decision_id=run.latest_decision_id,
+                bypass_cooldown=trigger != "interval",
+            )
+            if agent_result.get("skipped"):
+                result = IntradayEvalResult.NO_CHANGE
+                reason = str(agent_result.get("reason") or "agent_skipped")
+            else:
+                run.intraday_reanalysis_count = int(run.intraday_reanalysis_count) + 1
+                meta["last_intraday_agent"] = {
+                    "portfolio_action": agent_result.get("portfolio_action"),
+                    "intent_count": agent_result.get("intent_count", 0),
+                    "broker_orders_submitted": bool(agent_result.get("broker_orders_submitted")),
+                    "mode": agent_result.get("mode"),
+                }
 
         meta["last_intraday_eval_at"] = now.isoformat()
         meta["last_intraday_result"] = result.value
@@ -410,7 +437,12 @@ class DailyWorkflowService:
         await self.session.flush()
         return {
             **self._run_dict(run),
-            "intraday": {"result": result.value, "reason": reason, "broker_orders": False},
+            "intraday": {
+                "result": result.value,
+                "reason": reason,
+                "broker_orders": bool((agent_result or {}).get("broker_orders_submitted")),
+                "agent": agent_result,
+            },
         }
 
     async def start_closing(

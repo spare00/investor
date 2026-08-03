@@ -1,4 +1,4 @@
-"""APScheduler wiring — dispatches to DailyWorkflowService only (no LLM/broker)."""
+"""APScheduler wiring — session bootstrap + DailyWorkflowService dispatch (no direct LLM/broker)."""
 
 from __future__ import annotations
 
@@ -44,8 +44,45 @@ def _scheduler_enabled(cfg: Settings) -> bool:
     return bool(cfg.enable_scheduler)
 
 
+def _coalesce_due_jobs(due: list[Any]) -> list[Any]:
+    """Keep only the latest overdue intraday_eval_* job; mark older ones skipped."""
+    other = [j for j in due if not str(j.job_key).startswith("intraday_eval")]
+    intra = [j for j in due if str(j.job_key).startswith("intraday_eval")]
+    if len(intra) <= 1:
+        return due
+    keep = max(intra, key=lambda j: j.planned_at)
+    for job in intra:
+        if job is keep:
+            continue
+        job.status = "skipped"
+        job.error = "coalesced_stale_intraday"
+        job.completed_at = datetime.now(UTC)
+    out = other + [keep]
+    out.sort(key=lambda j: j.planned_at)
+    return out
+
+
+async def _ensure_sessions_prepared(svc: Any, settings: Settings) -> list[str]:
+    """Idempotently prepare today + next trading day so planned jobs exist unattended."""
+    from app.market.calendar import MarketCalendarService
+
+    cal = MarketCalendarService(settings)
+    today = datetime.now(UTC).astimezone(cal.market_tz).date()
+    targets = sorted({today, cal.get_next_trading_day(today)})
+    prepared: list[str] = []
+    for day in targets:
+        result = await svc.prepare(session_date=day.isoformat())
+        prepared.append(day.isoformat())
+        logger.info(
+            "scheduler_session_prepared",
+            session_date=day.isoformat(),
+            note=result.get("note") or result.get("current_state"),
+        )
+    return prepared
+
+
 async def _dispatch_due_jobs() -> None:
-    """Poll due scheduled_jobs and invoke DailyWorkflowService methods."""
+    """Bootstrap session plans, then poll due scheduled_jobs and run DailyWorkflowService."""
     from app.core.database import get_session_factory
     from app.models import ScheduledJobRecord
     from app.workflow.daily import DailyWorkflowError, DailyWorkflowService
@@ -67,6 +104,17 @@ async def _dispatch_due_jobs() -> None:
             return
         try:
             svc = DailyWorkflowService(session, settings=settings, owner="scheduler")
+            try:
+                await _ensure_sessions_prepared(svc, settings)
+                await session.commit()
+            except DailyWorkflowError as exc:
+                logger.warning("scheduler_prepare_skipped", error=str(exc))
+                await session.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception("scheduler_prepare_failed")
+                await session.rollback()
+                return
+
             candidates = list(
                 (
                     await session.execute(
@@ -85,8 +133,10 @@ async def _dispatch_due_jobs() -> None:
                     planned = planned.replace(tzinfo=UTC)
                 return planned <= now
 
-            due = [j for j in candidates if _due(j.planned_at)][:20]
+            due = _coalesce_due_jobs([j for j in candidates if _due(j.planned_at)][:20])
             for job in due:
+                if job.status != "planned":
+                    continue
                 job_lease = f"job:{job.session_date}:{job.job_key}"
                 try:
                     await leases.acquire(job_lease, "scheduler")
@@ -143,7 +193,7 @@ async def _run_job_action(svc: Any, job_key: str, session_date: str) -> None:
     elif job_key == "preopen_revalidation":
         await svc.revalidate(session_date=session_date, fake_llm=fake)
     elif job_key.startswith("intraday_eval"):
-        await svc.evaluate_intraday(session_date=session_date, trigger="interval")
+        await svc.evaluate_intraday(session_date=session_date, trigger="interval", fake_llm=fake)
     elif job_key == "closing_window":
         await svc.start_closing(session_date=session_date)
     elif job_key == "postmarket_review":
