@@ -9,8 +9,9 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.brokers.alpaca import BrokerError, get_broker
+from app.brokers.alpaca import get_broker
 from app.brokers.base import BrokerClient, OrderRequest, OrderSide, OrderStatus
+from app.brokers.errors import BrokerError
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.execution.safety_controls import TradingControls, trading_controls
@@ -63,6 +64,33 @@ class OrderManager:
                 level="error",
                 event_type="order_submit_blocked_controls",
                 message=f"Trading controls: {snap.state.value}",
+                workflow_id=workflow_id,
+            )
+            return []
+
+        if not self.settings.enable_broker_orders:
+            await self.events.record(
+                level="warning",
+                event_type="order_submit_blocked_flag",
+                message="ENABLE_BROKER_ORDERS=false",
+                workflow_id=workflow_id,
+            )
+            return []
+
+        if self.settings.require_manual_order_approval and not self.settings.enable_automated_execution:
+            await self.events.record(
+                level="warning",
+                event_type="order_submit_blocked_manual_approval",
+                message="Use ExecutionService approve+submit path",
+                workflow_id=workflow_id,
+            )
+            return []
+
+        if self.settings.enable_live_trading or self.settings.broker_environment.lower() == "live":
+            await self.events.record(
+                level="error",
+                event_type="order_submit_blocked_live",
+                message="live_trading_blocked_phase5",
                 workflow_id=workflow_id,
             )
             return []

@@ -224,10 +224,30 @@ class WorkflowService:
         )
 
         orders: list[Order] = []
-        if (
+        # Phase 5: persist Order Intents; submit only when fully unlocked for automation.
+        try:
+            from app.execution.service import ExecutionService
+
+            intents = await ExecutionService(self.session, settings=self.settings).build_intents_from_decision(
+                analysis.cio,
+                portfolio=self._portfolio_risk_view(port),
+                latest_prices=prices,
+                data_quality_score=collection.aggregate_quality,
+                workflow_id=wf,
+            )
+            if intents:
+                notes.append(f"order_intents_created={len(intents)}")
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"intent_build_failed:{exc}")
+            logger.exception("workflow_intent_build_failed", workflow_id=str(wf))
+
+        auto_submit = (
             validation.approved
             and validation.intents
             and self.settings.enable_broker_orders
+            and self.settings.enable_automated_execution
+            and not self.settings.require_manual_order_approval
+            and not self.settings.enable_live_trading
             and (
                 self.settings.trading_mode.value == "paper"
                 or (
@@ -235,7 +255,8 @@ class WorkflowService:
                     and self.settings.is_live_trading_allowed()
                 )
             )
-        ):
+        )
+        if auto_submit:
             try:
                 orders = await OrderManager(
                     self.session, settings=self.settings
@@ -257,6 +278,9 @@ class WorkflowService:
         elif validation.approved and validation.intents and not self.settings.enable_broker_orders:
             notes.append("orders_skipped_enable_broker_orders_false")
             ORDERS_BLOCKED.labels(reason="broker_orders_disabled").inc()
+        elif validation.approved and validation.intents and self.settings.require_manual_order_approval:
+            notes.append("orders_pending_manual_approval")
+            ORDERS_BLOCKED.labels(reason="manual_approval_required").inc()
         elif validation.approved and validation.intents:
             notes.append("submit_skipped_mode")
         elif validation.rejections:

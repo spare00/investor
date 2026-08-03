@@ -32,7 +32,7 @@ Agent Analysis Layer          (MI → Macro∥Quant → Risk → Devil → CIO)
         ↓
 Decision & Risk Layer         (Hard Veto + Execution Validator)
         ↓
-Execution Layer               (Paper broker adapter — Phase 6)
+Execution Layer               (Mock / Alpaca Paper — Phase 5)
         ↓
 Monitoring & Post-Trade Review
 ```
@@ -99,7 +99,7 @@ Collectors (stubs) → Normalized DTOs → PostgreSQL
                               ↓
                      Risk Engine (deterministic)
                               ↓
-                     (Execution deferred — Phase 6)
+                     (Execution — Phase 5 Mock / Alpaca Paper; orders off by default)
 ```
 
 Phase 1 delivers schemas, config, logging, DB session factory, and Risk Engine
@@ -251,9 +251,9 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 
 ## Assumptions
 
-1. **Paper first:** Phases 1–5 built the stack; Phase 6 submits Alpaca paper orders after ExecutionValidator approval.
+1. **Paper first:** Phase 5 adds Mock + Alpaca Paper adapters; orders stay off by default and require manual approval.
 2. **LLM optional in unit tests:** Risk Engine and schema tests run without API keys.
-3. **Stub news/market providers** used until Phase 2 adapters are wired.
+3. **Stub/fixture providers** used until external data flags are enabled.
 4. **Sector map** for concentration checks uses a static ETF/stock sector table
    (configurable later).
 5. **ATR-based sizing** uses caller-supplied ATR/stop distance; collectors will
@@ -278,21 +278,21 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 |-------|--------|--------|
 | 2 | Prompt system + agent framework hardening | Complete — `docs/phase2_report.md` |
 | 3 | Calendar, DST, daily workflow SM, leases | Complete — `docs/phase3_report.md` |
-| 4 | Data collection & normalization layer | **This release** — `docs/phase4_report.md` |
-| 5 | Broker execution hardening | Partially present (Alpaca paper) |
-| 6 | Intraday cadence, review, dashboard | Partially present |
-| 7 | Simulation, security, ops readiness | Planned |
+| 4 | Data collection & normalization layer | Complete — `docs/phase4_report.md` |
+| 5 | Broker & paper execution layer | **This release** — `docs/phase5_report.md` |
+| 6 | Intraday cadence, position monitor | Planned |
+| 7 | Performance, ops hardening | Planned |
 
-Docs: `docs/phase3_audit.md`, `docs/data_architecture.md`, `docs/provider_adapters.md`,
-`docs/phase4_report.md`.
+Docs: `docs/broker_architecture.md`, `docs/phase4_audit.md`, `docs/phase5_report.md`.
 
 ```bash
 python -m app.cli collect premarket --fixture
-python -m app.cli providers list
+python -m app.cli broker status
+python -m app.cli execution intents list
 python -m app.cli workflow run-analysis --real-data --fake-llm --no-broker
 ```
 
-Defaults: `ENABLE_EXTERNAL_DATA=false`, `ENABLE_BROKER_ORDERS=false`.
+Defaults: `BROKER_PROVIDER=mock`, `ENABLE_BROKER_ORDERS=false`, `REQUIRE_MANUAL_ORDER_APPROVAL=true`, `ENABLE_LIVE_TRADING=false`.
 ---
 
 ## License

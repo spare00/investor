@@ -6,6 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from app.core.config import get_settings
+from app.execution.ops_persistence import persist_trading_controls
 from app.execution.safety_controls import trading_controls
 
 router = APIRouter(prefix="/trading", tags=["trading"])
@@ -46,28 +48,35 @@ async def resume_trading(reason: str = "manual_resume") -> dict[str, Any]:
 
 @router.post("/emergency-stop")
 async def emergency_stop(reason: str = "emergency_stop") -> dict[str, Any]:
-    """Block all new orders and cancel open broker orders when possible."""
+    """Block new orders; cancel open orders by default; never auto-close positions unless configured."""
     from app.core.database import get_session_factory
-    from app.execution.order_manager import OrderManager
+    from app.brokers.factory import get_broker
 
+    settings = get_settings()
     snap = trading_controls.emergency_stop(reason=reason)
     canceled = 0
+    closed_positions = 0
     error = None
     try:
         factory = get_session_factory()
         async with factory() as session:
-            om = OrderManager(session)
-            # controls already emergency-stopped; cancel via broker directly
-            canceled = await om.broker.cancel_all_orders()  # type: ignore[attr-defined]
+            await persist_trading_controls(session, trading_controls, changed_by="api")
+            broker = get_broker(settings)
+            if settings.emergency_stop_cancel_open_orders and hasattr(broker, "cancel_all_orders"):
+                canceled = await broker.cancel_all_orders()
+            if settings.emergency_stop_close_positions and hasattr(broker, "close_all_positions"):
+                closed_positions = await broker.close_all_positions()
             await session.commit()
     except Exception as exc:  # noqa: BLE001
-        error = str(exc)
+        error = str(exc)[:300]
     return {
         "state": snap.state.value,
         "reason": snap.reason,
         "changed_at": snap.changed_at.isoformat(),
-        "canceled_open_orders": True,
+        "canceled_open_orders": settings.emergency_stop_cancel_open_orders,
         "canceled_count": canceled,
+        "closed_positions": closed_positions,
+        "close_positions_enabled": settings.emergency_stop_close_positions,
         "error": error,
         "action": "cancel_open_orders_and_block_new",
     }
@@ -76,7 +85,16 @@ async def emergency_stop(reason: str = "emergency_stop") -> dict[str, Any]:
 @router.post("/clear-emergency")
 async def clear_emergency(reason: str = "emergency_cleared") -> dict[str, Any]:
     """Move emergency → paused. Requires a subsequent /resume to trade again."""
+    from app.core.database import get_session_factory
+
     snap = trading_controls.clear_emergency(reason=reason)
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await persist_trading_controls(session, trading_controls, changed_by="api")
+            await session.commit()
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "state": snap.state.value,
         "reason": snap.reason,

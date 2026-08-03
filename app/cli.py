@@ -146,6 +146,132 @@ async def _build_context(kind: str) -> dict:
         return data.contexts.get(kind.replace("-", "_"), data.contexts)
 
 
+async def _broker_cmd(action: str) -> dict:
+    from app.brokers.factory import get_broker
+
+    settings = get_settings()
+    broker = get_broker(settings)
+    if action == "status":
+        health = await broker.health_check() if hasattr(broker, "health_check") else None
+        return {
+            "provider": settings.broker_provider,
+            "environment": settings.broker_environment,
+            "enable_broker_connection": settings.enable_broker_connection,
+            "enable_broker_orders": settings.enable_broker_orders,
+            "health": None if health is None else health.model_dump(mode="json"),
+        }
+    if action == "account":
+        if hasattr(broker, "get_account_canonical"):
+            return (await broker.get_account_canonical()).model_dump(mode="json")
+        return dict(await broker.get_account())
+    if action == "positions":
+        if hasattr(broker, "get_positions_canonical"):
+            return {"positions": [p.model_dump(mode="json") for p in await broker.get_positions_canonical()]}
+        return {"positions": await broker.get_positions()}
+    if action == "orders":
+        orders = await broker.get_open_orders() if hasattr(broker, "get_open_orders") else []
+        return {
+            "orders": [
+                {
+                    "broker_order_id": o.broker_order_id,
+                    "status": o.status.value,
+                    "filled_qty": o.filled_qty,
+                }
+                for o in orders
+            ]
+        }
+    raise SystemExit(f"unknown broker action: {action}")
+
+
+async def _execution_cmd(action: str, **kwargs: object) -> dict:
+    from uuid import UUID
+
+    from app.execution.reconciliation import ReconciliationService
+    from app.execution.service import ExecutionService
+    from app.risk import PortfolioRiskView
+    from app.schemas.cio import CIODecision
+
+    factory = get_session_factory()
+    async with factory() as session:
+        svc = ExecutionService(session)
+        if action == "intents_list":
+            rows = await svc.list_intents()
+            result = {
+                "intents": [
+                    {
+                        "intent_id": str(i.id),
+                        "symbol": i.symbol,
+                        "status": i.status,
+                        "side": i.side,
+                        "quantity": i.quantity,
+                    }
+                    for i in rows
+                ]
+            }
+        elif action == "build_intents":
+            decision_id = UUID(str(kwargs["decision_id"]))
+            from sqlalchemy import select
+
+            from app.models import CIODecisionRecord
+
+            row = (
+                await session.execute(
+                    select(CIODecisionRecord).where(CIODecisionRecord.decision_id == decision_id)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = await session.get(CIODecisionRecord, decision_id)
+            if row is None:
+                raise SystemExit("decision_not_found")
+            decision = CIODecision.model_validate(row.payload)
+            settings = get_settings()
+            portfolio = PortfolioRiskView(
+                equity=settings.starting_cash,
+                cash=settings.starting_cash,
+                cash_pct=100.0,
+                gross_exposure_pct=0.0,
+            )
+            intents = await svc.build_intents_from_decision(
+                decision, portfolio=portfolio, latest_prices={}
+            )
+            result = {"intents": [str(i.id) for i in intents]}
+        elif action == "validate":
+            result = (
+                await svc.validate_intent(
+                    UUID(str(kwargs["intent_id"])),
+                    equity=get_settings().starting_cash,
+                    cash=get_settings().starting_cash,
+                    buying_power=get_settings().starting_cash,
+                    gross_exposure=0.0,
+                    position_qty=0.0,
+                )
+            ).to_dict()
+        elif action == "approve":
+            intent = await svc.approve_intent(UUID(str(kwargs["intent_id"])))
+            result = {"intent_id": str(intent.id), "status": intent.status}
+        elif action == "reject":
+            intent = await svc.reject_intent(UUID(str(kwargs["intent_id"])), reason=str(kwargs.get("reason") or ""))
+            result = {"intent_id": str(intent.id), "status": intent.status}
+        elif action == "submit":
+            order = await svc.submit_intent(UUID(str(kwargs["intent_id"])))
+            result = {
+                "submitted": order is not None,
+                "order_id": None if order is None else str(order.id),
+                "status": None if order is None else order.status,
+            }
+        elif action == "reconcile":
+            result = await ReconciliationService(session).run("ON_DEMAND")
+        elif action == "cancel_all":
+            from app.brokers.factory import get_broker
+
+            n = await get_broker(get_settings()).cancel_all_orders()  # type: ignore[attr-defined]
+            result = {"canceled": n}
+        else:
+            raise SystemExit(f"unknown execution action: {action}")
+        await session.commit()
+        return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -204,6 +330,30 @@ def main(argv: list[str] | None = None) -> int:
     ra.add_argument("--fake-llm", action="store_true")
     ra.add_argument("--no-broker", action="store_true", default=True)
 
+    broker = sub.add_parser("broker")
+    bsub = broker.add_subparsers(dest="broker_cmd", required=True)
+    for name in ("status", "account", "positions", "orders"):
+        bsub.add_parser(name)
+
+    execution = sub.add_parser("execution")
+    esub = execution.add_subparsers(dest="execution_cmd", required=True)
+    intents = esub.add_parser("intents")
+    intents_sub = intents.add_subparsers(dest="intents_cmd", required=True)
+    intents_sub.add_parser("list")
+    build = esub.add_parser("build-intents")
+    build.add_argument("--decision-id", required=True)
+    validate = esub.add_parser("validate")
+    validate.add_argument("--intent-id", required=True)
+    approve = esub.add_parser("approve")
+    approve.add_argument("--intent-id", required=True)
+    reject = esub.add_parser("reject")
+    reject.add_argument("--intent-id", required=True)
+    reject.add_argument("--reason", default="")
+    submit = esub.add_parser("submit")
+    submit.add_argument("--intent-id", required=True)
+    esub.add_parser("reconcile")
+    esub.add_parser("cancel-all")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "run-analysis":
@@ -258,6 +408,27 @@ def main(argv: list[str] | None = None) -> int:
         result = {"conflicts": raw.get("provider_metas")}  # lightweight; full conflicts in API cache
     elif args.cmd == "build-context":
         result = asyncio.run(_build_context(args.context_kind))
+    elif args.cmd == "broker":
+        result = asyncio.run(_broker_cmd(args.broker_cmd))
+    elif args.cmd == "execution":
+        if args.execution_cmd == "intents" and args.intents_cmd == "list":
+            result = asyncio.run(_execution_cmd("intents_list"))
+        elif args.execution_cmd == "build-intents":
+            result = asyncio.run(_execution_cmd("build_intents", decision_id=args.decision_id))
+        elif args.execution_cmd == "validate":
+            result = asyncio.run(_execution_cmd("validate", intent_id=args.intent_id))
+        elif args.execution_cmd == "approve":
+            result = asyncio.run(_execution_cmd("approve", intent_id=args.intent_id))
+        elif args.execution_cmd == "reject":
+            result = asyncio.run(_execution_cmd("reject", intent_id=args.intent_id, reason=args.reason))
+        elif args.execution_cmd == "submit":
+            result = asyncio.run(_execution_cmd("submit", intent_id=args.intent_id))
+        elif args.execution_cmd == "reconcile":
+            result = asyncio.run(_execution_cmd("reconcile"))
+        elif args.execution_cmd == "cancel-all":
+            result = asyncio.run(_execution_cmd("cancel_all"))
+        else:
+            return 1
     else:
         return 1
 

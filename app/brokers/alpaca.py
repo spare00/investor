@@ -8,15 +8,12 @@ from typing import Any
 import httpx
 
 from app.brokers.base import BrokerClient, OrderRequest, OrderResult, OrderSide, OrderStatus
+from app.brokers.errors import BrokerError
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.core.security import require_execution_allowed
 
 logger = get_logger(__name__)
-
-
-class BrokerError(Exception):
-    """Broker API failure — callers must fail closed."""
 
 
 def _map_status(raw: str | None) -> OrderStatus:
@@ -54,18 +51,25 @@ class AlpacaBroker:
             "Content-Type": "application/json",
         }
         self.base_url = self.settings.alpaca_base_url.rstrip("/")
+        self._ensure_paper_mode()
 
     def _ensure_paper_mode(self) -> None:
-        mode = require_execution_allowed(self.settings)
-        if mode.value == "live" and self.settings.is_live_trading_allowed():
-            # Dual-gate passed — still warn; paper URL preferred.
-            if "paper-api" not in self.base_url:
-                logger.warning("alpaca_live_url_in_use", base_url=self.base_url)
-            return
-        if "paper-api" not in self.base_url and mode.value != "live":
+        """Refuse live endpoints and live trading flags in Phase 5."""
+        if self.settings.enable_live_trading:
+            raise BrokerError("enable_live_trading_must_be_false")
+        if self.settings.broker_environment.lower() != "paper":
+            raise BrokerError("broker_environment_must_be_paper")
+        paper_hint = self.settings.alpaca_paper_base_url.rstrip("/")
+        if "paper-api" not in self.base_url:
             raise BrokerError(
-                f"Refusing non-paper Alpaca URL in mode={mode.value}: {self.base_url}"
+                f"Refusing non-paper Alpaca URL: {self.base_url} (expected paper endpoint)"
             )
+        # Prefer configured paper base URL
+        if self.base_url != paper_hint and "paper-api" not in self.base_url:
+            raise BrokerError("alpaca_base_url_not_paper")
+        mode = require_execution_allowed(self.settings)
+        if mode.value == "live":
+            raise BrokerError("live_execution_mode_blocked")
 
     async def _http(self) -> httpx.AsyncClient:
         if self._client is not None:
@@ -81,13 +85,16 @@ class AlpacaBroker:
         try:
             response = await client.request(method, path, json=json)
             if response.status_code >= 400:
+                body = _redact_secrets(response.text[:500], self.settings)
                 logger.error(
                     "alpaca_http_error",
                     status=response.status_code,
                     path=path,
-                    body=response.text[:500],
+                    body=body,
                 )
-                raise BrokerError(f"Alpaca HTTP {response.status_code}: {response.text[:200]}")
+                raise BrokerError(
+                    f"Alpaca HTTP {response.status_code}: {_redact_secrets(response.text[:200], self.settings)}"
+                )
             if response.status_code == 204 or not response.content:
                 return {}
             return response.json()
@@ -193,111 +200,253 @@ class AlpacaBroker:
     async def get_account(self) -> dict[str, object]:
         data = await self._request("GET", "/v2/account")
         assert isinstance(data, dict)
+        # Never return raw account id to upper layers via this helper's callers —
+        # prefer get_account_canonical for API surfaces.
         return dict(data)
 
+    async def get_clock(self) -> Any:
+        from app.brokers.models import BrokerClock
 
-class SimulatedBroker:
-    """In-memory paper broker for unit tests (no network)."""
-
-    def __init__(self) -> None:
-        self.orders: dict[str, OrderResult] = {}
-        self.positions: dict[str, dict[str, object]] = {}
-        self.account: dict[str, object] = {
-            "equity": "25000",
-            "cash": "25000",
-            "buying_power": "25000",
-            "status": "ACTIVE",
-        }
-        self._seq = 0
-        self.fail_next = False
-
-    async def submit_order(self, request: OrderRequest) -> OrderResult:
-        if self.fail_next:
-            self.fail_next = False
-            raise BrokerError("simulated broker failure")
-        self._seq += 1
-        oid = f"sim-{self._seq}"
-        # Idempotency
-        if request.idempotency_key:
-            for existing in self.orders.values():
-                raw = existing.raw or {}
-                if raw.get("client_order_id") == request.idempotency_key:
-                    return existing
-        fill_price = request.limit_price or 100.0
-        result = OrderResult(
-            broker_order_id=oid,
-            status=OrderStatus.FILLED,
-            submitted_at=datetime.now(UTC),
-            filled_qty=request.qty,
-            avg_fill_price=fill_price,
-            raw={"client_order_id": request.idempotency_key, "symbol": request.symbol},
-        )
-        self.orders[oid] = result
-        sym = request.symbol.upper()
-        pos = self.positions.get(sym, {"symbol": sym, "qty": "0", "avg_entry_price": "0"})
-        qty = float(pos["qty"])  # type: ignore[arg-type]
-        if request.side == OrderSide.BUY:
-            qty += request.qty
+        data = await self._request("GET", "/v2/clock")
+        assert isinstance(data, dict)
+        ts = data.get("timestamp")
+        if isinstance(ts, str):
+            timestamp = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         else:
-            qty -= request.qty
-        pos["qty"] = str(qty)
-        pos["avg_entry_price"] = str(fill_price)
-        pos["market_value"] = str(qty * fill_price)
-        pos["unrealized_pl"] = "0"
-        if qty == 0:
-            self.positions.pop(sym, None)
-        else:
-            self.positions[sym] = pos
-        cash = float(str(self.account["cash"]))
-        delta = request.qty * fill_price
-        self.account["cash"] = str(cash - delta if request.side == OrderSide.BUY else cash + delta)
-        return result
-
-    async def cancel_order(self, broker_order_id: str) -> OrderResult:
-        order = self.orders.get(broker_order_id)
-        if order is None:
-            raise BrokerError("order not found")
-        canceled = OrderResult(
-            broker_order_id=broker_order_id,
-            status=OrderStatus.CANCELED,
-            submitted_at=order.submitted_at,
-            filled_qty=order.filled_qty,
-            avg_fill_price=order.avg_fill_price,
-            raw=order.raw,
+            timestamp = datetime.now(UTC)
+        return BrokerClock(
+            is_open=bool(data.get("is_open")),
+            timestamp=timestamp,
+            next_open=_parse_dt(data.get("next_open")),
+            next_close=_parse_dt(data.get("next_close")),
+            source="alpaca",
         )
-        self.orders[broker_order_id] = canceled
-        return canceled
 
-    async def cancel_all_orders(self) -> int:
-        n = 0
-        for oid, order in list(self.orders.items()):
-            if order.status not in {OrderStatus.FILLED, OrderStatus.CANCELED, OrderStatus.REJECTED}:
-                await self.cancel_order(oid)
-                n += 1
-        return n
+    async def get_calendar(self, start: str | None = None, end: str | None = None) -> list[dict[str, object]]:
+        params: dict[str, str] = {}
+        if start:
+            params["start"] = start
+        if end:
+            params["end"] = end
+        self._ensure_paper_mode()
+        owns = self._client is None
+        client = await self._http()
+        try:
+            response = await client.get("/v2/calendar", params=params or None)
+            if response.status_code >= 400:
+                raise BrokerError(f"Alpaca HTTP {response.status_code}")
+            rows = response.json()
+        finally:
+            if owns:
+                await client.aclose()
+        assert isinstance(rows, list)
+        return [dict(r) for r in rows if isinstance(r, dict)]
 
-    async def get_order(self, broker_order_id: str) -> OrderResult:
-        if broker_order_id not in self.orders:
-            raise BrokerError("order not found")
-        return self.orders[broker_order_id]
+    async def get_asset(self, symbol: str) -> Any:
+        from app.brokers.models import BrokerAsset
 
-    async def get_open_orders(self) -> list[OrderResult]:
-        return [
-            o
-            for o in self.orders.values()
-            if o.status in {OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.PARTIAL}
-        ]
+        data = await self._request("GET", f"/v2/assets/{symbol.upper()}")
+        assert isinstance(data, dict)
+        return BrokerAsset(
+            symbol=str(data.get("symbol", symbol)).upper(),
+            tradable=bool(data.get("tradable")),
+            fractionable=bool(data.get("fractionable")),
+            shortable=bool(data.get("shortable")),
+            easy_to_borrow=bool(data.get("easy_to_borrow")),
+            exchange=str(data.get("exchange") or "") or None,
+            asset_class=str(data.get("class") or "us_equity"),
+            status=str(data.get("status") or "active"),
+        )
 
-    async def get_positions(self) -> list[dict[str, object]]:
-        return list(self.positions.values())
+    async def is_asset_tradable(self, symbol: str) -> bool:
+        asset = await self.get_asset(symbol)
+        return bool(asset.tradable and asset.status == "active")
 
-    async def get_account(self) -> dict[str, object]:
-        return dict(self.account)
+    async def get_order_by_client_id(self, client_order_id: str) -> OrderResult | None:
+        self._ensure_paper_mode()
+        owns = self._client is None
+        client = await self._http()
+        try:
+            response = await client.get(
+                "/v2/orders:by_client_order_id",
+                params={"client_order_id": client_order_id[:48]},
+            )
+            if response.status_code == 404:
+                return None
+            if response.status_code >= 400:
+                raise BrokerError(f"Alpaca HTTP {response.status_code}")
+            data = response.json()
+        finally:
+            if owns:
+                await client.aclose()
+        if not isinstance(data, dict):
+            return None
+        return self._to_result(data)
+
+    async def replace_order(self, broker_order_id: str, replacement: OrderRequest) -> OrderResult:
+        payload: dict[str, Any] = {"qty": str(replacement.qty)}
+        if replacement.limit_price is not None:
+            payload["limit_price"] = str(replacement.limit_price)
+        if replacement.stop_price is not None:
+            payload["stop_price"] = str(replacement.stop_price)
+        if replacement.time_in_force:
+            payload["time_in_force"] = replacement.time_in_force
+        data = await self._request("PATCH", f"/v2/orders/{broker_order_id}", json=payload)
+        assert isinstance(data, dict)
+        return self._to_result(data)
+
+    async def close_position(self, symbol: str, *, qty: float | None = None) -> OrderResult | None:
+        payload: dict[str, Any] | None = None
+        if qty is not None:
+            payload = {"qty": str(qty)}
+        data = await self._request("DELETE", f"/v2/positions/{symbol.upper()}", json=payload)
+        if not data:
+            return None
+        assert isinstance(data, dict)
+        return self._to_result(data)
+
+    async def close_all_positions(self) -> int:
+        data = await self._request("DELETE", "/v2/positions")
+        if isinstance(data, list):
+            return len(data)
+        return 0
+
+    async def get_activities(self) -> list[dict[str, object]]:
+        data = await self._request("GET", "/v2/account/activities")
+        if isinstance(data, list):
+            return [dict(r) for r in data if isinstance(r, dict)]
+        return []
+
+    async def health_check(self) -> Any:
+        from app.brokers.models import BrokerEnvironment, BrokerHealth
+
+        try:
+            await self.get_clock()
+            return BrokerHealth(
+                healthy=True,
+                provider="alpaca",
+                environment=BrokerEnvironment.PAPER.value,
+                connected=True,
+                message="ok",
+                as_of=datetime.now(UTC),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return BrokerHealth(
+                healthy=False,
+                provider="alpaca",
+                environment=BrokerEnvironment.PAPER.value,
+                connected=False,
+                message=str(exc)[:200],
+                as_of=datetime.now(UTC),
+            )
+
+    def capabilities(self) -> Any:
+        from app.brokers.models import BrokerCapabilities
+
+        return BrokerCapabilities(
+            provider="alpaca",
+            supports_replace=True,
+            supports_bracket=True,
+            supports_fractional=True,
+            supports_short=False,
+            supports_extended_hours=True,
+            supports_streaming=False,
+            is_mock=False,
+        )
+
+    async def get_account_canonical(self) -> Any:
+        from app.brokers.models import BrokerAccount, BrokerEnvironment, redact_account_id
+
+        raw = await self.get_account()
+        return BrokerAccount(
+            account_id_reference=redact_account_id(str(raw.get("id"))),
+            environment=BrokerEnvironment.PAPER,
+            currency=str(raw.get("currency") or "USD"),
+            equity=float(raw.get("equity") or 0),
+            cash=float(raw.get("cash") or 0),
+            buying_power=float(raw.get("buying_power") or 0),
+            portfolio_value=float(raw.get("portfolio_value") or raw.get("equity") or 0),
+            long_market_value=float(raw.get("long_market_value") or 0),
+            short_market_value=float(raw.get("short_market_value") or 0),
+            initial_margin=float(raw["initial_margin"]) if raw.get("initial_margin") not in (None, "") else None,
+            maintenance_margin=float(raw["maintenance_margin"])
+            if raw.get("maintenance_margin") not in (None, "")
+            else None,
+            daytrade_count=int(raw.get("daytrade_count") or 0),
+            pattern_day_trader=bool(raw.get("pattern_day_trader")),
+            trading_blocked=bool(raw.get("trading_blocked")),
+            transfers_blocked=bool(raw.get("transfers_blocked")),
+            account_blocked=bool(raw.get("account_blocked")),
+            as_of=datetime.now(UTC),
+            source="alpaca",
+        )
+
+    async def get_positions_canonical(self) -> list[Any]:
+        from app.brokers.models import BrokerPosition
+
+        now = datetime.now(UTC)
+        out: list[Any] = []
+        for p in await self.get_positions():
+            qty = float(p.get("qty") or 0)
+            out.append(
+                BrokerPosition(
+                    symbol=str(p.get("symbol", "")).upper(),
+                    quantity=qty,
+                    available_quantity=float(p.get("qty_available") or qty),
+                    side=str(p.get("side") or ("long" if qty >= 0 else "short")),
+                    market_value=float(p.get("market_value") or 0),
+                    cost_basis=float(p["cost_basis"]) if p.get("cost_basis") not in (None, "") else None,
+                    average_entry_price=float(p["avg_entry_price"])
+                    if p.get("avg_entry_price") not in (None, "")
+                    else None,
+                    current_price=float(p["current_price"]) if p.get("current_price") not in (None, "") else None,
+                    unrealized_pl=float(p["unrealized_pl"]) if p.get("unrealized_pl") not in (None, "") else None,
+                    unrealized_pl_pct=float(p["unrealized_plpc"]) if p.get("unrealized_plpc") not in (None, "") else None,
+                    exchange=str(p.get("exchange") or "") or None,
+                    as_of=now,
+                    source="alpaca",
+                )
+            )
+        return out
+
+
+def _parse_dt(value: object) -> datetime | None:
+    if isinstance(value, str) and value:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return None
+
+
+def _redact_secrets(text: str, settings: Settings) -> str:
+    out = text
+    for secret in (settings.alpaca_api_key, settings.alpaca_api_secret):
+        if secret is not None:
+            val = secret.get_secret_value()
+            if val:
+                out = out.replace(val, "***REDACTED***")
+    return out
+
+
+class SimulatedBroker:  # pragma: no cover - compatibility shim
+    """Deprecated alias — use app.brokers.mock.MockBroker."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        from app.brokers.mock import MockBroker
+
+        object.__setattr__(self, "_inner", MockBroker(*args, **kwargs))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "_inner":
+            object.__setattr__(self, name, value)
+        elif hasattr(self, "_inner"):
+            setattr(self._inner, name, value)
+        else:
+            object.__setattr__(self, name, value)
 
 
 def get_broker(settings: Settings | None = None) -> BrokerClient:
-    cfg = settings or get_settings()
-    if cfg.app_env.value == "test" or not cfg.alpaca_api_key:
-        logger.warning("broker_using_simulated", reason="missing_keys_or_test")
-        return SimulatedBroker()
-    return AlpacaBroker(cfg)
+    from app.brokers.factory import get_broker as _factory_get
+
+    return _factory_get(settings)

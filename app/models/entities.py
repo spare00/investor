@@ -488,3 +488,63 @@ class DataConflictRecord(Base, TimestampMixin):
     state: Mapped[str] = mapped_column(String(64), nullable=False)
     details: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     collection_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+
+
+class OrderIntent(Base, TimestampMixin):
+    __tablename__ = "order_intents"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    intent_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    approved_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="CREATED")
+    client_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    risk_check_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    approval_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    thesis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_policy: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONType, default=dict)
+
+
+class OrderApproval(Base, TimestampMixin):
+    __tablename__ = "order_approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    intent_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("order_intents.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING_APPROVAL")
+    acted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    acted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PretradeRiskCheck(Base, TimestampMixin):
+    __tablename__ = "pretrade_risk_checks"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    intent_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("order_intents.id"), nullable=False, index=True
+    )
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class BrokerReconciliationRun(Base, TimestampMixin):
+    __tablename__ = "broker_reconciliation_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    sync_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    result: Mapped[str] = mapped_column(String(64), nullable=False)
+    issues: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+

@@ -151,6 +151,28 @@ class Settings(BaseSettings):
     enable_automated_execution: bool = False
     enable_broker_orders: bool = False
 
+    # Phase 5 broker / execution (safe defaults)
+    broker_provider: str = "mock"  # mock | alpaca
+    broker_environment: str = "paper"  # paper only in Phase 5
+    enable_broker_connection: bool = False
+    require_manual_order_approval: bool = True
+    enable_live_trading: bool = False  # hard block; distinct from live_trading_enabled dual-gate
+    enable_short_selling: bool = False
+    enable_extended_hours_orders: bool = False
+    broker_request_timeout_seconds: int = 10
+    broker_query_max_retries: int = 2
+    broker_retry_backoff_seconds: float = 2.0
+    broker_reconciliation_interval_seconds: int = 60
+    order_approval_expiry_minutes: int = 10
+    order_submission_revalidation_max_age_seconds: int = 15
+    max_order_slippage_bps: float = 30.0
+    max_order_spread_bps: float = 50.0
+    cancel_open_orders_at_close: bool = True
+    emergency_stop_cancel_open_orders: bool = True
+    emergency_stop_close_positions: bool = False
+    alpaca_paper_base_url: str = "https://paper-api.alpaca.markets"
+    mock_broker_seed: int = 42
+
     # Phase 4 data layer (external APIs off by default)
     enable_external_data: bool = False
     enable_news_collection: bool = False

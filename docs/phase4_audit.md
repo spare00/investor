@@ -59,3 +59,4 @@ pytest tests/ -q
 ## Corrections Applied
 
 - Documented dual-path risk; Phase 5 makes broker provider explicit (`mock` default) and requires manual approval by default before any submit
+- Phase 5 follow-up: `MockBroker` + factory, live URL hard-block, ExecutionService intent/approval path, OrderManager gated on flags

@@ -160,10 +160,33 @@ async def operations_resume(session: AsyncSession = Depends(get_db_session)) -> 
 async def operations_emergency_stop(
     reason: str = "operator", session: AsyncSession = Depends(get_db_session)
 ) -> dict[str, Any]:
+    from app.brokers.factory import get_broker
+    from app.core.config import get_settings
+
+    settings = get_settings()
     snap = trading_controls.emergency_stop(reason)
     await persist_trading_controls(session, trading_controls, changed_by="operations")
+    canceled = 0
+    closed = 0
+    error = None
+    try:
+        broker = get_broker(settings)
+        if settings.emergency_stop_cancel_open_orders and hasattr(broker, "cancel_all_orders"):
+            canceled = await broker.cancel_all_orders()
+        if settings.emergency_stop_close_positions and hasattr(broker, "close_all_positions"):
+            closed = await broker.close_all_positions()
+    except Exception as exc:  # noqa: BLE001
+        error = str(exc)[:300]
     await session.commit()
-    return {"state": snap.state.value, "reason": snap.reason, "broker_orders": False}
+    return {
+        "state": snap.state.value,
+        "reason": snap.reason,
+        "canceled_count": canceled,
+        "closed_positions": closed,
+        "close_positions_enabled": settings.emergency_stop_close_positions,
+        "error": error,
+        "broker_orders": False,
+    }
 
 
 @router.post("/operations/emergency-stop/clear")
