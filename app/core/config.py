@@ -6,7 +6,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -58,9 +58,12 @@ class Settings(BaseSettings):
         "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
     )
 
-    # Alpaca
+    # Alpaca (ALPACA_SECRET_KEY accepted as alias for ALPACA_API_SECRET)
     alpaca_api_key: SecretStr | None = None
-    alpaca_api_secret: SecretStr | None = None
+    alpaca_api_secret: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ALPACA_API_SECRET", "ALPACA_SECRET_KEY"),
+    )
     alpaca_base_url: str = "https://paper-api.alpaca.markets"
     alpaca_data_url: str = "https://data.alpaca.markets"
 

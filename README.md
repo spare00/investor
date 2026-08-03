@@ -208,7 +208,7 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 
 ## Assumptions
 
-1. **Paper first:** Phase 1–5 never submit broker orders; Phase 6 uses Alpaca paper.
+1. **Paper first:** Phases 1–5 built the stack; Phase 6 submits Alpaca paper orders after ExecutionValidator approval.
 2. **LLM optional in unit tests:** Risk Engine and schema tests run without API keys.
 3. **Stub news/market providers** used until Phase 2 adapters are wired.
 4. **Sector map** for concentration checks uses a static ETF/stock sector table
@@ -229,7 +229,7 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 | 3 | Agent framework + prompts | **Complete** |
 | 4 | Full risk / emergency stop | **Complete** |
 | 5 | Premarket / Intraday / Postmarket workflows | **Complete** |
-| 6 | Paper trading execution | Planned |
+| 6 | Paper trading execution | **Complete** |
 | 7 | Dashboard & metrics | Planned |
 
 ---

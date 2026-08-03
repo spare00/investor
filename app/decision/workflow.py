@@ -12,8 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.pipeline import AgentPipeline, AnalysisBundle
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.execution.order_manager import OrderManager
+from app.execution.position_manager import PositionManager
 from app.execution.safety_controls import trading_controls
 from app.execution.validation import ExecutionValidationResult, ExecutionValidator
+from app.models import Order
 from app.risk import PortfolioRiskView, PositionRiskView
 from app.schemas.risk_manager import PortfolioStateInput, ProposedTrade
 from app.services.collection import CollectionBundle, DataCollectionService
@@ -33,6 +36,7 @@ class WorkflowResult:
     collection: CollectionBundle | None = None
     analysis: AnalysisBundle | None = None
     validation: ExecutionValidationResult | None = None
+    orders: list[Order] = field(default_factory=list)
     skipped_reason: str | None = None
     notes: list[str] = field(default_factory=list)
 
@@ -74,6 +78,18 @@ class WorkflowResult:
                     for i in self.validation.intents
                 ],
             },
+            "orders": [
+                {
+                    "id": str(o.id),
+                    "symbol": o.symbol,
+                    "side": o.side,
+                    "qty": o.qty,
+                    "status": o.status,
+                    "broker_order_id": o.broker_order_id,
+                    "idempotency_key": o.idempotency_key,
+                }
+                for o in self.orders
+            ],
         }
 
 
@@ -158,7 +174,17 @@ class WorkflowService:
         if collection.fail_closed:
             notes.append("collection_fail_closed")
 
-        port = portfolio or self._default_portfolio(collection.collected_at)
+        # Prefer live paper account state when broker is reachable.
+        port = portfolio
+        if port is None:
+            try:
+                pm = PositionManager(self.session, settings=self.settings)
+                await pm.sync_from_broker()
+                port = await pm.portfolio_state_input()
+                notes.append("portfolio_from_broker")
+            except Exception:  # noqa: BLE001
+                port = self._default_portfolio(collection.collected_at)
+                notes.append("portfolio_default_fallback")
         analysis = await AgentPipeline(settings=self.settings, llm=self.llm).run_from_collection(
             collection,
             portfolio=port,
@@ -167,6 +193,7 @@ class WorkflowService:
         )
 
         prices = {m.symbol: m.last for m in collection.markets}
+        seen_keys = await OrderManager(self.session, settings=self.settings).seen_idempotency_keys()
         validation = ExecutionValidator(settings=self.settings).validate(
             analysis.cio,
             portfolio=self._portfolio_risk_view(port),
@@ -175,11 +202,35 @@ class WorkflowService:
             market_session_clear=not collection.fail_closed,
             broker_data_consistent=True,
             workflow_id=str(wf),
+            seen_idempotency_keys=seen_keys,
         )
+
+        orders: list[Order] = []
         if validation.approved and validation.intents:
-            notes.append(
-                f"validated_intents={len(validation.intents)} (submit deferred to Phase 6)"
-            )
+            if self.settings.trading_mode.value == "paper" or (
+                self.settings.trading_mode.value == "live"
+                and self.settings.is_live_trading_allowed()
+            ):
+                try:
+                    orders = await OrderManager(
+                        self.session, settings=self.settings
+                    ).submit_validated_intents(
+                        validation,
+                        decision_id=analysis.cio.decision_id,
+                        workflow_id=wf,
+                    )
+                    notes.append(f"orders_submitted={len(orders)}")
+                    # Sync positions after fills (paper often fills immediately)
+                    try:
+                        await PositionManager(self.session, settings=self.settings).sync_from_broker()
+                        notes.append("positions_synced")
+                    except Exception as exc:  # noqa: BLE001
+                        notes.append(f"position_sync_failed:{exc}")
+                except Exception as exc:  # noqa: BLE001
+                    notes.append(f"order_submit_failed:{exc}")
+                    logger.exception("workflow_order_submit_failed", workflow_id=str(wf))
+            else:
+                notes.append("submit_skipped_mode")
         elif validation.rejections:
             notes.append(f"validation_rejected:{','.join(validation.rejections[:5])}")
 
@@ -190,6 +241,7 @@ class WorkflowService:
             fail_closed=collection.fail_closed,
             cio=analysis.cio.portfolio_action.value,
             validated=validation.approved,
+            orders=len(orders),
         )
         return WorkflowResult(
             workflow_id=wf,
@@ -199,6 +251,7 @@ class WorkflowService:
             collection=collection,
             analysis=analysis,
             validation=validation,
+            orders=orders,
             notes=notes,
         )
 
