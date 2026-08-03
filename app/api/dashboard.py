@@ -14,6 +14,12 @@ from app.core.scheduler import upcoming_jobs
 from app.core.timeutils import dual_timezone_labels, utc_now
 from app.execution.order_manager import OrderManager
 from app.execution.safety_controls import trading_controls
+from app.agents.activity import (
+    AGENT_ORDER,
+    AGENT_SHORT,
+    classify_agent_lamp,
+    snapshot_agent_activity,
+)
 from app.services.llm_budget import snapshot_llm_budget
 from app.models import (
     AgentReport,
@@ -164,11 +170,12 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     agent_latest: dict[str, Any] = {}
     runs = list(
         (
-            await session.execute(select(AgentRun).order_by(desc(AgentRun.started_at)).limit(24))
+            await session.execute(select(AgentRun).order_by(desc(AgentRun.started_at)).limit(48))
         )
         .scalars()
         .all()
     )
+    live_activity = snapshot_agent_activity()
     for run in runs:
         if run.agent_name in agent_latest:
             continue
@@ -177,13 +184,65 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 select(AgentReport).where(AgentReport.agent_run_id == run.id).limit(1)
             )
         ).scalar_one_or_none()
+        live = live_activity.get(run.agent_name)
+        lamp = classify_agent_lamp(
+            live=live,
+            last_run_status=run.status,
+            last_started_at=run.started_at,
+            now=now,
+        )
         agent_latest[run.agent_name] = {
             "agent_name": run.agent_name,
+            "short_name": AGENT_SHORT.get(run.agent_name, run.agent_name[:4].upper()),
             "model_name": run.model_name,
-            "started_at": run.started_at.isoformat(),
+            "status": run.status,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
             "payload": report.payload if report else None,
             "data_quality_score": report.data_quality_score if report else None,
+            "lamp": lamp["lamp"],
+            "lamp_label": lamp["label"],
+            "lamp_detail": lamp["detail"],
+            "live": lamp["live"],
         }
+
+    # Agents with live activity but no persisted run yet
+    for name in AGENT_ORDER:
+        if name in agent_latest:
+            continue
+        live = live_activity.get(name)
+        lamp = classify_agent_lamp(
+            live=live,
+            last_run_status=None,
+            last_started_at=None,
+            now=now,
+        )
+        agent_latest[name] = {
+            "agent_name": name,
+            "short_name": AGENT_SHORT.get(name, name[:4].upper()),
+            "model_name": None,
+            "status": (live or {}).get("state"),
+            "started_at": (live or {}).get("started_at"),
+            "finished_at": (live or {}).get("finished_at"),
+            "payload": None,
+            "data_quality_score": None,
+            "lamp": lamp["lamp"],
+            "lamp_label": lamp["label"],
+            "lamp_detail": lamp["detail"],
+            "live": lamp["live"],
+        }
+
+    agent_lamps = [
+        {
+            "agent_name": name,
+            "short_name": AGENT_SHORT.get(name, name[:4].upper()),
+            "lamp": (agent_latest.get(name) or {}).get("lamp", "silent"),
+            "lamp_label": (agent_latest.get(name) or {}).get("lamp_label", "inactive"),
+            "lamp_detail": (agent_latest.get(name) or {}).get("lamp_detail", ""),
+            "live": bool((agent_latest.get(name) or {}).get("live")),
+        }
+        for name in AGENT_ORDER
+    ]
 
     news = list(
         (
@@ -261,6 +320,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             "payload": latest_decision.payload,
         },
         "agents": agent_latest,
+        "agent_lamps": agent_lamps,
         "news": [
             {
                 "headline": n.headline,

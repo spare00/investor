@@ -14,6 +14,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fi
 
 from app.agents.llm_sanitize import sanitize_llm_payload, schema_enum_hint
 from app.agents.prompts import LoadedPrompt, load_agent_prompt
+from app.agents.activity import mark_agent_finished, mark_agent_started
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.schemas.common import AgentName, TraceMetadata
@@ -77,9 +78,11 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
         """Execute agent with schema validation and isolated error handling."""
         run_id = uuid4()
         started = time.perf_counter()
+        mark_agent_started(self.name.value, run_id=str(run_id))
         logger.info("agent_start", agent=self.name.value, run_id=str(run_id))
         try:
             result = await self._run_validated(payload, run_id=run_id, started=started)
+            mark_agent_finished(self.name.value, outcome="completed")
             return result
         except Exception as exc:  # noqa: BLE001 — isolate failures at agent boundary
             logger.exception("agent_failed", agent=self.name.value, run_id=str(run_id))
@@ -91,7 +94,9 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                     run_id=str(run_id),
                     reason=str(exc),
                 )
+                mark_agent_finished(self.name.value, outcome="fallback", error=str(exc))
                 return fallback
+            mark_agent_finished(self.name.value, outcome="failed", error=str(exc))
             raise AgentExecutionError(f"{self.name.value} failed: {exc}") from exc
 
     async def _run_validated(
