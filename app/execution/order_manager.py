@@ -150,6 +150,29 @@ class OrderManager:
                     idempotency_key=intent.idempotency_key,
                 )
             )
+        except TimeoutError as exc:
+            row.status = "UNKNOWN"
+            row.raw_payload = {
+                **row.raw_payload,
+                "error": "timeout",
+                "state": "RECONCILIATION_REQUIRED",
+            }
+            await self.events.record(
+                level="error",
+                event_type="broker_submit_timeout",
+                message=str(exc),
+                context={"symbol": intent.symbol, "idempotency_key": intent.idempotency_key},
+                workflow_id=workflow_id,
+            )
+            logger.exception("broker_submit_timeout", symbol=intent.symbol)
+            # Do not resubmit — recover via client order id / reconciliation
+            if hasattr(self.broker, "get_order_by_client_id"):
+                remote = await self.broker.get_order_by_client_id(intent.idempotency_key)
+                if remote is not None:
+                    row.broker_order_id = remote.broker_order_id
+                    row.status = remote.status.value
+                    row.submitted_at = remote.submitted_at
+            return row
         except BrokerError as exc:
             row.status = "rejected"
             row.raw_payload = {**row.raw_payload, "error": str(exc)}

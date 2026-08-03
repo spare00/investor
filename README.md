@@ -279,20 +279,20 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 | 2 | Prompt system + agent framework hardening | Complete — `docs/phase2_report.md` |
 | 3 | Calendar, DST, daily workflow SM, leases | Complete — `docs/phase3_report.md` |
 | 4 | Data collection & normalization layer | Complete — `docs/phase4_report.md` |
-| 5 | Broker & paper execution layer | **This release** — `docs/phase5_report.md` |
-| 6 | Intraday cadence, position monitor | Planned |
+| 5 | Broker & paper execution layer | Complete — `docs/phase5_report.md` |
+| 6 | Intraday ops & position management | **This release** — `docs/phase6_report.md` |
 | 7 | Performance, ops hardening | Planned |
 
-Docs: `docs/broker_architecture.md`, `docs/phase4_audit.md`, `docs/phase5_report.md`.
+Docs: `docs/intraday_architecture.md`, `docs/phase5_audit.md`, `docs/phase6_report.md`.
 
 ```bash
-python -m app.cli collect premarket --fixture
-python -m app.cli broker status
-python -m app.cli execution intents list
-python -m app.cli workflow run-analysis --real-data --fake-llm --no-broker
+python -m app.cli intraday status
+python -m app.cli positions monitor
+python -m app.cli closing run
+python -m app.cli postmarket settle
 ```
 
-Defaults: `BROKER_PROVIDER=mock`, `ENABLE_BROKER_ORDERS=false`, `REQUIRE_MANUAL_ORDER_APPROVAL=true`, `ENABLE_LIVE_TRADING=false`.
+Defaults: `INTRADAY_OPERATION_MODE=OBSERVE_ONLY`, `ENABLE_BROKER_ORDERS=false`, `ENABLE_LIVE_TRADING=false`.
 ---
 
 ## License

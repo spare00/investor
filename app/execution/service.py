@@ -269,6 +269,41 @@ class ExecutionService:
         if intent.status != IntentStatus.APPROVED.value:
             raise ValueError(f"submit_not_allowed_from:{intent.status}")
 
+        # Material broker drift blocks new risk
+        from app.models import BrokerReconciliationRun
+
+        latest_recon = (
+            await self.session.execute(
+                select(BrokerReconciliationRun).order_by(BrokerReconciliationRun.created_at.desc()).limit(1)
+            )
+        ).scalar_one_or_none()
+        if latest_recon and latest_recon.result in {"MATERIAL_DRIFT", "BROKER_UNAVAILABLE", "LOCAL_STATE_INVALID"}:
+            raise BrokerError(f"reconciliation_blocks_submit:{latest_recon.result}")
+
+        # Final hard pretrade gates (deterministic — not LLM)
+        hard = self.pretrade.validate(
+            intent_id=str(intent.id),
+            decision_id=str(intent.decision_id) if intent.decision_id else None,
+            symbol=intent.symbol,
+            side=intent.side,
+            quantity=float(intent.approved_quantity or intent.quantity or 0),
+            entry_price=float(intent.entry_price or 0),
+            stop_price=float(intent.stop_price) if intent.stop_price is not None else None,
+            equity=float(self.settings.starting_cash),
+            cash=float(self.settings.starting_cash),
+            buying_power=float(self.settings.starting_cash),
+            gross_exposure=0.0,
+            position_qty=0.0,
+            data_quality_score=1.0,
+            quote_age_seconds=0.0,
+            spread_bps=10.0,
+            decision_expired=bool(intent.expires_at and intent.expires_at < datetime.now(UTC)),
+        )
+        if hard.status in {PretradeStatus.REJECTED, PretradeStatus.SYSTEM_BLOCKED}:
+            intent.status = IntentStatus.RISK_REJECTED.value
+            await self.session.flush()
+            raise BrokerError(f"final_pretrade_blocked:{','.join(hard.violations)}")
+
         # Final revalidation window (normalize naive SQLite timestamps)
         updated = intent.updated_at
         if updated is not None:

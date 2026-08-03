@@ -173,6 +173,27 @@ class Settings(BaseSettings):
     alpaca_paper_base_url: str = "https://paper-api.alpaca.markets"
     mock_broker_seed: int = 42
 
+    # Phase 6 intraday operations
+    intraday_operation_mode: str = "OBSERVE_ONLY"
+    enable_intraday_monitoring: bool = True
+    enable_intraday_agent_reanalysis: bool = True
+    min_global_reanalysis_gap_minutes: int = 10
+    min_symbol_reanalysis_gap_minutes: int = 10
+    max_symbol_reanalyses_per_day: int = 6
+    event_deduplication_window_seconds: int = 300
+    position_monitor_interval_seconds: int = 60
+    broker_streaming_enabled: bool = False
+    broker_polling_fallback_enabled: bool = True
+    broker_polling_interval_seconds: int = 30
+    auto_execute_hard_stops: bool = False
+    allow_stop_widening: bool = False
+    allow_stop_tightening: bool = True
+    allow_new_positions_in_closing_window: bool = False
+    default_closing_policy: str = "CLOSE_INTRADAY_ONLY"
+    cancel_entry_orders_at_closing_window: bool = True
+    overnight_review_required: bool = True
+    position_lot_method: str = "FIFO"
+
     # Phase 4 data layer (external APIs off by default)
     enable_external_data: bool = False
     enable_news_collection: bool = False

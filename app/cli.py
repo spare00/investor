@@ -354,6 +354,38 @@ def main(argv: list[str] | None = None) -> int:
     esub.add_parser("reconcile")
     esub.add_parser("cancel-all")
 
+    intraday = sub.add_parser("intraday")
+    isub = intraday.add_subparsers(dest="intraday_cmd", required=True)
+    isub.add_parser("status")
+    ievents = isub.add_parser("events")
+    ievents_sub = ievents.add_subparsers(dest="events_cmd", required=True)
+    ievents_sub.add_parser("list")
+    isub.add_parser("evaluate")
+    isub.add_parser("recovery")
+
+    positions = sub.add_parser("positions")
+    psub = positions.add_subparsers(dest="positions_cmd", required=True)
+    psub.add_parser("monitor")
+    preview = psub.add_parser("review")
+    preview.add_argument("--symbol", required=True)
+    pclose = psub.add_parser("close")
+    pclose.add_argument("--symbol", required=True)
+
+    closing = sub.add_parser("closing")
+    closing.add_subparsers(dest="closing_cmd", required=True).add_parser("run")
+
+    overnight = sub.add_parser("overnight")
+    overnight.add_subparsers(dest="overnight_cmd", required=True).add_parser("review")
+
+    postmarket = sub.add_parser("postmarket")
+    postmarket.add_subparsers(dest="postmarket_cmd", required=True).add_parser("settle")
+
+    posttrade = sub.add_parser("posttrade")
+    ptsub = posttrade.add_subparsers(dest="posttrade_cmd", required=True)
+    ptrev = ptsub.add_parser("review")
+    ptrev.add_argument("--position-id", required=True)
+    ptrev.add_argument("--symbol", default="UNKNOWN")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "run-analysis":
@@ -429,11 +461,126 @@ def main(argv: list[str] | None = None) -> int:
             result = asyncio.run(_execution_cmd("cancel_all"))
         else:
             return 1
+    elif args.cmd == "intraday":
+        result = asyncio.run(_intraday_cmd(args))
+    elif args.cmd == "positions":
+        result = asyncio.run(_positions_cmd(args))
+    elif args.cmd == "closing" and args.closing_cmd == "run":
+        result = asyncio.run(_closing_run())
+    elif args.cmd == "overnight" and args.overnight_cmd == "review":
+        result = asyncio.run(_overnight_review())
+    elif args.cmd == "postmarket" and args.postmarket_cmd == "settle":
+        result = asyncio.run(_postmarket_settle())
+    elif args.cmd == "posttrade" and args.posttrade_cmd == "review":
+        result = asyncio.run(_posttrade_review(args.position_id, args.symbol))
     else:
         return 1
 
     print(json.dumps(result, indent=2, default=str))
     return 0
+
+
+async def _intraday_cmd(args: argparse.Namespace) -> dict:
+    from app.intraday.service import IntradayService
+
+    factory = get_session_factory()
+    async with factory() as session:
+        svc = IntradayService(session)
+        if args.intraday_cmd == "status":
+            result = svc.status()
+        elif args.intraday_cmd == "events" and args.events_cmd == "list":
+            rows = await svc.bus.list_events()
+            result = {"events": [{"id": str(e.id), "type": e.event_type, "status": e.status} for e in rows]}
+        elif args.intraday_cmd == "evaluate":
+            result = await svc.agents.evaluate(fake_llm=True)
+        elif args.intraday_cmd == "recovery":
+            result = await svc.recovery.run()
+        else:
+            raise SystemExit("unknown intraday command")
+        await session.commit()
+        return result
+
+
+async def _positions_cmd(args: argparse.Namespace) -> dict:
+    from app.intraday.service import IntradayService
+    from app.models import PositionLifecycle
+    from sqlalchemy import select
+
+    factory = get_session_factory()
+    async with factory() as session:
+        svc = IntradayService(session)
+        if args.positions_cmd == "monitor":
+            result = {"results": await svc.monitor_all()}
+        elif args.positions_cmd == "review":
+            row = (
+                await session.execute(
+                    select(PositionLifecycle).where(PositionLifecycle.symbol == args.symbol.upper()).limit(1)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise SystemExit("position_not_found")
+            mon = await svc.monitor.evaluate(row, current_price=row.current_price, equity=get_settings().starting_cash)
+            result = {"verdict": mon.verdict, "reasons": mon.reasons}
+        elif args.positions_cmd == "close":
+            row = (
+                await session.execute(
+                    select(PositionLifecycle).where(PositionLifecycle.symbol == args.symbol.upper()).limit(1)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise SystemExit("position_not_found")
+            result = await svc.close_position(row.id)
+        else:
+            raise SystemExit("unknown positions command")
+        await session.commit()
+        return result
+
+
+async def _closing_run() -> dict:
+    from app.intraday.service import IntradayService
+
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await IntradayService(session).closing.run_closing()
+        await session.commit()
+        return result
+
+
+async def _overnight_review() -> dict:
+    from app.intraday.service import IntradayService
+
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await IntradayService(session).closing.overnight_review()
+        await session.commit()
+        return result
+
+
+async def _postmarket_settle() -> dict:
+    from app.intraday.service import IntradayService
+
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await IntradayService(session).settlement.settle()
+        await session.commit()
+        return result
+
+
+async def _posttrade_review(position_id: str, symbol: str) -> dict:
+    from uuid import UUID
+
+    from app.intraday.service import IntradayService
+
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await IntradayService(session).posttrade.create_review(
+            position_lifecycle_id=UUID(position_id),
+            symbol=symbol,
+            outcome="closed",
+            exit_reason="cli",
+        )
+        await session.commit()
+        return result
 
 
 if __name__ == "__main__":

@@ -548,3 +548,272 @@ class BrokerReconciliationRun(Base, TimestampMixin):
     issues: Mapped[list[Any]] = mapped_column(JSONType, default=list)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
 
+
+class IntradayEvent(Base, TimestampMixin):
+    __tablename__ = "intraday_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_event_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    intent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    order_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    position_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    symbols: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    importance: Mapped[str] = mapped_column(String(32), default="medium")
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deduplication_key: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    requires_analysis: Mapped[bool] = mapped_column(Boolean, default=False)
+    requires_risk_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    requires_execution_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="NEW")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    priority: Mapped[int] = mapped_column(Integer, default=10)
+    bypass_cooldown: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class BrokerOrderEvent(Base, TimestampMixin):
+    __tablename__ = "broker_order_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    order_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    broker_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    broker_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class PositionLifecycle(Base, TimestampMixin):
+    __tablename__ = "position_lifecycles"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING_OPEN")
+    quantity: Mapped[float] = mapped_column(Float, default=0.0)
+    average_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unrealized_pl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    realized_pl: Mapped[float] = mapped_column(Float, default=0.0)
+    stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    take_profit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    take_profit_targets: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    take_profit_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    filled_take_profit_indices: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    invalidation_state: Mapped[str] = mapped_column(String(32), default="NOT_TRIGGERED")
+    max_holding_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overnight_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    closing_policy: Mapped[str] = mapped_column(String(64), default="CLOSE_INTRADAY_ONLY")
+    protection_submitted: Mapped[bool] = mapped_column(Boolean, default=False)
+    reconciliation_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_monitor_verdict: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    strategy_reference: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_policy: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONType, default=dict)
+
+
+class PositionSnapshotRecord(Base, TimestampMixin):
+    __tablename__ = "position_snapshots_v2"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("position_lifecycles.id"), nullable=False, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    market_value: Mapped[float] = mapped_column(Float, nullable=False)
+    average_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unrealized_pl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unrealized_pl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    realized_pl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    portfolio_weight_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sector_weight_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    distance_to_stop_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    take_profit_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    holding_minutes: Mapped[float | None] = mapped_column(Float, nullable=True)
+    risk_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    data_quality: Mapped[float | None] = mapped_column(Float, nullable=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), default="monitor")
+    source_snapshot_ids: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+
+
+class PositionRiskReview(Base, TimestampMixin):
+    __tablename__ = "position_risk_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    reasons: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class StopEvent(Base, TimestampMixin):
+    __tablename__ = "stop_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trigger_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class TakeProfitEvent(Base, TimestampMixin):
+    __tablename__ = "take_profit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    target_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_price: Mapped[float] = mapped_column(Float, nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class IntradayAnalysisRun(Base, TimestampMixin):
+    __tablename__ = "intraday_analysis_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    trigger_event_ids: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class IntradayDecisionRecord(Base, TimestampMixin):
+    __tablename__ = "intraday_decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    parent_decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    analysis_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    trigger_event_ids: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    market_regime: Mapped[str] = mapped_column(String(32), nullable=False)
+    thesis_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    portfolio_action: Mapped[str] = mapped_column(String(32), nullable=False)
+    symbol_actions: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    risk_approval: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    risk_conditions: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    dissenting_views: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    decision_expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class ClosingReview(Base, TimestampMixin):
+    __tablename__ = "closing_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    policy: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    intent_drafts: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    notes: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+
+
+class OvernightReview(Base, TimestampMixin):
+    __tablename__ = "overnight_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    position_lifecycle_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    reasons: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    valid_for_session_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class PostmarketSettlement(Base, TimestampMixin):
+    __tablename__ = "postmarket_settlements"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    session_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    reconciliation_result: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    account_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    order_count: Mapped[int] = mapped_column(Integer, default=0)
+    execution_count: Mapped[int] = mapped_column(Integer, default=0)
+    overnight_positions: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    pnl_summary: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class TradePnL(Base, TimestampMixin):
+    __tablename__ = "trade_pnl"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    gross_realized_pl: Mapped[float] = mapped_column(Float, default=0.0)
+    net_realized_pl: Mapped[float] = mapped_column(Float, default=0.0)
+    unrealized_pl: Mapped[float] = mapped_column(Float, default=0.0)
+    fees: Mapped[float] = mapped_column(Float, default=0.0)
+    estimated_slippage: Mapped[float] = mapped_column(Float, default=0.0)
+    return_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    method: Mapped[str] = mapped_column(String(16), default="FIFO")
+    conflict_with_broker: Mapped[bool] = mapped_column(Boolean, default=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class PostTradeReviewRecord(Base, TimestampMixin):
+    __tablename__ = "posttrade_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    position_lifecycle_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(64), nullable=False)
+    exit_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_quality: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    execution_quality: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    risk_adherence: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    exit_quality: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    thesis_accuracy: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    timing_quality: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    data_quality: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    what_worked: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    what_failed: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    avoidable_errors: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    unavoidable_factors: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    lessons: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    agent_assessment_ids: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class AgentOutcomeEvaluation(Base, TimestampMixin):
+    __tablename__ = "agent_outcome_evaluations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    report_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    prediction_horizon: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    directional_view: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    key_claims: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    invalidation_conditions: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    actual_outcome_reference: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class IntradayRecoveryRun(Base, TimestampMixin):
+    __tablename__ = "intraday_recovery_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    emergency_stop: Mapped[bool] = mapped_column(Boolean, default=False)
+    new_orders_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    actions: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+

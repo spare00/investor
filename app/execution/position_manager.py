@@ -114,6 +114,14 @@ class PositionManager:
             )
 
         gross_pct = (gross / equity * 100.0) if equity else 0.0
+        from app.brokers.models import redact_account_id
+
+        safe_account = dict(account)
+        if "id" in safe_account:
+            safe_account["account_id_reference"] = redact_account_id(str(safe_account.pop("id")))
+        for key in ("account_number", "account_id"):
+            if key in safe_account:
+                safe_account[key] = redact_account_id(str(safe_account[key]))
         snap = PortfolioSnapshot(
             id=uuid4(),
             as_of=now,
@@ -121,12 +129,12 @@ class PositionManager:
             cash=cash,
             cash_pct=cash_pct,
             gross_exposure_pct=gross_pct,
-            daily_pnl=float(str(account.get("last_equity") or equity)) and 0.0,
+            daily_pnl=0.0,
             daily_pnl_pct=0.0,
             drawdown_pct=0.0,
             peak_equity=equity,
             open_positions=len(positions),
-            payload={"account": account},
+            payload={"account": safe_account, "position_count": len(positions)},
         )
         # Rough daily pnl if last_equity present
         last_eq = account.get("last_equity")
