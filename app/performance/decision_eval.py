@@ -19,17 +19,55 @@ class DecisionAction(StrEnum):
     NO_TRADE = "NO_TRADE"
 
 
+# Map CIO PortfolioAction / SymbolAction strings onto evaluation buckets.
+_ACTION_ALIASES: dict[str, DecisionAction] = {
+    "BUY": DecisionAction.BUY,
+    "STRONG_BUY": DecisionAction.BUY,
+    "ADD": DecisionAction.BUY,
+    "SCALE_IN": DecisionAction.BUY,
+    "SELL": DecisionAction.SELL,
+    "STRONG_SELL": DecisionAction.SELL,
+    "REDUCE": DecisionAction.SELL,
+    "PARTIAL_SELL": DecisionAction.SELL,
+    "CLOSE": DecisionAction.SELL,
+    "CLOSE_LONG": DecisionAction.SELL,
+    "HOLD": DecisionAction.HOLD,
+    "NO_TRADE": DecisionAction.NO_TRADE,
+    "STAY_CASH": DecisionAction.NO_TRADE,
+    "WAIT": DecisionAction.NO_TRADE,
+    "NO_NEW_RISK": DecisionAction.NO_TRADE,
+    "NO_ACTION": DecisionAction.NO_TRADE,
+}
+
+
+def normalize_decision_action(action: DecisionAction | str | None) -> DecisionAction:
+    if isinstance(action, DecisionAction):
+        return action
+    if action is None:
+        return DecisionAction.NO_TRADE
+    key = str(action).strip().upper()
+    if key in _ACTION_ALIASES:
+        return _ACTION_ALIASES[key]
+    try:
+        return DecisionAction(key)
+    except ValueError:
+        # Unknown CIO action → treat as abstention rather than 500
+        return DecisionAction.NO_TRADE
+
+
 def evaluate_decision(
     *,
     decision_price: float,
-    action: DecisionAction | str,
+    action: DecisionAction | str | None,
     horizon_price: float | None,
     benchmark_return: float | None = None,
 ) -> dict[str, MetricResult | Any]:
-    action = DecisionAction(action) if isinstance(action, str) else action
+    raw_action = str(action) if action is not None else None
+    action = normalize_decision_action(action)
     if horizon_price is None or decision_price <= 0:
         return {
             "action": action.value,
+            "raw_action": raw_action,
             "realized_return": metric_result(
                 "realized_return", None, status=MetricStatus.UNAVAILABLE, method="decision_eval"
             ),
@@ -95,6 +133,7 @@ def evaluate_decision(
 
     return {
         "action": action.value,
+        "raw_action": raw_action,
         "realized_return": metric_result("realized_return", realized, method="decision_eval"),
         "vs_benchmark": vs_bench,
         "directional_correct": directional,

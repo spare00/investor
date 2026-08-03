@@ -143,8 +143,9 @@ async def operations_readiness(
     gate: str | None = None,
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
-    g = ReadinessGate(gate) if gate else ReadinessGate.PAPER_OBSERVE_READY
-    return GateEvaluator(get_settings()).evaluate(g)
+    evaluator = GateEvaluator(get_settings())
+    g = ReadinessGate(gate) if gate else evaluator.default_gate()
+    return evaluator.evaluate(g)
 
 
 @router.post("/readiness/evaluate")
@@ -153,8 +154,9 @@ async def readiness_evaluate(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     body = body or ReadinessBody()
-    gate = ReadinessGate(body.gate or ReadinessGate.PAPER_OBSERVE_READY)
-    result = GateEvaluator(get_settings()).evaluate(gate)
+    evaluator = GateEvaluator(get_settings())
+    gate = ReadinessGate(body.gate) if body.gate else evaluator.default_gate()
+    result = evaluator.evaluate(gate)
     row = ReadinessEvaluationRecord(
         gate=gate.value,
         result=result,

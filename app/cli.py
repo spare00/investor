@@ -742,16 +742,17 @@ async def _simulation_cmd(args: argparse.Namespace) -> dict:
 async def _readiness_evaluate() -> dict:
     from datetime import UTC, datetime
 
-    from app.ops.readiness import GateEvaluator, ReadinessGate
+    from app.ops.readiness import GateEvaluator
 
-    result = GateEvaluator(get_settings()).evaluate(ReadinessGate.DEVELOPMENT)
+    evaluator = GateEvaluator(get_settings())
+    result = evaluator.evaluate(evaluator.default_gate())
     factory = get_session_factory()
     async with factory() as session:
         try:
             from app.models import ReadinessEvaluationRecord
 
             row = ReadinessEvaluationRecord(
-                gate=ReadinessGate.DEVELOPMENT.value,
+                gate=result["current_gate"],
                 result=result,
                 evaluated_at=datetime.now(UTC),
             )

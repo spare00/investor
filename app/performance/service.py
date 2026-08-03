@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -46,7 +47,28 @@ from app.performance.risk import (
     tracking_error,
 )
 from app.performance.trades import ClosedTrade, compute_trade_metrics
-from app.performance.types import CALCULATION_VERSION
+from app.performance.types import CALCULATION_VERSION, MetricResult
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, MetricResult) or (is_dataclass(value) and not isinstance(value, type)):
+        raw = asdict(value) if is_dataclass(value) else value.__dict__
+        out = {}
+        for k, v in raw.items():
+            if hasattr(v, "value") and not isinstance(v, (str, int, float, bool)):
+                out[k] = v.value
+            elif isinstance(v, datetime):
+                out[k] = v.isoformat()
+            else:
+                out[k] = v
+        return out
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(v) for v in value]
+    if hasattr(value, "value") and not isinstance(value, (str, int, float, bool)):
+        return value.value
+    return value
 from app.performance.valuation import build_portfolio_valuation
 
 
@@ -337,9 +359,7 @@ class PerformanceService:
                 "decision_id": str(row.decision_id),
                 "action": row.portfolio_action,
                 "evaluated_at": row.decision_timestamp.isoformat(),
-                "metrics": {
-                    k: (v.__dict__ if hasattr(v, "__dict__") else v) for k, v in ev.items()
-                },
+                "metrics": _jsonable(ev),
             }
             evaluations.append(item)
             if persist:

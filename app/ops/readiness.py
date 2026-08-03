@@ -44,17 +44,35 @@ class GateEvaluator:
         self.settings = settings or get_settings()
 
     def evaluate(self, current_gate: ReadinessGate | str | None = None) -> dict[str, Any]:
-        gate = ReadinessGate(current_gate or ReadinessGate.DEVELOPMENT)
+        gate = ReadinessGate(current_gate or self.default_gate())
         checks = self._build_checks(gate)
-        required = [c for c in checks if c.required_for is None or c.required_for == gate]
-        # Cumulative: all checks up to and including current gate that apply
+        # Gate-specific checks apply to the evaluated gate only (MANUAL vs AUTOMATED
+        # are alternate paper paths, not a strict cumulative ladder).
         applicable = [
-            c
-            for c in checks
-            if c.required_for is None
-            or self.GATE_ORDER.index(c.required_for) <= self.GATE_ORDER.index(gate)
+            c for c in checks if c.required_for is None or c.required_for == gate
         ]
-        passed = all(c.passed for c in applicable)
+        # Always include earlier non-conflicting scaffold gates up through SIMULATION.
+        scaffold = {
+            ReadinessGate.DEVELOPMENT,
+            ReadinessGate.SIMULATION_READY,
+        }
+        if gate not in scaffold:
+            applicable = [
+                c
+                for c in checks
+                if c.required_for is None
+                or c.required_for in scaffold
+                or c.required_for == gate
+            ]
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        uniq: list[ReadinessCheck] = []
+        for c in applicable:
+            if c.name in seen:
+                continue
+            seen.add(c.name)
+            uniq.append(c)
+        passed = all(c.passed for c in uniq)
         return {
             "current_gate": gate.value,
             "checks": [
@@ -68,11 +86,21 @@ class GateEvaluator:
             ],
             "all_required_passed": passed,
             "live_trading_allowed": False,
-            "live_blocked_reason": "LIVE trading is not permitted in Phase 7 (LIVE_NOT_ALLOWED permanent)",
+            "live_blocked_reason": "LIVE trading is not permitted (LIVE_NOT_ALLOWED permanent)",
             "next_gate": self._next_gate(gate),
             "auto_promote": False,
             "operator_approval_required": True,
         }
+
+    def default_gate(self) -> ReadinessGate:
+        mode = (self.settings.intraday_operation_mode or "").upper()
+        if mode == "PAPER_AUTOMATED":
+            return ReadinessGate.PAPER_AUTOMATED_CANDIDATE
+        if mode == "MANUAL_APPROVAL":
+            return ReadinessGate.PAPER_MANUAL_READY
+        if mode == "OBSERVE_ONLY":
+            return ReadinessGate.PAPER_OBSERVE_READY
+        return ReadinessGate.DEVELOPMENT
 
     def _next_gate(self, gate: ReadinessGate) -> str | None:
         try:
@@ -81,13 +109,11 @@ class GateEvaluator:
             return None
         if idx + 1 >= len(self.GATE_ORDER):
             return None
-        nxt = self.GATE_ORDER[idx + 1]
-        if nxt == ReadinessGate.LIVE_NOT_ALLOWED:
-            return ReadinessGate.LIVE_NOT_ALLOWED.value
-        return nxt.value
+        return self.GATE_ORDER[idx + 1].value
 
     def _build_checks(self, gate: ReadinessGate) -> list[ReadinessCheck]:
         cfg = self.settings
+        paper_url_ok = "paper-api" in (cfg.alpaca_base_url or "").lower() or cfg.broker_provider == "mock"
         return [
             ReadinessCheck(
                 name="live_trading_disabled",
@@ -95,19 +121,15 @@ class GateEvaluator:
                 detail="ENABLE_LIVE_TRADING=false and dual-gate closed",
             ),
             ReadinessCheck(
-                name="automated_execution_disabled_default",
-                passed=not cfg.enable_automated_execution,
-                detail="ENABLE_AUTOMATED_EXECUTION=false",
-            ),
-            ReadinessCheck(
-                name="broker_orders_disabled_or_manual",
-                passed=(not cfg.enable_broker_orders) or cfg.require_manual_order_approval,
-                detail="Orders off or manual approval required",
+                name="paper_environment",
+                passed=cfg.trading_mode.value in {"paper", "simulation"}
+                and cfg.broker_environment.lower() == "paper",
+                detail=f"mode={cfg.trading_mode.value} broker_env={cfg.broker_environment}",
             ),
             ReadinessCheck(
                 name="fault_injection_disabled",
                 passed=not cfg.enable_fault_injection,
-                detail="ENABLE_FAULT_INJECTION=false for non-test ops",
+                detail="ENABLE_FAULT_INJECTION=false for ops",
                 required_for=ReadinessGate.SIMULATION_READY,
             ),
             ReadinessCheck(
@@ -117,15 +139,15 @@ class GateEvaluator:
                 required_for=ReadinessGate.SIMULATION_READY,
             ),
             ReadinessCheck(
-                name="broker_orders_inactive_for_observe",
-                passed=not cfg.enable_broker_orders,
-                detail="ENABLE_BROKER_ORDERS=false for PAPER_OBSERVE_READY",
+                name="broker_connection_for_observe",
+                passed=cfg.enable_broker_connection or cfg.broker_provider == "mock",
+                detail="Broker read path available (connection or mock)",
                 required_for=ReadinessGate.PAPER_OBSERVE_READY,
             ),
             ReadinessCheck(
-                name="manual_approval_required",
-                passed=cfg.require_manual_order_approval,
-                detail="REQUIRE_MANUAL_ORDER_APPROVAL=true",
+                name="manual_mode_orders_gated",
+                passed=(not cfg.enable_broker_orders) or cfg.require_manual_order_approval,
+                detail="For MANUAL gate: orders off or manual brake on",
                 required_for=ReadinessGate.PAPER_MANUAL_READY,
             ),
             ReadinessCheck(
@@ -133,6 +155,24 @@ class GateEvaluator:
                 passed=cfg.enable_alerts,
                 detail="ENABLE_ALERTS=true",
                 required_for=ReadinessGate.PAPER_MANUAL_READY,
+            ),
+            ReadinessCheck(
+                name="paper_automated_cio_path",
+                passed=(
+                    cfg.enable_broker_orders
+                    and cfg.enable_automated_execution
+                    and not cfg.require_manual_order_approval
+                    and not cfg.enable_live_trading
+                    and paper_url_ok
+                ),
+                detail="CIO paper path armed: orders+automated on, manual brake off, Live off",
+                required_for=ReadinessGate.PAPER_AUTOMATED_CANDIDATE,
+            ),
+            ReadinessCheck(
+                name="intraday_paper_automated_mode",
+                passed=(cfg.intraday_operation_mode or "").upper() == "PAPER_AUTOMATED",
+                detail=f"INTRADAY_OPERATION_MODE={cfg.intraday_operation_mode}",
+                required_for=ReadinessGate.PAPER_AUTOMATED_CANDIDATE,
             ),
             ReadinessCheck(
                 name="min_performance_observations_config",
@@ -149,7 +189,7 @@ class GateEvaluator:
             ReadinessCheck(
                 name="live_permanently_blocked",
                 passed=True,
-                detail="LIVE_NOT_ALLOWED — Phase 7 cannot enable live trading",
+                detail="LIVE_NOT_ALLOWED — cannot enable live trading",
                 required_for=ReadinessGate.LIVE_NOT_ALLOWED,
             ),
         ]
