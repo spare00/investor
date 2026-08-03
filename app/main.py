@@ -11,8 +11,10 @@ from fastapi import FastAPI
 from app.api.analysis import router as analysis_router
 from app.api.collection import router as collection_router
 from app.api.trading import router as trading_router
+from app.api.workflow import router as workflow_router
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
+from app.core.scheduler import start_scheduler, stop_scheduler, upcoming_jobs
 from app.core.security import require_execution_allowed
 from app.execution.safety_controls import trading_controls
 
@@ -24,27 +26,30 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     setup_logging(settings.log_level, settings.log_format)
     mode = require_execution_allowed(settings)
+    start_scheduler(settings)
     logger.info(
         "app_startup",
         app_env=settings.app_env.value,
         trading_mode=mode.value,
         live_allowed=settings.is_live_trading_allowed(),
         allowlist_size=len(settings.trade_allowlist),
-        phase=4,
+        phase=5,
     )
     yield
+    await stop_scheduler()
     logger.info("app_shutdown")
 
 
 app = FastAPI(
     title="Investor",
     description="Six-agent AI investment firm (paper trading first)",
-    version="0.4.0",
+    version="0.5.0",
     lifespan=lifespan,
 )
 app.include_router(collection_router)
 app.include_router(analysis_router)
 app.include_router(trading_router)
+app.include_router(workflow_router)
 
 
 @app.get("/health")
@@ -52,10 +57,10 @@ async def health() -> dict[str, Any]:
     settings = get_settings()
     return {
         "status": "ok",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "trading_mode": require_execution_allowed(settings).value,
         "live_trading_allowed": settings.is_live_trading_allowed(),
-        "phase": 4,
+        "phase": 5,
     }
 
 
@@ -77,13 +82,13 @@ async def status() -> dict[str, Any]:
             "daily_max_loss_pct": settings.daily_max_loss_pct,
             "max_drawdown_pct": settings.max_drawdown_pct,
         },
-        "next_jobs": [],
-        "note": "Phase 4 risk controls online — paper order submit still deferred to Phase 6",
+        "next_jobs": upcoming_jobs(),
+        "note": "Phase 5 workflows online — paper order submit deferred to Phase 6",
         "endpoints": {
-            "premarket_collect": "POST /workflow/premarket/collect",
-            "premarket_analyze": "POST /workflow/premarket/analyze",
+            "premarket_run": "POST /workflow/premarket/run",
+            "intraday_evaluate": "POST /workflow/intraday/evaluate",
+            "postmarket_run": "POST /workflow/postmarket/run",
             "trading_pause": "POST /trading/pause",
-            "trading_resume": "POST /trading/resume",
             "emergency_stop": "POST /trading/emergency-stop",
         },
     }
