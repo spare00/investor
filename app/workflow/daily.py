@@ -16,6 +16,7 @@ from app.execution.safety_controls import TradingControls, trading_controls
 from app.market.calendar import MarketCalendarService
 from app.models import DailyWorkflowRun, ScheduledJobRecord, WorkflowStateTransition
 from app.schemas.risk_manager import PortfolioStateInput
+from app.ingestion.pipeline import DataCollectionPipeline
 from app.services.collection import DataCollectionService
 from app.services.llm import FakeLLMProvider, get_llm_client
 from app.workflow.closing import ClosingPolicyEngine
@@ -174,9 +175,20 @@ class DailyWorkflowService:
                 raise DailyWorkflowError(f"analysis_not_allowed_from:{run.current_state}")
 
             llm = FakeLLMProvider({}) if fake_llm else get_llm_client(self.settings)
-            collection = await DataCollectionService(
-                self.session, settings=self.settings, persist=True
-            ).collect_premarket(workflow_id=run.id)
+            data = await DataCollectionPipeline(
+                self.session, settings=self.settings, fixture_mode=True
+            ).collect("PREMARKET", workflow_id=run.id)
+            collection = data.legacy_bundle
+            if collection is None:
+                collection = await DataCollectionService(
+                    self.session, settings=self.settings, persist=True
+                ).collect_premarket(workflow_id=run.id)
+            if data.fail_closed:
+                meta = dict(run.metadata_json or {})
+                meta["data_fail_closed"] = True
+                meta["data_fail_closed_reasons"] = data.fail_closed_reasons
+                meta["collection_run_id"] = str(data.collection_run_id)
+                run.metadata_json = meta
             portfolio = PortfolioStateInput(
                 as_of=now,
                 equity=self.settings.starting_cash,
@@ -197,8 +209,14 @@ class DailyWorkflowService:
                     "cio_action": analysis.cio.portfolio_action.value,
                     "risk_verdict": analysis.risk.overall_verdict.value,
                     "broker_orders_submitted": False,
+                    "collection_run_id": str(data.collection_run_id),
+                    "data_quality_summary": data.quality_summary,
+                    "market_events": data.market_events[:20],
                 }
             )
+            if data.fail_closed or collection.fail_closed:
+                # Force NO_TRADE path visibility without broker
+                meta["no_trade_reason"] = ",".join(data.fail_closed_reasons) or "collection_fail_closed"
             run.metadata_json = meta
             run.analysis_workflow_run_id = analysis.workflow_id
             run.latest_decision_id = analysis.cio.decision_id
@@ -215,6 +233,7 @@ class DailyWorkflowService:
                     "cio_action": analysis.cio.portfolio_action.value,
                     "broker_orders_submitted": False,
                 },
+                "data": data.to_dict(),
             }
         finally:
             try:

@@ -1,18 +1,21 @@
-"""CLI entrypoints for analysis and daily workflow ops (Phase 2–3)."""
+"""CLI entrypoints for analysis, daily workflow, and data layer (Phase 2–4)."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 from app.agents.pipeline import AgentPipeline
+from app.context_builders.builders import MarketIntelligenceContextBuilder
 from app.core.config import get_settings
 from app.core.database import get_session_factory
+from app.ingestion.pipeline import DataCollectionPipeline
 from app.market.calendar import MarketCalendarService
+from app.providers.registry import list_providers
 from app.schemas.risk_manager import PortfolioStateInput
 from app.services.collection import DataCollectionService
 from app.services.llm import FakeLLMProvider
@@ -20,15 +23,22 @@ from app.workflow.daily import DailyWorkflowService
 from app.workflow.recovery import RecoveryService
 
 
-async def _run_analysis(*, fixture: Path | None, use_fake_llm: bool) -> dict:
+async def _run_analysis(*, fixture: Path | None, use_fake_llm: bool, real_data: bool) -> dict:
     settings = get_settings()
     factory = get_session_factory()
     async with factory() as session:
         if fixture and fixture.exists():
             _ = json.loads(fixture.read_text(encoding="utf-8"))
-        collection = await DataCollectionService(session, persist=False).collect_premarket(
-            workflow_id=uuid4()
-        )
+        if real_data:
+            data = await DataCollectionPipeline(
+                session, settings=settings, fixture_mode=not settings.enable_external_data
+            ).collect("PREMARKET")
+            collection = data.legacy_bundle
+            assert collection is not None
+        else:
+            collection = await DataCollectionService(session, persist=False).collect_premarket(
+                workflow_id=uuid4()
+            )
         llm = FakeLLMProvider({}) if use_fake_llm else None
         pipeline = (
             AgentPipeline(settings=settings, llm=llm)
@@ -106,20 +116,51 @@ async def _recovery() -> dict:
         return result
 
 
+async def _collect(kind: str, *, fixture: bool, symbols: list[str] | None, since_h: int | None) -> dict:
+    factory = get_session_factory()
+    async with factory() as session:
+        mapping = {
+            "premarket": "PREMARKET",
+            "intraday": "INTRADAY",
+            "news": "ON_DEMAND",
+            "sec": "ON_DEMAND",
+            "macro": "ON_DEMAND",
+            "revalidation": "PREOPEN_REVALIDATION",
+            "postmarket": "POSTMARKET",
+        }
+        result = await DataCollectionPipeline(
+            session, fixture_mode=fixture
+        ).collect(mapping.get(kind, "ON_DEMAND"), symbols=symbols)
+        await session.commit()
+        return result.to_dict()
+
+
+async def _build_context(kind: str) -> dict:
+    factory = get_session_factory()
+    async with factory() as session:
+        data = await DataCollectionPipeline(session, fixture_mode=True).collect("ON_DEMAND")
+        if kind == "market-intelligence":
+            return MarketIntelligenceContextBuilder().build(
+                news=data.news, filings=data.filings, conflicts=data.conflicts
+            )
+        return data.contexts.get(kind.replace("-", "_"), data.contexts)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     run = sub.add_parser("run-analysis", help="Run bottom-up analysis without broker orders")
     run.add_argument("--fixture", type=Path, default=None)
-    run.add_argument("--fake-llm", action="store_true", help="Force FakeLLMProvider (fallbacks)")
+    run.add_argument("--fake-llm", action="store_true")
+    run.add_argument("--real-data", action="store_true")
+    run.add_argument("--no-broker", action="store_true", default=True)
 
-    sub.add_parser("market-status", help="Show US market session status")
-
-    cal = sub.add_parser("calendar", help="Show session info for a date")
+    sub.add_parser("market-status")
+    cal = sub.add_parser("calendar")
     cal.add_argument("--date", type=date.fromisoformat, required=True)
 
-    daily = sub.add_parser("daily-workflow", help="Daily workflow operations")
+    daily = sub.add_parser("daily-workflow")
     daily_sub = daily.add_subparsers(dest="daily_cmd", required=True)
     for name in ("prepare", "run-analysis", "revalidate", "status"):
         p = daily_sub.add_parser(name)
@@ -127,18 +168,54 @@ def main(argv: list[str] | None = None) -> int:
         if name == "run-analysis":
             p.add_argument("--fake-llm", action="store_true")
 
-    sched = sub.add_parser("scheduler", help="Scheduler inspection")
-    sched_sub = sched.add_subparsers(dest="sched_cmd", required=True)
-    sched_sub.add_parser("list")
+    sched = sub.add_parser("scheduler")
+    sched.add_subparsers(dest="sched_cmd", required=True).add_parser("list")
 
-    recovery = sub.add_parser("recovery", help="Run recovery service")
-    recovery_sub = recovery.add_subparsers(dest="recovery_cmd", required=True)
-    recovery_sub.add_parser("run")
+    recovery = sub.add_parser("recovery")
+    recovery.add_subparsers(dest="recovery_cmd", required=True).add_parser("run")
+
+    providers = sub.add_parser("providers")
+    psub = providers.add_subparsers(dest="providers_cmd", required=True)
+    psub.add_parser("list")
+    psub.add_parser("health")
+
+    collect = sub.add_parser("collect")
+    csub = collect.add_subparsers(dest="collect_cmd", required=True)
+    for name in ("premarket", "intraday", "news", "sec", "macro"):
+        cp = csub.add_parser(name)
+        cp.add_argument("--fixture", action="store_true", default=True)
+        cp.add_argument("--symbols", default=None)
+        if name == "news":
+            cp.add_argument("--since", default=None)
+
+    dq = sub.add_parser("data-quality")
+    dq.add_subparsers(dest="dq_cmd", required=True).add_parser("report")
+
+    dc = sub.add_parser("data-conflicts")
+    dc.add_subparsers(dest="dc_cmd", required=True).add_parser("list")
+
+    bc = sub.add_parser("build-context")
+    bc.add_argument("context_kind", choices=["market-intelligence", "macro", "quant"])
+
+    wf = sub.add_parser("workflow")
+    wf_sub = wf.add_subparsers(dest="wf_cmd", required=True)
+    ra = wf_sub.add_parser("run-analysis")
+    ra.add_argument("--real-data", action="store_true")
+    ra.add_argument("--fake-llm", action="store_true")
+    ra.add_argument("--no-broker", action="store_true", default=True)
 
     args = parser.parse_args(argv)
 
     if args.cmd == "run-analysis":
-        result = asyncio.run(_run_analysis(fixture=args.fixture, use_fake_llm=args.fake_llm))
+        result = asyncio.run(
+            _run_analysis(
+                fixture=args.fixture, use_fake_llm=args.fake_llm, real_data=args.real_data
+            )
+        )
+    elif args.cmd == "workflow" and args.wf_cmd == "run-analysis":
+        result = asyncio.run(
+            _run_analysis(fixture=None, use_fake_llm=args.fake_llm, real_data=args.real_data)
+        )
     elif args.cmd == "market-status":
         result = asyncio.run(_market_status())
     elif args.cmd == "calendar":
@@ -152,6 +229,35 @@ def main(argv: list[str] | None = None) -> int:
         result = asyncio.run(_scheduler_list())
     elif args.cmd == "recovery" and args.recovery_cmd == "run":
         result = asyncio.run(_recovery())
+    elif args.cmd == "providers" and args.providers_cmd == "list":
+        result = {"providers": list_providers(get_settings())}
+    elif args.cmd == "providers" and args.providers_cmd == "health":
+        from app.providers.base import get_breaker
+
+        settings = get_settings()
+        result = {
+            "health": [
+                {"name": n, "allow": get_breaker(n, settings).allow()}
+                for n in ("fixture", "alpaca", "sec_edgar")
+            ]
+        }
+    elif args.cmd == "collect":
+        syms = (
+            [s.strip().upper() for s in args.symbols.split(",")]
+            if getattr(args, "symbols", None)
+            else None
+        )
+        result = asyncio.run(
+            _collect(args.collect_cmd, fixture=getattr(args, "fixture", True), symbols=syms, since_h=None)
+        )
+    elif args.cmd == "data-quality" and args.dq_cmd == "report":
+        result = asyncio.run(_collect("premarket", fixture=True, symbols=None, since_h=None))
+        result = {"quality_summary": result.get("quality_summary"), "fail_closed": result.get("fail_closed")}
+    elif args.cmd == "data-conflicts" and args.dc_cmd == "list":
+        raw = asyncio.run(_collect("premarket", fixture=True, symbols=None, since_h=None))
+        result = {"conflicts": raw.get("provider_metas")}  # lightweight; full conflicts in API cache
+    elif args.cmd == "build-context":
+        result = asyncio.run(_build_context(args.context_kind))
     else:
         return 1
 

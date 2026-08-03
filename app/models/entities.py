@@ -433,3 +433,58 @@ class RevalidationRun(Base, TimestampMixin):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt: Mapped[int] = mapped_column(Integer, default=1)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class DataCollectionRun(Base, TimestampMixin):
+    __tablename__ = "data_collection_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    collection_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    providers_requested: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    providers_succeeded: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    providers_failed: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    records_received: Mapped[int] = mapped_column(Integer, default=0)
+    records_normalized: Mapped[int] = mapped_column(Integer, default=0)
+    records_rejected: Mapped[int] = mapped_column(Integer, default=0)
+    quality_summary: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class MarketEventRecord(Base, TimestampMixin):
+    __tablename__ = "market_events"
+    __table_args__ = (
+        UniqueConstraint("deduplication_key", name="uq_market_event_dedupe"),
+        Index("ix_market_events_type_detected", "event_type", "detected_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    importance: Mapped[str] = mapped_column(String(32), nullable=False, default="normal")
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    symbols: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    sectors: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    source_record_ids: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    trigger_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requires_reanalysis: Mapped[bool] = mapped_column(Boolean, default=False)
+    requires_risk_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    deduplication_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    collection_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class DataConflictRecord(Base, TimestampMixin):
+    __tablename__ = "data_conflicts"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    data_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol_or_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(64), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    collection_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)

@@ -151,13 +151,55 @@ class Settings(BaseSettings):
     enable_automated_execution: bool = False
     enable_broker_orders: bool = False
 
+    # Phase 4 data layer (external APIs off by default)
+    enable_external_data: bool = False
+    enable_news_collection: bool = False
+    enable_market_data_collection: bool = False
+    enable_sec_collection: bool = False
+    enable_macro_collection: bool = False
+    sec_provider: str = "sec_edgar"
+    macro_provider: str = "fixture"
+    economic_calendar_provider: str = "fixture"
+    market_data_provider_priority: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["fixture"]
+    )
+    news_provider_priority: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["fixture"]
+    )
+    provider_request_timeout_seconds: int = 15
+    provider_max_retries: int = 2
+    provider_retry_backoff_seconds: float = 2.0
+    provider_circuit_breaker_failures: int = 5
+    provider_circuit_breaker_reset_seconds: int = 300
+    latest_quote_max_age_seconds: int = 30
+    intraday_bar_max_age_seconds: int = 120
+    premarket_quote_max_age_seconds: int = 120
+    news_max_age_minutes: int = 1440
+    economic_event_max_delay_seconds: int = 300
+    account_snapshot_max_age_seconds: int = 30
+    data_quality_warning_threshold: float = 0.75
+    data_quality_hard_fail_threshold: float = 0.50
+    quote_price_tolerance_bps: float = 20.0
+    bar_volume_tolerance_pct: float = 10.0
+    max_news_context_items: int = 50
+    max_news_body_excerpt_chars: int = 3000
+    max_sec_context_items: int = 20
+    sec_user_agent: str = "InvestorBot/0.8 (contact: investor-dev@example.com)"
+    calculation_version: str = "indicators_v1"
+
     # Scheduler (legacy cron placeholders; Phase 3 prefers enable_scheduler + dynamic jobs)
     scheduler_enabled: bool = False
     premarket_cron_hour: int = 8
     premarket_cron_minute: int = 0
     premarket_cron_tz: str = "America/New_York"
 
-    @field_validator("api_cors_origins", "trade_allowlist", mode="before")
+    @field_validator(
+        "api_cors_origins",
+        "trade_allowlist",
+        "market_data_provider_priority",
+        "news_provider_priority",
+        mode="before",
+    )
     @classmethod
     def _split_csv(cls, value: object) -> object:
         if isinstance(value, str):

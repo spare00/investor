@@ -277,35 +277,22 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 | Phase | Focus | Status |
 |-------|--------|--------|
 | 2 | Prompt system + agent framework hardening | Complete — `docs/phase2_report.md` |
-| 3 | Calendar, DST, daily workflow SM, leases | **This release** — `docs/phase3_report.md` |
-| 4 | Live external data providers | Planned |
+| 3 | Calendar, DST, daily workflow SM, leases | Complete — `docs/phase3_report.md` |
+| 4 | Data collection & normalization layer | **This release** — `docs/phase4_report.md` |
 | 5 | Broker execution hardening | Partially present (Alpaca paper) |
 | 6 | Intraday cadence, review, dashboard | Partially present |
 | 7 | Simulation, security, ops readiness | Planned |
 
-Docs: `docs/phase2_audit.md`, `docs/market_calendar.md`, `docs/daily_workflow.md`,
-`docs/state_machine.md`, `docs/scheduler_and_leases.md`, `docs/recovery.md`,
-`docs/phase3_report.md`.
-
-Analysis without orders:
+Docs: `docs/phase3_audit.md`, `docs/data_architecture.md`, `docs/provider_adapters.md`,
+`docs/phase4_report.md`.
 
 ```bash
-python -m app.cli run-analysis --fake-llm
-python -m app.cli market-status
-python -m app.cli calendar --date 2026-11-27
-python -m app.cli daily-workflow prepare --date 2026-08-03
-python -m app.cli daily-workflow run-analysis --fake-llm
-python -m app.cli recovery run
-# GET /market/status  GET /workflow/daily/current
+python -m app.cli collect premarket --fixture
+python -m app.cli providers list
+python -m app.cli workflow run-analysis --real-data --fake-llm --no-broker
 ```
 
-Phase 3 defaults: `ENABLE_SCHEDULER=false`, `ENABLE_BROKER_ORDERS=false`,
-`ENABLE_AUTOMATED_EXECUTION=false`. Daily state machine never auto-submits broker orders.
-
-### Calendar library
-
-Uses **`exchange_calendars`** (`XNYS`) for holidays, early closes, and DST-aware session
-open/close. See `docs/market_calendar.md`.
+Defaults: `ENABLE_EXTERNAL_DATA=false`, `ENABLE_BROKER_ORDERS=false`.
 ---
 
 ## License

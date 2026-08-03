@@ -76,6 +76,49 @@ class RevalidationService:
             await self._persist(run, report)
             return report
 
+        # Explicit operator/test fixtures take precedence over TTL/event heuristics
+        if fixture.get("hard_veto"):
+            report = RevalidationReport(
+                result=RevalidationResult.NO_TRADE,
+                reason="hard_veto_fixture",
+                attempt=attempt,
+                details=details,
+            )
+            await self._persist(run, report)
+            return report
+
+        if fixture.get("material_conflict"):
+            report = RevalidationReport(
+                result=RevalidationResult.NO_TRADE,
+                reason="material_data_conflict",
+                attempt=attempt,
+                details=details,
+            )
+            await self._persist(run, report)
+            return report
+
+        if fixture.get("high_importance_news"):
+            report = RevalidationReport(
+                result=RevalidationResult.REANALYSIS_REQUIRED,
+                reason="high_importance_news",
+                attempt=attempt,
+                details=details,
+            )
+            await self._persist(run, report)
+            return report
+
+        if fixture.get("stale_data"):
+            report = RevalidationReport(
+                result=RevalidationResult.REANALYSIS_REQUIRED
+                if attempt <= self.settings.max_revalidation_retries + 1
+                else RevalidationResult.NO_TRADE,
+                reason="stale_data_fixture",
+                attempt=attempt,
+                details=details,
+            )
+            await self._persist(run, report)
+            return report
+
         meta = run.metadata_json or {}
         analysed_at = meta.get("analysis_completed_at")
         if analysed_at:
@@ -105,22 +148,49 @@ class RevalidationService:
             except ValueError:
                 pass
 
-        if fixture.get("stale_data"):
+        # Live metadata from prior collection — only NEW events after analysis cutoff
+        events = meta.get("market_events") or []
+        analysed_at = meta.get("analysis_completed_at")
+        cutoff_ts: datetime | None = None
+        if analysed_at:
+            try:
+                cutoff_ts = datetime.fromisoformat(str(analysed_at))
+                if cutoff_ts.tzinfo is None:
+                    cutoff_ts = cutoff_ts.replace(tzinfo=UTC)
+            except ValueError:
+                cutoff_ts = None
+
+        def _is_new_event(ev: dict[str, Any]) -> bool:
+            if cutoff_ts is None:
+                return True
+            raw = ev.get("effective_at") or ev.get("detected_at")
+            if not raw:
+                return False
+            try:
+                ts = datetime.fromisoformat(str(raw))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                return ts > cutoff_ts
+            except ValueError:
+                return False
+
+        if (
+            any(e.get("requires_reanalysis") and _is_new_event(e) for e in events)
+            and attempt <= self.settings.max_revalidation_retries
+        ):
             report = RevalidationReport(
-                result=RevalidationResult.REANALYSIS_REQUIRED
-                if attempt <= self.settings.max_revalidation_retries + 1
-                else RevalidationResult.NO_TRADE,
-                reason="stale_data_fixture",
+                result=RevalidationResult.REANALYSIS_REQUIRED,
+                reason="market_event_requires_reanalysis",
                 attempt=attempt,
-                details=details,
+                details={**details, "events": events[:5]},
             )
             await self._persist(run, report)
             return report
 
-        if fixture.get("hard_veto"):
+        if meta.get("data_fail_closed"):
             report = RevalidationReport(
                 result=RevalidationResult.NO_TRADE,
-                reason="hard_veto_fixture",
+                reason="data_fail_closed:" + ",".join(meta.get("data_fail_closed_reasons") or []),
                 attempt=attempt,
                 details=details,
             )
