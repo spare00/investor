@@ -52,3 +52,4 @@ backups/
 
 # Docker
 .docker/
+.data/

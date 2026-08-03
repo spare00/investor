@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096
     llm_timeout_seconds: int = 60
     llm_max_retries: int = 2
+    # Daily LLM spend guard (UTC day). 0 budget disables that dimension.
+    llm_budget_enforce: bool = True
+    llm_daily_token_budget: int = 500_000
+    llm_daily_call_budget: int = 120
+    llm_budget_soft_limit_pct: float = 0.8
+    llm_budget_state_path: str = ".data/llm_budget_state.json"
 
     # Data providers
     news_provider: str = "stub"

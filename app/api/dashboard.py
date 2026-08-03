@@ -14,6 +14,7 @@ from app.core.scheduler import upcoming_jobs
 from app.core.timeutils import dual_timezone_labels, utc_now
 from app.execution.order_manager import OrderManager
 from app.execution.safety_controls import trading_controls
+from app.services.llm_budget import snapshot_llm_budget
 from app.models import (
     AgentReport,
     AgentRun,
@@ -279,4 +280,5 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             for e in errors
         ],
         "next_jobs": upcoming_jobs(),
+        "llm_budget": snapshot_llm_budget().to_dict(),
     }

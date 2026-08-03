@@ -134,6 +134,24 @@ EMERGENCY_STOP_ACTIVE = Gauge(
 )
 EVENT_QUEUE_DEPTH = Gauge("investor_event_queue_depth", "Pending event queue depth")
 
+LLM_TOKENS_TODAY = Gauge(
+    "investor_llm_tokens_today",
+    "Billable LLM tokens recorded today (UTC)",
+)
+LLM_CALLS_TODAY = Gauge(
+    "investor_llm_calls_today",
+    "Billable LLM API calls recorded today (UTC)",
+)
+LLM_BUDGET_BLOCKED = Gauge(
+    "investor_llm_budget_blocked",
+    "LLM daily budget exhausted (1=yes, 0=no)",
+)
+LLM_BUDGET_EXCEEDED = Counter(
+    "investor_llm_budget_exceeded_total",
+    "LLM calls blocked by daily budget",
+    ["reason"],
+)
+
 
 def trading_state_value(state: str) -> float:
     return {"active": 1.0, "paused": 0.5, "emergency_stop": 0.0}.get(state, -1.0)

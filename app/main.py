@@ -32,6 +32,7 @@ from app.core.metrics import TRADING_STATE, trading_state_value
 from app.core.scheduler import start_scheduler, stop_scheduler, upcoming_jobs
 from app.core.security import require_execution_allowed
 from app.execution.safety_controls import trading_controls
+from app.services.llm_budget import snapshot_llm_budget
 from app.workflow.recovery import RecoveryService
 
 logger = get_logger(__name__)
@@ -150,6 +151,7 @@ async def status() -> dict[str, Any]:
             "max_drawdown_pct": settings.max_drawdown_pct,
         },
         "next_jobs": upcoming_jobs(),
+        "llm_budget": snapshot_llm_budget(settings).to_dict(),
         "note": "Phase 7 dashboard and Prometheus metrics online",
         "endpoints": {
             "dashboard": "GET /dashboard",

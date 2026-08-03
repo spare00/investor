@@ -1,4 +1,4 @@
-"""OpenAI-compatible LLM client with timeout and retries."""
+"""OpenAI-compatible LLM client with timeout, retries, and daily spend budget."""
 
 from __future__ import annotations
 
@@ -11,6 +11,12 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.services.llm_budget import (
+    LLMBudgetExceeded,
+    assert_llm_budget_allows_call,
+    record_llm_usage,
+    usage_from_openai_response,
+)
 
 logger = get_logger(__name__)
 
@@ -44,12 +50,6 @@ class OpenAICompatibleClient:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
 
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError, LLMError)),
-    )
     async def complete_json(
         self,
         *,
@@ -61,8 +61,43 @@ class OpenAICompatibleClient:
     ) -> LLMResponse:
         cfg = self.settings
         if not _llm_api_key_configured(cfg):
-            # Missing key is configuration, not a transient failure — do not retry.
             raise LLMError("LLM_API_KEY is not configured")
+        try:
+            assert_llm_budget_allows_call(cfg)
+        except LLMBudgetExceeded as exc:
+            try:
+                from app.core.metrics import LLM_BUDGET_EXCEEDED
+
+                reason = "tokens" if "token" in exc.reason else "calls"
+                LLM_BUDGET_EXCEEDED.labels(reason=reason).inc()
+            except Exception:  # noqa: BLE001
+                pass
+            logger.error("llm_budget_blocked", reason=exc.reason, **(exc.snapshot or {}))
+            raise LLMError(str(exc)) from exc
+        return await self._complete_json_with_retries(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError, LLMError)),
+    )
+    async def _complete_json_with_retries(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> LLMResponse:
+        cfg = self.settings
         api_key = cfg.llm_api_key.get_secret_value() if cfg.llm_api_key else ""
 
         payload = {
@@ -97,6 +132,13 @@ class OpenAICompatibleClient:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError("Unexpected LLM response shape") from exc
+
+        prompt_t, completion_t = usage_from_openai_response(data if isinstance(data, dict) else None)
+        if prompt_t == 0 and completion_t == 0:
+            # Provider omitted usage — count a conservative floor so budgets still bite.
+            prompt_t = max(1, (len(system_prompt) + len(user_prompt)) // 4)
+            completion_t = max(1, len(content) // 4)
+        record_llm_usage(prompt_tokens=prompt_t, completion_tokens=completion_t, settings=cfg)
 
         return LLMResponse(content=content, model=str(data.get("model") or payload["model"]), raw=data)
 
