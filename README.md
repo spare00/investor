@@ -227,7 +227,7 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 | 1 | Foundation, schemas, Risk Engine | **Complete** |
 | 2 | Data collection & normalization | **Complete** |
 | 3 | Agent framework + prompts | **Complete** |
-| 4 | Full risk / emergency stop | Planned |
+| 4 | Full risk / emergency stop | **Complete** |
 | 5 | Premarket / intraday / postmarket workflows | Planned |
 | 6 | Paper trading execution | Planned |
 | 7 | Dashboard & metrics | Planned |
