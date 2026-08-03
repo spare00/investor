@@ -157,30 +157,30 @@ investor/
 
 ---
 
-## Quick start (Phase 1)
+## Quick start (Phase 2)
 
 ```bash
 # 1. Python env
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
 # 2. Config
 cp .env.example .env
 
-# 3. Optional infra
+# 3. Infra + migrate
 docker compose up -d db redis
+alembic upgrade head
 
-# 4. Tests (no broker / LLM required)
-pytest tests/unit -q
-```
+# 4. Tests
+pytest tests/unit tests/integration -q
 
-Run the API skeleton:
-
-```bash
+# 5. API
 uvicorn app.main:app --reload --port 8000
-# GET http://localhost:8000/health
+# POST http://localhost:8000/workflow/premarket/collect
 ```
+
+Default news/market providers are **stub** so local runs need no API keys.
 
 ---
 
@@ -225,7 +225,7 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 | Phase | Focus | Status |
 |-------|--------|--------|
 | 1 | Foundation, schemas, Risk Engine | **Complete** |
-| 2 | Data collection & normalization | Planned |
+| 2 | Data collection & normalization | **Complete** |
 | 3 | Agent framework + prompts | Planned |
 | 4 | Full risk / emergency stop | Planned |
 | 5 | Premarket / intraday / postmarket workflows | Planned |

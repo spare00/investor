@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from app.api.collection import router as collection_router
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
 from app.core.security import require_execution_allowed
@@ -26,6 +27,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         trading_mode=mode.value,
         live_allowed=settings.is_live_trading_allowed(),
         allowlist_size=len(settings.trade_allowlist),
+        phase=2,
     )
     yield
     logger.info("app_shutdown")
@@ -34,9 +36,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Investor",
     description="Six-agent AI investment firm (paper trading first)",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
+app.include_router(collection_router)
 
 
 @app.get("/health")
@@ -44,10 +47,10 @@ async def health() -> dict[str, Any]:
     settings = get_settings()
     return {
         "status": "ok",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "trading_mode": require_execution_allowed(settings).value,
         "live_trading_allowed": settings.is_live_trading_allowed(),
-        "phase": 1,
+        "phase": 2,
     }
 
 
@@ -67,7 +70,10 @@ async def status() -> dict[str, Any]:
             "max_drawdown_pct": settings.max_drawdown_pct,
         },
         "next_jobs": [],
-        "note": "Phase 1 foundation — workflows not scheduled yet",
+        "note": "Phase 2 data collection — agents/orders not enabled yet",
+        "endpoints": {
+            "premarket_collect": "POST /workflow/premarket/collect",
+        },
     }
 
 
