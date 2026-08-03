@@ -244,7 +244,7 @@ def test_validator_no_trade_ignores_symbol_exits() -> None:
     assert result.intents == []
 
 
-def test_validator_limit_exit_fills_price_from_last() -> None:
+def test_validator_exits_use_market_orders() -> None:
     decision = CIODecision(
         decision_id=uuid4(),
         timestamp=NOW,
@@ -257,7 +257,7 @@ def test_validator_limit_exit_fills_price_from_last() -> None:
                 confidence=70,
                 target_position_pct=0,
                 order_type=OrderType.LIMIT,
-                thesis="exit without entry_zone",
+                thesis="exit forced to market",
                 invalidation="n/a",
             )
         ],
@@ -281,8 +281,8 @@ def test_validator_limit_exit_fills_price_from_last() -> None:
         data_quality_score=0.9,
     )
     assert result.approved is True
-    assert result.intents[0].order_type == "limit"
-    assert result.intents[0].limit_price == 20.5
+    assert result.intents[0].order_type == "market"
+    assert result.intents[0].limit_price is None
 
 
 def test_validator_allows_exit_for_off_allowlist_long() -> None:

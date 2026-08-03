@@ -223,13 +223,13 @@ class ExecutionValidator:
             limit_price = (plan.entry_zone.min + plan.entry_zone.max) / 2.0
 
         order_type = plan.order_type.value
-        # Alpaca rejects limit orders without limit_price — fall back to last price,
-        # or coerce exits to market when no price context exists.
-        if order_type in {"limit", "stop_limit"} and limit_price is None:
+        # Exits: prefer market so stub/offline quotes cannot park unfillable limits.
+        if plan.action not in ENTRY_ACTIONS:
+            order_type = "market"
+            limit_price = None
+        elif order_type in {"limit", "stop_limit"} and limit_price is None:
             if price and price > 0:
                 limit_price = float(price)
-            elif plan.action not in ENTRY_ACTIONS:
-                order_type = "market"
             else:
                 return f"{symbol}:limit_order_missing_price"
 

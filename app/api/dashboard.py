@@ -12,6 +12,7 @@ from app.core.database import get_db_session
 from app.core.metrics import metrics_payload
 from app.core.scheduler import upcoming_jobs
 from app.core.timeutils import dual_timezone_labels, utc_now
+from app.execution.order_manager import OrderManager
 from app.execution.safety_controls import trading_controls
 from app.models import (
     AgentReport,
@@ -126,6 +127,12 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     """Single payload for the ops dashboard."""
     now = utc_now()
     controls = trading_controls.snapshot()
+
+    # Keep local order statuses aligned with Alpaca before rendering open orders.
+    try:
+        await OrderManager(session).sync_statuses_from_broker()
+    except Exception:  # noqa: BLE001 — dashboard should still render
+        pass
 
     snap = (
         await session.execute(

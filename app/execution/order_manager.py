@@ -213,3 +213,46 @@ class OrderManager:
             select(Order).order_by(Order.created_at.desc()).limit(limit)
         )
         return list(result.scalars().all())
+
+    async def sync_statuses_from_broker(self) -> dict[str, Any]:
+        """Refresh local open/pending orders from Alpaca truth."""
+        openish = {"new", "accepted", "partially_filled", "pending_submit", "pending_new"}
+        result = await self.session.execute(
+            select(Order).where(Order.status.in_(list(openish)))
+        )
+        rows = list(result.scalars().all())
+        updated = 0
+        errors = 0
+        for row in rows:
+            if not row.broker_order_id:
+                continue
+            try:
+                br = await self.broker.get_order(row.broker_order_id)
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                logger.warning(
+                    "order_status_sync_failed",
+                    broker_order_id=row.broker_order_id,
+                    error=str(exc),
+                )
+                continue
+            new_status = br.status.value
+            if row.status != new_status:
+                row.status = new_status
+                row.raw_payload = {**(row.raw_payload or {}), "broker_sync": br.raw or {}}
+                updated += 1
+                if br.status == OrderStatus.FILLED and br.avg_fill_price is not None:
+                    self.session.add(
+                        Execution(
+                            id=uuid4(),
+                            order_id=row.id,
+                            symbol=row.symbol,
+                            qty=br.filled_qty or row.qty,
+                            price=br.avg_fill_price,
+                            executed_at=datetime.now(UTC),
+                            raw_payload=br.raw or {},
+                        )
+                    )
+        await self.session.flush()
+        logger.info("orders_synced_from_broker", checked=len(rows), updated=updated, errors=errors)
+        return {"checked": len(rows), "updated": updated, "errors": errors}

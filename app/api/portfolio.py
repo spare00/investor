@@ -50,8 +50,14 @@ async def get_orders(
     limit: int = 50,
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
-    rows = await OrderManager(session).list_orders(limit=limit)
+    om = OrderManager(session)
+    try:
+        sync = await om.sync_statuses_from_broker()
+    except Exception as exc:  # noqa: BLE001
+        sync = {"error": str(exc)}
+    rows = await om.list_orders(limit=limit)
     return {
+        "sync": sync,
         "orders": [
             {
                 "id": str(o.id),
@@ -60,6 +66,7 @@ async def get_orders(
                 "side": o.side,
                 "qty": o.qty,
                 "order_type": o.order_type,
+                "limit_price": o.limit_price,
                 "status": o.status,
                 "idempotency_key": o.idempotency_key,
                 "submitted_at": o.submitted_at.isoformat() if o.submitted_at else None,
