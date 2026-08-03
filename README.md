@@ -61,7 +61,7 @@ Higher agents receive both raw source payloads and structured lower-agent report
 | Quant & Technical | Levels/probs | Probabilities from rules/models, not vibes |
 | Portfolio & Risk | Approve/veto | Hard vetoes are **code**, not LLM |
 | Devil’s Advocate | Challenge | Must answer five mandatory questions |
-| CIO | Final action | **Cannot** override Hard Veto |
+| CIO | **Yes — final trades** | Bottom-up final judgment; **Cannot** override Hard Veto |
 
 ---
 
@@ -251,15 +251,18 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 
 ## Assumptions
 
-1. **Paper first:** Phase 5 adds Mock + Alpaca Paper adapters; orders stay off by default and require manual approval.
-2. **LLM optional in unit tests:** Risk Engine and schema tests run without API keys.
-3. **Stub/fixture providers** used until external data flags are enabled.
-4. **Sector map** for concentration checks uses a static ETF/stock sector table
+1. **Agent firm, paper first:** Six agents run analysis → CIO decides → intents →
+   paper broker when safety flags unlock. Live stays dual-gated off.
+2. **Manual approval is optional:** `REQUIRE_MANUAL_ORDER_APPROVAL` is an ops brake,
+   not the product identity. Ship defaults keep `ENABLE_BROKER_ORDERS=false`.
+3. **LLM optional in unit tests:** Risk Engine and schema tests run without API keys.
+4. **Stub/fixture providers** used until external data flags are enabled.
+5. **Sector map** for concentration checks uses a static ETF/stock sector table
    (configurable later).
-5. **ATR-based sizing** uses caller-supplied ATR/stop distance; collectors will
+6. **ATR-based sizing** uses caller-supplied ATR/stop distance; collectors will
    populate these in Phase 2+.
-6. **SQLite for unit tests** via `aiosqlite` when `DATABASE_URL` is unset in pytest.
-7. **macOS + Linux** supported; Windows is best-effort only.
+7. **SQLite for unit tests** via `aiosqlite` when `DATABASE_URL` is unset in pytest.
+8. **macOS + Linux** supported; Windows is best-effort only.
 
 ---
 

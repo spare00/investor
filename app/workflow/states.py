@@ -156,7 +156,22 @@ def assert_transition_allowed(from_state: DailyWorkflowState, to_state: DailyWor
         raise ValueError(f"illegal_transition:{from_state.value}->{to_state.value}")
 
 
-# Broker orders are never allowed from the Phase 3 daily state machine.
+# Broker / paper execution eligibility by daily state.
+# Intent materialization + paper submit are gated by Settings (enable_broker_orders,
+# enable_automated_execution, live blocks) — not by freezing the SM forever.
+# Humans are optional brakes; CIO bottom-up is the trading actor when paper unlocked.
 BROKER_ORDERS_ALLOWED: dict[DailyWorkflowState, bool] = {
-    state: False for state in DailyWorkflowState
+    DailyWorkflowState.NON_TRADING_DAY: False,
+    DailyWorkflowState.PREMARKET_PREPARATION: False,
+    DailyWorkflowState.PREMARKET_ANALYSIS: False,  # analyze only; materialize after analysis step
+    DailyWorkflowState.PREOPEN_REVALIDATION: True,  # may materialize/submit after VALID
+    DailyWorkflowState.MARKET_OPEN: True,
+    DailyWorkflowState.INTRADAY: True,
+    DailyWorkflowState.CLOSING_WINDOW: True,
+    DailyWorkflowState.MARKET_CLOSED: False,
+    DailyWorkflowState.POSTMARKET_REVIEW: False,
+    DailyWorkflowState.COMPLETED: False,
+    DailyWorkflowState.PAUSED: False,
+    DailyWorkflowState.EMERGENCY_STOP: False,
+    DailyWorkflowState.FAILED: False,
 }

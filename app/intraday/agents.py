@@ -167,8 +167,38 @@ class IntradayAgentService:
                 payload={"workflow_id": str(run.id), "mode": mode.value},
             )
             self.session.add(decision_row)
+
+            execution: dict[str, Any] = {
+                "intent_count": 0,
+                "broker_orders_submitted": False,
+                "notes": ["intraday_intents_skipped_mode"],
+            }
+            # Agent firm: materialize CIO → intents when mode allows (not OBSERVE_ONLY draft-only)
+            if caps.can_create_intent and not caps.intents_are_draft_only and cio.risk_approval:
+                from app.execution.firm_execution import materialize_cio_decision
+
+                prices = {m.symbol: m.last for m in collection.markets}
+                execution = await materialize_cio_decision(
+                    self.session,
+                    cio,
+                    portfolio=portfolio,
+                    latest_prices=prices,
+                    data_quality_score=float(collection.aggregate_quality or 1.0),
+                    workflow_id=run.id,
+                    settings=self.settings,
+                    create_intents=True,
+                    allow_submit=caps.can_submit and mode == IntradayOperationMode.PAPER_AUTOMATED,
+                )
+            elif caps.can_create_intent and caps.intents_are_draft_only:
+                execution = {"intent_count": 0, "broker_orders_submitted": False, "notes": ["draft_only_mode"]}
+
             run.status = "COMPLETED"
-            run.payload = {"decision_id": str(decision_row.id), "cio_action": portfolio_action}
+            run.payload = {
+                "decision_id": str(decision_row.id),
+                "cio_action": portfolio_action,
+                "execution": execution,
+                "trading_actor": "cio_bottom_up",
+            }
             self.bus.record_reanalysis(open_syms or ["PORTFOLIO"])
             await self.session.flush()
             return {
@@ -179,7 +209,10 @@ class IntradayAgentService:
                 "symbol_actions": symbol_payload,
                 "mode": mode.value,
                 "intent_drafts_allowed": caps.can_create_intent,
-                "broker_orders_submitted": False,
+                "intent_count": execution.get("intent_count", 0),
+                "broker_orders_submitted": bool(execution.get("broker_orders_submitted")),
+                "trading_actor": "cio_bottom_up",
+                "execution": execution,
             }
         except Exception as exc:  # noqa: BLE001
             run.status = "FAILED"

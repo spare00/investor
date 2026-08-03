@@ -155,7 +155,11 @@ class Settings(BaseSettings):
     broker_provider: str = "mock"  # mock | alpaca
     broker_environment: str = "paper"  # paper only in Phase 5
     enable_broker_connection: bool = False
-    require_manual_order_approval: bool = True
+    # Trading safety — agent firm paper path (Live always blocked)
+    # REQUIRE_MANUAL_ORDER_APPROVAL is an optional ops brake, not the firm identity.
+    # Default False: CIO bottom-up may auto-submit paper when ENABLE_BROKER_ORDERS +
+    # ENABLE_AUTOMATED_EXECUTION are explicitly unlocked. Ship defaults keep orders off.
+    require_manual_order_approval: bool = False
     enable_live_trading: bool = False  # hard block; distinct from live_trading_enabled dual-gate
     enable_short_selling: bool = False
     enable_extended_hours_orders: bool = False

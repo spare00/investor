@@ -1,4 +1,9 @@
-"""Daily workflow orchestration (Phase 3) — no broker orders."""
+"""Daily workflow orchestration — 6-agent firm day cycle.
+
+Trading authority: CIO bottom-up decision → Order Intents → paper broker when
+safety flags unlock. Live trading stays blocked. Manual approval is an optional
+ops brake, not the firm identity.
+"""
 
 from __future__ import annotations
 
@@ -58,12 +63,16 @@ class DailyWorkflowService:
         self.owner = owner
 
     def _broker_guard(self) -> None:
-        if self.settings.enable_broker_orders or self.settings.enable_automated_execution:
-            # Phase 3 must not auto-execute even if misconfigured in tests — force closed path.
-            logger.warning(
-                "broker_flags_ignored_in_daily_workflow",
-                enable_broker_orders=self.settings.enable_broker_orders,
-                enable_automated_execution=self.settings.enable_automated_execution,
+        """Warn if Live is misconfigured; never silently ignore paper automation flags."""
+        if self.settings.enable_live_trading or self.settings.is_live_trading_allowed():
+            logger.error(
+                "live_trading_flag_set_daily_workflow_will_not_submit_live",
+                enable_live_trading=self.settings.enable_live_trading,
+            )
+        if self.settings.enable_broker_orders and self.settings.enable_automated_execution:
+            logger.info(
+                "daily_workflow_agent_paper_path_armed",
+                require_manual_order_approval=self.settings.require_manual_order_approval,
             )
 
     async def get_current(self, session_date: str | None = None) -> DailyWorkflowRun | None:
@@ -202,13 +211,36 @@ class DailyWorkflowService:
                 proposed_trades=[],
                 workflow_id=run.id,
             )
+            prices = {m.symbol: m.last for m in collection.markets}
+            from app.execution.firm_execution import materialize_cio_decision
+
+            # Agent firm path: CIO decides → intents; paper submit when automation unlocked
+            execution = await materialize_cio_decision(
+                self.session,
+                analysis.cio,
+                portfolio=portfolio,
+                latest_prices=prices,
+                data_quality_score=float(
+                    (data.quality_summary or {}).get("aggregate_score")
+                    or collection.aggregate_quality
+                    or 1.0
+                ),
+                workflow_id=run.id,
+                settings=self.settings,
+                create_intents=not (data.fail_closed or collection.fail_closed),
+                allow_submit=not (data.fail_closed or collection.fail_closed),
+            )
             meta = dict(run.metadata_json or {})
             meta.update(
                 {
                     "analysis_completed_at": analysis.completed_at.isoformat(),
                     "cio_action": analysis.cio.portfolio_action.value,
                     "risk_verdict": analysis.risk.overall_verdict.value,
-                    "broker_orders_submitted": False,
+                    "broker_orders_submitted": bool(execution.get("broker_orders_submitted")),
+                    "intent_count": execution.get("intent_count", 0),
+                    "intent_ids": execution.get("intent_ids", []),
+                    "execution_notes": execution.get("notes", []),
+                    "trading_actor": "cio_bottom_up",
                     "collection_run_id": str(data.collection_run_id),
                     "data_quality_summary": data.quality_summary,
                     "market_events": data.market_events[:20],
@@ -231,8 +263,11 @@ class DailyWorkflowService:
                 "analysis": {
                     "workflow_id": str(analysis.workflow_id),
                     "cio_action": analysis.cio.portfolio_action.value,
-                    "broker_orders_submitted": False,
+                    "broker_orders_submitted": bool(execution.get("broker_orders_submitted")),
+                    "intent_count": execution.get("intent_count", 0),
+                    "trading_actor": "cio_bottom_up",
                 },
+                "execution": execution,
                 "data": data.to_dict(),
             }
         finally:
