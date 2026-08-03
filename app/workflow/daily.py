@@ -1,0 +1,633 @@
+"""Daily workflow orchestration (Phase 3) — no broker orders."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from uuid import uuid4
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.agents.pipeline import AgentPipeline
+from app.core.config import Settings, get_settings
+from app.core.logging import get_logger
+from app.execution.safety_controls import TradingControls, trading_controls
+from app.market.calendar import MarketCalendarService
+from app.models import DailyWorkflowRun, ScheduledJobRecord, WorkflowStateTransition
+from app.schemas.risk_manager import PortfolioStateInput
+from app.services.collection import DataCollectionService
+from app.services.llm import FakeLLMProvider, get_llm_client
+from app.workflow.closing import ClosingPolicyEngine
+from app.workflow.lease import LeaseError, LeaseService
+from app.workflow.revalidation import RevalidationService
+from app.workflow.states import (
+    BROKER_ORDERS_ALLOWED,
+    ClosingPolicy,
+    DailyWorkflowState,
+    IntradayEvalResult,
+    RevalidationResult,
+    WorkflowRunStatus,
+    assert_transition_allowed,
+)
+
+logger = get_logger(__name__)
+
+
+class DailyWorkflowError(Exception):
+    pass
+
+
+class DailyWorkflowService:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        settings: Settings | None = None,
+        controls: TradingControls | None = None,
+        owner: str = "daily-workflow",
+    ) -> None:
+        self.session = session
+        self.settings = settings or get_settings()
+        self.controls = controls or trading_controls
+        self.calendar = MarketCalendarService(self.settings)
+        self.leases = LeaseService(session, self.settings)
+        self.revalidation = RevalidationService(session, settings=self.settings, calendar=self.calendar)
+        self.closing = ClosingPolicyEngine()
+        self.owner = owner
+
+    def _broker_guard(self) -> None:
+        if self.settings.enable_broker_orders or self.settings.enable_automated_execution:
+            # Phase 3 must not auto-execute even if misconfigured in tests — force closed path.
+            logger.warning(
+                "broker_flags_ignored_in_daily_workflow",
+                enable_broker_orders=self.settings.enable_broker_orders,
+                enable_automated_execution=self.settings.enable_automated_execution,
+            )
+
+    async def get_current(self, session_date: str | None = None) -> DailyWorkflowRun | None:
+        if session_date is None:
+            session_date = datetime.now(self.calendar.market_tz).date().isoformat()
+        return (
+            await self.session.execute(
+                select(DailyWorkflowRun).where(
+                    DailyWorkflowRun.session_date == session_date,
+                    DailyWorkflowRun.calendar_name == self.settings.market_calendar,
+                )
+            )
+        ).scalar_one_or_none()
+
+    async def prepare(self, *, session_date: str | None = None, now: datetime | None = None) -> dict[str, Any]:
+        self._broker_guard()
+        now = now or datetime.now(UTC)
+        day = (
+            datetime.fromisoformat(session_date).date()
+            if session_date
+            else now.astimezone(self.calendar.market_tz).date()
+        )
+        lease_key = f"daily:{self.settings.market_calendar}:{day.isoformat()}:prepare"
+        await self.leases.acquire(lease_key, self.owner)
+        try:
+            if self.controls.snapshot().state.value == "emergency_stop":
+                raise DailyWorkflowError("emergency_stop_active")
+
+            existing = await self.get_current(day.isoformat())
+            if existing is not None:
+                return self._run_dict(existing, note="already_prepared")
+
+            session = self.calendar.get_session(day)
+            if not session.is_trading_day:
+                run = DailyWorkflowRun(
+                    id=uuid4(),
+                    session_date=day.isoformat(),
+                    calendar_name=self.settings.market_calendar,
+                    current_state=DailyWorkflowState.NON_TRADING_DAY.value,
+                    status=WorkflowRunStatus.COMPLETED.value,
+                    started_at=now,
+                    completed_at=now,
+                    timezone=str(self.calendar.market_tz),
+                    early_close=False,
+                    metadata_json={"note": "non_trading_day"},
+                )
+                self.session.add(run)
+                await self.session.flush()
+                await self._transition(
+                    run,
+                    DailyWorkflowState.NON_TRADING_DAY,
+                    DailyWorkflowState.COMPLETED,
+                    trigger="prepare",
+                    reason="weekend_or_holiday",
+                )
+                # Stay on NON_TRADING then mark completed via direct set for audit simplicity
+                run.current_state = DailyWorkflowState.COMPLETED.value
+                await self._plan_jobs(run, session)
+                return self._run_dict(run)
+
+            run = DailyWorkflowRun(
+                id=uuid4(),
+                session_date=day.isoformat(),
+                calendar_name=self.settings.market_calendar,
+                current_state=DailyWorkflowState.PREMARKET_PREPARATION.value,
+                status=WorkflowRunStatus.RUNNING.value,
+                started_at=now,
+                timezone=str(self.calendar.market_tz),
+                market_open_at=session.regular_open,
+                market_close_at=session.regular_close,
+                early_close=session.is_early_close,
+                metadata_json={"session": session.to_dict()},
+            )
+            self.session.add(run)
+            await self.session.flush()
+            await self._plan_jobs(run, session)
+            return self._run_dict(run)
+        finally:
+            try:
+                await self.leases.release(lease_key, self.owner)
+            except LeaseError:
+                pass
+
+    async def run_analysis(
+        self,
+        *,
+        session_date: str | None = None,
+        fake_llm: bool = False,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        self._broker_guard()
+        now = now or datetime.now(UTC)
+        run = await self._require_run(session_date)
+        self._assert_not_blocked(run)
+        lease_key = f"daily:{run.session_date}:analysis"
+        await self.leases.acquire(lease_key, self.owner)
+        try:
+            if run.current_state == DailyWorkflowState.PREMARKET_PREPARATION.value:
+                await self._set_state(
+                    run,
+                    DailyWorkflowState.PREMARKET_ANALYSIS,
+                    trigger="run_analysis",
+                    reason="start_analysis",
+                )
+            elif run.current_state not in {
+                DailyWorkflowState.PREMARKET_ANALYSIS.value,
+                DailyWorkflowState.PREOPEN_REVALIDATION.value,
+            }:
+                raise DailyWorkflowError(f"analysis_not_allowed_from:{run.current_state}")
+
+            llm = FakeLLMProvider({}) if fake_llm else get_llm_client(self.settings)
+            collection = await DataCollectionService(
+                self.session, settings=self.settings, persist=True
+            ).collect_premarket(workflow_id=run.id)
+            portfolio = PortfolioStateInput(
+                as_of=now,
+                equity=self.settings.starting_cash,
+                cash=self.settings.starting_cash,
+                cash_pct=100.0,
+                gross_exposure_pct=0.0,
+            )
+            analysis = await AgentPipeline(settings=self.settings, llm=llm).run_from_collection(
+                collection,
+                portfolio=portfolio,
+                proposed_trades=[],
+                workflow_id=run.id,
+            )
+            meta = dict(run.metadata_json or {})
+            meta.update(
+                {
+                    "analysis_completed_at": analysis.completed_at.isoformat(),
+                    "cio_action": analysis.cio.portfolio_action.value,
+                    "risk_verdict": analysis.risk.overall_verdict.value,
+                    "broker_orders_submitted": False,
+                }
+            )
+            run.metadata_json = meta
+            run.analysis_workflow_run_id = analysis.workflow_id
+            run.latest_decision_id = analysis.cio.decision_id
+            await self._set_state(
+                run,
+                DailyWorkflowState.PREOPEN_REVALIDATION,
+                trigger="run_analysis",
+                reason="analysis_complete",
+            )
+            return {
+                **self._run_dict(run),
+                "analysis": {
+                    "workflow_id": str(analysis.workflow_id),
+                    "cio_action": analysis.cio.portfolio_action.value,
+                    "broker_orders_submitted": False,
+                },
+            }
+        finally:
+            try:
+                await self.leases.release(lease_key, self.owner)
+            except LeaseError:
+                pass
+
+    async def revalidate(
+        self,
+        *,
+        session_date: str | None = None,
+        fixture: dict[str, Any] | None = None,
+        now: datetime | None = None,
+        fake_llm: bool = False,
+    ) -> dict[str, Any]:
+        self._broker_guard()
+        run = await self._require_run(session_date)
+        self._assert_not_blocked(run)
+        if run.current_state != DailyWorkflowState.PREOPEN_REVALIDATION.value:
+            raise DailyWorkflowError(f"revalidate_not_allowed_from:{run.current_state}")
+        report = await self.revalidation.revalidate(run, now=now, fixture=fixture)
+        if report.result == RevalidationResult.REANALYSIS_REQUIRED:
+            if report.attempt > self.settings.max_revalidation_retries:
+                await self._set_state(
+                    run,
+                    DailyWorkflowState.FAILED,
+                    trigger="revalidate",
+                    reason="reanalysis_limit",
+                )
+            else:
+                await self._set_state(
+                    run,
+                    DailyWorkflowState.PREMARKET_ANALYSIS,
+                    trigger="revalidate",
+                    reason="reanalysis_required",
+                )
+                return {
+                    **self._run_dict(run),
+                    "revalidation": report.to_dict(),
+                    "follow_up": await self.run_analysis(
+                        session_date=run.session_date, fake_llm=fake_llm, now=now
+                    ),
+                }
+        elif report.result in {RevalidationResult.VALID, RevalidationResult.VALID_WITH_RESTRICTIONS}:
+            await self._set_state(
+                run,
+                DailyWorkflowState.MARKET_OPEN,
+                trigger="revalidate",
+                reason=report.result.value,
+            )
+            await self._set_state(
+                run,
+                DailyWorkflowState.INTRADAY,
+                trigger="revalidate",
+                reason="enter_intraday",
+            )
+        elif report.result == RevalidationResult.NO_TRADE:
+            meta = dict(run.metadata_json or {})
+            meta["no_trade_reason"] = report.reason
+            run.metadata_json = meta
+            await self._set_state(
+                run,
+                DailyWorkflowState.MARKET_OPEN,
+                trigger="revalidate",
+                reason="no_trade_carry",
+            )
+            await self._set_state(
+                run,
+                DailyWorkflowState.INTRADAY,
+                trigger="revalidate",
+                reason="enter_intraday_no_trade",
+            )
+        else:
+            await self._set_state(
+                run,
+                DailyWorkflowState.FAILED,
+                trigger="revalidate",
+                reason=report.reason,
+            )
+        return {**self._run_dict(run), "revalidation": report.to_dict()}
+
+    async def evaluate_intraday(
+        self,
+        *,
+        session_date: str | None = None,
+        trigger: str = "interval",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        self._broker_guard()
+        now = now or datetime.now(UTC)
+        run = await self._require_run(session_date)
+        self._assert_not_blocked(run)
+        if run.current_state not in {
+            DailyWorkflowState.INTRADAY.value,
+            DailyWorkflowState.MARKET_OPEN.value,
+        }:
+            raise DailyWorkflowError(f"intraday_not_allowed_from:{run.current_state}")
+
+        status = self.calendar.get_market_status(now)
+        result = IntradayEvalResult.NO_CHANGE
+        reason = "ok"
+        meta = dict(run.metadata_json or {})
+        last = meta.get("last_intraday_eval_at")
+        if last:
+            try:
+                ts = datetime.fromisoformat(str(last))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                gap = (now - ts).total_seconds() / 60.0
+                if gap < self.settings.min_reevaluation_gap_minutes and trigger == "interval":
+                    return {
+                        **self._run_dict(run),
+                        "intraday": {"result": result.value, "reason": "min_gap", "skipped": True},
+                    }
+            except ValueError:
+                pass
+
+        if status.in_force_close_window or status.in_closing_window:
+            result = IntradayEvalResult.NO_CHANGE
+            reason = "closing_window_limit_new_analysis"
+        elif run.intraday_reanalysis_count >= self.settings.max_intraday_reanalyses:
+            result = IntradayEvalResult.PAUSE_TRADING
+            reason = "max_intraday_reanalyses"
+        elif trigger in {"volatility", "news_high_importance", "risk_change"}:
+            result = IntradayEvalResult.REANALYZE
+            reason = f"event:{trigger}"
+            run.intraday_reanalysis_count = int(run.intraday_reanalysis_count) + 1
+        elif trigger == "stale_data":
+            result = IntradayEvalResult.RISK_REVIEW_REQUIRED
+            reason = "stale_data"
+
+        meta["last_intraday_eval_at"] = now.isoformat()
+        meta["last_intraday_result"] = result.value
+        run.metadata_json = meta
+        if run.current_state == DailyWorkflowState.MARKET_OPEN.value:
+            await self._set_state(
+                run, DailyWorkflowState.INTRADAY, trigger="evaluate_intraday", reason="enter"
+            )
+        await self.session.flush()
+        return {
+            **self._run_dict(run),
+            "intraday": {"result": result.value, "reason": reason, "broker_orders": False},
+        }
+
+    async def start_closing(
+        self,
+        *,
+        session_date: str | None = None,
+        policy: ClosingPolicy = ClosingPolicy.CLOSE_INTRADAY_ONLY,
+        positions: list[dict[str, Any]] | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        self._broker_guard()
+        now = now or datetime.now(UTC)
+        run = await self._require_run(session_date)
+        self._assert_not_blocked(run)
+        if run.current_state not in {
+            DailyWorkflowState.INTRADAY.value,
+            DailyWorkflowState.MARKET_OPEN.value,
+            DailyWorkflowState.CLOSING_WINDOW.value,
+        }:
+            raise DailyWorkflowError(f"closing_not_allowed_from:{run.current_state}")
+        if run.current_state != DailyWorkflowState.CLOSING_WINDOW.value:
+            await self._set_state(
+                run, DailyWorkflowState.CLOSING_WINDOW, trigger="start_closing", reason="enter"
+            )
+        decision = self.closing.decide(
+            as_of=now, positions=positions or [], policy=policy, intraday_symbols=set()
+        )
+        meta = dict(run.metadata_json or {})
+        meta["closing_decision"] = decision.to_dict()
+        run.metadata_json = meta
+        await self.session.flush()
+        return {**self._run_dict(run), "closing": decision.to_dict()}
+
+    async def run_postmarket(
+        self, *, session_date: str | None = None, now: datetime | None = None
+    ) -> dict[str, Any]:
+        self._broker_guard()
+        now = now or datetime.now(UTC)
+        run = await self._require_run(session_date)
+        self._assert_not_blocked(run)
+        # Allow jump from closing → closed → postmarket
+        if run.current_state == DailyWorkflowState.CLOSING_WINDOW.value:
+            await self._set_state(
+                run, DailyWorkflowState.MARKET_CLOSED, trigger="postmarket", reason="session_ended"
+            )
+        if run.current_state == DailyWorkflowState.MARKET_CLOSED.value:
+            await self._set_state(
+                run,
+                DailyWorkflowState.POSTMARKET_REVIEW,
+                trigger="postmarket",
+                reason="start_review",
+            )
+        if run.current_state != DailyWorkflowState.POSTMARKET_REVIEW.value:
+            raise DailyWorkflowError(f"postmarket_not_allowed_from:{run.current_state}")
+
+        transitions = list(
+            (
+                await self.session.execute(
+                    select(WorkflowStateTransition).where(
+                        WorkflowStateTransition.workflow_run_id == run.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        review = {
+            "session_date": run.session_date,
+            "states": [t.to_state for t in transitions],
+            "revalidation_count": run.revalidation_count,
+            "intraday_reanalysis_count": run.intraday_reanalysis_count,
+            "no_trade_reason": (run.metadata_json or {}).get("no_trade_reason"),
+            "cio_action": (run.metadata_json or {}).get("cio_action"),
+            "broker_orders_submitted": False,
+            "reviewed_at": now.isoformat(),
+        }
+        meta = dict(run.metadata_json or {})
+        meta["postmarket_review"] = review
+        run.metadata_json = meta
+        await self._set_state(
+            run, DailyWorkflowState.COMPLETED, trigger="postmarket", reason="review_done"
+        )
+        run.status = WorkflowRunStatus.COMPLETED.value
+        run.completed_at = now
+        await self.session.flush()
+        return {**self._run_dict(run), "review": review}
+
+    async def list_transitions(self, workflow_run_id: Any) -> list[dict[str, Any]]:
+        rows = list(
+            (
+                await self.session.execute(
+                    select(WorkflowStateTransition)
+                    .where(WorkflowStateTransition.workflow_run_id == workflow_run_id)
+                    .order_by(WorkflowStateTransition.started_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            {
+                "from_state": r.from_state,
+                "to_state": r.to_state,
+                "trigger": r.trigger,
+                "reason": r.reason,
+                "started_at": r.started_at.isoformat(),
+                "success": r.success,
+                "error_code": r.error_code,
+            }
+            for r in rows
+        ]
+
+    async def planned_jobs(self, session_date: str | None = None) -> list[dict[str, Any]]:
+        q = select(ScheduledJobRecord)
+        if session_date:
+            q = q.where(ScheduledJobRecord.session_date == session_date)
+        rows = list((await self.session.execute(q.order_by(ScheduledJobRecord.planned_at))).scalars())
+        return [
+            {
+                "job_key": r.job_key,
+                "session_date": r.session_date,
+                "planned_at": (
+                    r.planned_at.replace(tzinfo=UTC) if r.planned_at.tzinfo is None else r.planned_at
+                ).isoformat(),
+                "status": r.status,
+            }
+            for r in rows
+        ]
+
+    async def _plan_jobs(self, run: DailyWorkflowRun, session: Any) -> None:
+        if not session.is_trading_day or not session.regular_open or not session.regular_close:
+            return
+        open_t = session.regular_open
+        close_t = session.regular_close
+        cfg = self.settings
+        plans = [
+            (
+                "premarket_preparation",
+                open_t - timedelta(minutes=cfg.premarket_preparation_minutes_before_open),
+            ),
+            (
+                "premarket_analysis",
+                open_t - timedelta(minutes=cfg.premarket_analysis_minutes_before_open),
+            ),
+            (
+                "preopen_revalidation",
+                open_t - timedelta(minutes=cfg.preopen_revalidation_minutes_before_open),
+            ),
+            (
+                "closing_window",
+                close_t - timedelta(minutes=cfg.closing_window_minutes_before_close),
+            ),
+            (
+                "postmarket_review",
+                close_t + timedelta(minutes=cfg.postmarket_review_minutes_after_close),
+            ),
+        ]
+        # Intraday interval jobs
+        cursor = open_t + timedelta(minutes=cfg.intraday_reevaluation_interval_minutes)
+        end = close_t - timedelta(minutes=cfg.closing_window_minutes_before_close)
+        idx = 0
+        while cursor < end:
+            plans.append((f"intraday_eval_{idx}", cursor))
+            cursor += timedelta(minutes=cfg.intraday_reevaluation_interval_minutes)
+            idx += 1
+
+        for key, planned in plans:
+            existing = (
+                await self.session.execute(
+                    select(ScheduledJobRecord).where(
+                        ScheduledJobRecord.job_key == key,
+                        ScheduledJobRecord.session_date == run.session_date,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing:
+                continue
+            self.session.add(
+                ScheduledJobRecord(
+                    id=uuid4(),
+                    job_key=key,
+                    session_date=run.session_date,
+                    planned_at=planned.astimezone(UTC),
+                    status="planned",
+                    workflow_run_id=run.id,
+                    metadata_json={},
+                )
+            )
+        await self.session.flush()
+
+    async def _require_run(self, session_date: str | None) -> DailyWorkflowRun:
+        run = await self.get_current(session_date)
+        if run is None:
+            raise DailyWorkflowError("daily_workflow_not_prepared")
+        return run
+
+    def _assert_not_blocked(self, run: DailyWorkflowRun) -> None:
+        snap = self.controls.snapshot()
+        if snap.state.value == "emergency_stop" or run.current_state == DailyWorkflowState.EMERGENCY_STOP.value:
+            raise DailyWorkflowError("emergency_stop_active")
+        if snap.state.value == "paused" or run.current_state == DailyWorkflowState.PAUSED.value:
+            raise DailyWorkflowError("workflow_paused")
+
+    async def _set_state(
+        self,
+        run: DailyWorkflowRun,
+        to_state: DailyWorkflowState,
+        *,
+        trigger: str,
+        reason: str,
+    ) -> None:
+        from_state = DailyWorkflowState(run.current_state)
+        assert_transition_allowed(from_state, to_state)
+        if not BROKER_ORDERS_ALLOWED[to_state]:
+            pass  # explicit: never enable broker from state machine
+        await self._transition(run, from_state, to_state, trigger=trigger, reason=reason)
+        run.current_state = to_state.value
+        run.version = int(run.version) + 1
+        if to_state == DailyWorkflowState.FAILED:
+            run.status = WorkflowRunStatus.FAILED.value
+            run.failed_at = datetime.now(UTC)
+            run.failure_reason = reason
+        await self.session.flush()
+
+    async def _transition(
+        self,
+        run: DailyWorkflowRun,
+        from_state: DailyWorkflowState,
+        to_state: DailyWorkflowState,
+        *,
+        trigger: str,
+        reason: str,
+        success: bool = True,
+        error_code: str | None = None,
+    ) -> None:
+        now = datetime.now(UTC)
+        self.session.add(
+            WorkflowStateTransition(
+                id=uuid4(),
+                workflow_run_id=run.id,
+                from_state=from_state.value,
+                to_state=to_state.value,
+                trigger=trigger,
+                reason=reason,
+                started_at=now,
+                completed_at=now,
+                success=success,
+                error_code=error_code,
+                metadata_json={},
+            )
+        )
+        await self.session.flush()
+
+    def _run_dict(self, run: DailyWorkflowRun, note: str | None = None) -> dict[str, Any]:
+        payload = {
+            "id": str(run.id),
+            "session_date": run.session_date,
+            "calendar_name": run.calendar_name,
+            "current_state": run.current_state,
+            "status": run.status,
+            "early_close": run.early_close,
+            "market_open_at": run.market_open_at.isoformat() if run.market_open_at else None,
+            "market_close_at": run.market_close_at.isoformat() if run.market_close_at else None,
+            "analysis_workflow_run_id": str(run.analysis_workflow_run_id)
+            if run.analysis_workflow_run_id
+            else None,
+            "broker_orders_allowed": False,
+            "enable_broker_orders": self.settings.enable_broker_orders,
+            "metadata": run.metadata_json,
+            "version": run.version,
+        }
+        if note:
+            payload["note"] = note
+        return payload

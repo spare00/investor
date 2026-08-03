@@ -131,8 +131,28 @@ class Settings(BaseSettings):
     display_tz_us: str = "America/New_York"
     display_tz_local: str = "Australia/Brisbane"
 
-    # Scheduler
-    scheduler_enabled: bool = True
+    # Phase 3 market / daily workflow
+    market_calendar: str = "NYSE"
+    market_timezone: str = "America/New_York"
+    operator_timezone: str = "Australia/Brisbane"
+    premarket_preparation_minutes_before_open: int = 180
+    premarket_analysis_minutes_before_open: int = 120
+    preopen_revalidation_minutes_before_open: int = 10
+    intraday_reevaluation_interval_minutes: int = 20
+    min_reevaluation_gap_minutes: int = 10
+    max_intraday_reanalyses: int = 12
+    closing_window_minutes_before_close: int = 30
+    postmarket_review_minutes_after_close: int = 30
+    workflow_lease_seconds: int = 300
+    workflow_heartbeat_seconds: int = 60
+    max_revalidation_retries: int = 1
+    analysis_decision_ttl_minutes: int = 180
+    enable_scheduler: bool = False
+    enable_automated_execution: bool = False
+    enable_broker_orders: bool = False
+
+    # Scheduler (legacy cron placeholders; Phase 3 prefers enable_scheduler + dynamic jobs)
+    scheduler_enabled: bool = False
     premarket_cron_hour: int = 8
     premarket_cron_minute: int = 0
     premarket_cron_tz: str = "America/New_York"

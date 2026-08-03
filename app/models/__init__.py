@@ -6,6 +6,7 @@ from app.models.entities import (
     CIODecisionRecord,
     ConfigurationHistory,
     DailyPerformance,
+    DailyWorkflowRun,
     Execution,
     MacroSnapshot,
     MarketSnapshot,
@@ -14,9 +15,13 @@ from app.models.entities import (
     PortfolioSnapshot,
     Position,
     PostTradeReview,
+    RevalidationRun,
     RiskCheck,
+    ScheduledJobRecord,
     SystemEvent,
     TradeSignal,
+    WorkflowLease,
+    WorkflowStateTransition,
 )
 
 __all__ = [
@@ -25,6 +30,7 @@ __all__ = [
     "CIODecisionRecord",
     "ConfigurationHistory",
     "DailyPerformance",
+    "DailyWorkflowRun",
     "Execution",
     "MacroSnapshot",
     "MarketSnapshot",
@@ -33,7 +39,11 @@ __all__ = [
     "PortfolioSnapshot",
     "Position",
     "PostTradeReview",
+    "RevalidationRun",
     "RiskCheck",
+    "ScheduledJobRecord",
     "SystemEvent",
     "TradeSignal",
+    "WorkflowLease",
+    "WorkflowStateTransition",
 ]

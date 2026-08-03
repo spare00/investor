@@ -344,3 +344,92 @@ class ConfigurationHistory(Base, TimestampMixin):
     new_value: Mapped[str] = mapped_column(Text, nullable=False)
     changed_by: Mapped[str] = mapped_column(String(64), default="system")
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class DailyWorkflowRun(Base, TimestampMixin):
+    __tablename__ = "daily_workflow_runs"
+    __table_args__ = (UniqueConstraint("session_date", "calendar_name", name="uq_daily_wf_session"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    session_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD ET
+    calendar_name: Mapped[str] = mapped_column(String(32), nullable=False, default="NYSE")
+    current_state: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="America/New_York")
+    market_open_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    market_close_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    early_close: Mapped[bool] = mapped_column(Boolean, default=False)
+    analysis_workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    latest_decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    pause_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONType, default=dict)
+    resume_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    intraday_reanalysis_count: Mapped[int] = mapped_column(Integer, default=0)
+    revalidation_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class WorkflowStateTransition(Base, TimestampMixin):
+    __tablename__ = "workflow_state_transitions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    workflow_run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("daily_workflow_runs.id"), nullable=False, index=True
+    )
+    from_state: Mapped[str] = mapped_column(String(64), nullable=False)
+    to_state: Mapped[str] = mapped_column(String(64), nullable=False)
+    trigger: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONType, default=dict)
+
+
+class WorkflowLease(Base, TimestampMixin):
+    __tablename__ = "workflow_leases"
+    __table_args__ = (UniqueConstraint("lease_key", name="uq_workflow_lease_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    lease_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    owner: Mapped[str] = mapped_column(String(128), nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONType, default=dict)
+
+
+class ScheduledJobRecord(Base, TimestampMixin):
+    __tablename__ = "scheduled_jobs"
+    __table_args__ = (
+        UniqueConstraint("job_key", "session_date", name="uq_scheduled_job_key_session"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    job_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    session_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    planned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned")
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONType, default=dict)
+
+
+class RevalidationRun(Base, TimestampMixin):
+    __tablename__ = "revalidation_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    workflow_run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("daily_workflow_runs.id"), nullable=False, index=True
+    )
+    result: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
