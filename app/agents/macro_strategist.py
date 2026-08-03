@@ -11,8 +11,8 @@ from app.schemas.macro_strategist import MacroStrategistInput, MacroStrategistOu
 
 class MacroStrategistAgent(BaseAgent[MacroStrategistInput, MacroStrategistOutput]):
     name = AgentName.MACRO_STRATEGIST
-    prompt_file = "macro_strategist_v0.1.0.txt"
-    prompt_version = "0.1.0"
+    prompt_file = "system_v1.md"
+    prompt_version = "1.0.0"
 
     def output_model(self) -> type[MacroStrategistOutput]:
         return MacroStrategistOutput

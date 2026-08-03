@@ -24,8 +24,8 @@ from app.services.llm import LLMClient
 
 class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
     name = AgentName.RISK_MANAGER
-    prompt_file = "risk_manager_v0.1.0.txt"
-    prompt_version = "0.1.0"
+    prompt_file = "system_v1.md"
+    prompt_version = "1.0.0"
 
     def __init__(
         self,

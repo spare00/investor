@@ -103,7 +103,7 @@ class OpenAICompatibleClient:
 
 class StubLLMClient:
     """
-    Deterministic JSON producer for offline tests.
+    Deterministic JSON producer for offline tests (Phase 2 FakeLLMProvider).
 
     Returns a caller-provided payload (already a JSON object / dict).
     """
@@ -124,9 +124,14 @@ class StubLLMClient:
         self.calls.append({"system": system_prompt[:80], "user": user_prompt[:200]})
         return LLMResponse(
             content=json.dumps(self.payload),
-            model=model or "stub-model",
-            raw={"stub": True},
+            model=model or "fake-llm",
+            raw={"stub": True, "usage": {"prompt_tokens": 0, "completion_tokens": 0}},
         )
+
+
+# Phase 2 naming alias
+FakeLLMProvider = StubLLMClient
+OpenAICompatibleProvider = OpenAICompatibleClient
 
 
 def _llm_api_key_configured(settings: Settings) -> bool:

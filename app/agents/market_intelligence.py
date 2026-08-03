@@ -15,8 +15,8 @@ from app.schemas.market_intelligence import (
 
 class MarketIntelligenceAgent(BaseAgent[MarketIntelligenceInput, MarketIntelligenceOutput]):
     name = AgentName.MARKET_INTELLIGENCE
-    prompt_file = "market_intelligence_v0.1.0.txt"
-    prompt_version = "0.1.0"
+    prompt_file = "system_v1.md"
+    prompt_version = "1.0.0"
 
     def output_model(self) -> type[MarketIntelligenceOutput]:
         return MarketIntelligenceOutput

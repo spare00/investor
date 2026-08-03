@@ -20,6 +20,7 @@ class MarketRegime(StrEnum):
     NEUTRAL = "NEUTRAL"
     RISK_OFF = "RISK_OFF"
     STRONG_RISK_OFF = "STRONG_RISK_OFF"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
 
 
 class PortfolioAction(StrEnum):
@@ -141,8 +142,12 @@ class TraceMetadata(StrictModel):
     source_names: list[str] = Field(default_factory=list)
     agent_version: str = "0.1.0"
     prompt_version: str = "0.1.0"
+    prompt_sha256: str | None = None
+    schema_version: str = "1.0.0"
     model_name: str | None = None
     model_parameters: dict[str, Any] = Field(default_factory=dict)
+    token_usage: dict[str, Any] = Field(default_factory=dict)
+    latency_ms: float | None = None
     decision_timestamp: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     run_id: UUID = Field(default_factory=uuid4)
 

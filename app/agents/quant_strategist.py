@@ -97,8 +97,8 @@ def _probability(trend: TrendState, momentum: MomentumState) -> tuple[float, str
 
 class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput]):
     name = AgentName.QUANT_STRATEGIST
-    prompt_file = "quant_strategist_v0.1.0.txt"
-    prompt_version = "0.1.0"
+    prompt_file = "system_v1.md"
+    prompt_version = "1.0.0"
 
     def output_model(self) -> type[QuantStrategistOutput]:
         return QuantStrategistOutput

@@ -1,0 +1,7 @@
+{
+  "name": "premarket_case_stub",
+  "description": "Offline fixture marker for Phase 2 analysis CLI. Collection uses stub providers.",
+  "as_of": "2026-08-04T12:00:00Z",
+  "symbols": ["SPY", "QQQ", "AAPL"],
+  "expect_broker_orders": false
+}

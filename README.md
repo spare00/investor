@@ -265,15 +265,32 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 
 ## Development phases
 
+### Original delivery track (in-repo)
+
 | Phase | Focus | Status |
 |-------|--------|--------|
-| 1 | Foundation, schemas, Risk Engine | **Complete** |
-| 2 | Data collection & normalization | **Complete** |
-| 3 | Agent framework + prompts | **Complete** |
-| 4 | Full risk / emergency stop | **Complete** |
-| 5 | Premarket / Intraday / Postmarket workflows | **Complete** |
-| 6 | Paper trading execution | **Complete** |
-| 7 | Dashboard and metrics | **Complete** |
+| 1 | Foundation, schemas, Risk Engine | Complete |
+| 2–7 | Collection → agents → workflows → paper → dashboard | Implemented (MVP) |
+
+### Roadmap track (current planning docs)
+
+| Phase | Focus | Status |
+|-------|--------|--------|
+| 2 | Prompt system + agent framework hardening | **This release** — see `docs/phase2_report.md` |
+| 3 | Calendar, DST, scheduler state machine | Planned |
+| 4 | Live external data providers | Planned |
+| 5 | Broker execution hardening | Partially present (Alpaca paper) |
+| 6 | Intraday cadence, review, dashboard | Partially present |
+| 7 | Simulation, security, ops readiness | Planned |
+
+Docs: `docs/phase1_audit.md`, `docs/agent_architecture.md`, `docs/prompt_versioning.md`, `docs/phase2_report.md`.
+
+Analysis without orders:
+
+```bash
+python -m app.cli run-analysis --fixture tests/fixtures/premarket_case.json --fake-llm
+# or POST /workflow/analysis/run
+```
 
 ---
 

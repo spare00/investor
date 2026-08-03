@@ -22,8 +22,8 @@ from app.schemas.common import (
 
 class CIOAgent(BaseAgent[CIOInput, CIODecision]):
     name = AgentName.CIO
-    prompt_file = "cio_v0.1.0.txt"
-    prompt_version = "0.1.1"
+    prompt_file = "system_v1.md"
+    prompt_version = "1.0.0"
 
     def output_model(self) -> type[CIODecision]:
         return CIODecision

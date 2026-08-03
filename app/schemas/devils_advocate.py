@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 
 from pydantic import Field
 
@@ -11,6 +12,14 @@ from app.schemas.macro_strategist import MacroStrategistOutput
 from app.schemas.market_intelligence import MarketIntelligenceOutput
 from app.schemas.quant_strategist import QuantStrategistOutput
 from app.schemas.risk_manager import RiskManagerOutput
+
+
+class DevilRecommendation(StrEnum):
+    PROCEED = "PROCEED"
+    PROCEED_WITH_CAUTION = "PROCEED_WITH_CAUTION"
+    REDUCE_SIZE = "REDUCE_SIZE"
+    WAIT = "WAIT"
+    NO_TRADE = "NO_TRADE"
 
 
 class ProposedThesis(StrictModel):
@@ -47,4 +56,6 @@ class DevilsAdvocateOutput(StrictModel):
     missing_information: list[str] = Field(default_factory=list)
     data_conflicts: list[str] = Field(default_factory=list)
     challenge_score: float = Field(ge=0.0, le=1.0)
+    recommendation: DevilRecommendation | None = None
+    challenge_severity: float | None = Field(default=None, ge=0.0, le=1.0)
     trace: TraceMetadata = Field(default_factory=TraceMetadata)

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+import time
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from app.agents.llm_sanitize import sanitize_llm_payload, schema_enum_hint
+from app.agents.prompts import LoadedPrompt, load_agent_prompt
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.schemas.common import AgentName, TraceMetadata
@@ -23,23 +24,6 @@ logger = get_logger(__name__)
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
-PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
-
-COMMON_RULES = """
-COMMON RULES (mandatory):
-- Use only the provided data. Do not invent missing facts.
-- If data is insufficient, say so and lower data_quality_score; do not speculate.
-- Always check timestamps of the latest data.
-- Separate facts from interpretation.
-- Write both supporting and opposing evidence.
-- Do not overstate confidence.
-- Do not use unsourced news.
-- Explicitly note conflicting data.
-- If important information is stale, lower data_quality_score.
-- Respond as internal system analysis JSON, never as investment advice.
-- Follow the specified JSON schema exactly.
-""".strip()
-
 
 class AgentExecutionError(Exception):
     """Raised when an agent cannot produce a validated output."""
@@ -48,8 +32,9 @@ class AgentExecutionError(Exception):
 class BaseAgent(ABC, Generic[InputT, OutputT]):
     name: AgentName
     agent_version: str = "0.1.0"
-    prompt_version: str = "0.1.0"
-    prompt_file: str
+    prompt_version: str = "1.0.0"
+    prompt_file: str = "system_v1.md"
+    schema_version: str = "1.0.0"
 
     def __init__(
         self,
@@ -59,13 +44,20 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     ) -> None:
         self.settings = settings or get_settings()
         self.llm = llm or get_llm_client(self.settings)
+        self._loaded_prompt: LoadedPrompt | None = None
+
+    def load_prompt(self) -> LoadedPrompt:
+        if self._loaded_prompt is None:
+            self._loaded_prompt = load_agent_prompt(self.name.value, filename=self.prompt_file)
+            self.prompt_version = self._loaded_prompt.version
+        return self._loaded_prompt
 
     def load_system_prompt(self) -> str:
-        path = PROMPTS_DIR / self.prompt_file
-        body = path.read_text(encoding="utf-8") if path.exists() else self.default_system_prompt()
+        loaded = self.load_prompt()
         return (
-            f"{body.strip()}\n\n{COMMON_RULES}\n\n{schema_enum_hint()}\n\n"
-            f"Prompt-Version: {self.prompt_version}\n"
+            f"{loaded.system_prompt}\n\n{schema_enum_hint()}\n\n"
+            f"Prompt-Version: {loaded.version}\n"
+            f"Prompt-SHA256: {loaded.sha256}\n"
         )
 
     def default_system_prompt(self) -> str:
@@ -84,9 +76,11 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     async def run(self, payload: InputT) -> OutputT:
         """Execute agent with schema validation and isolated error handling."""
         run_id = uuid4()
+        started = time.perf_counter()
         logger.info("agent_start", agent=self.name.value, run_id=str(run_id))
         try:
-            return await self._run_validated(payload, run_id=run_id)
+            result = await self._run_validated(payload, run_id=run_id, started=started)
+            return result
         except Exception as exc:  # noqa: BLE001 — isolate failures at agent boundary
             logger.exception("agent_failed", agent=self.name.value, run_id=str(run_id))
             fallback = self.fallback_output(payload, reason=str(exc))
@@ -100,16 +94,22 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                 return fallback
             raise AgentExecutionError(f"{self.name.value} failed: {exc}") from exc
 
-    async def _run_validated(self, payload: InputT, *, run_id: Any) -> OutputT:
+    async def _run_validated(
+        self, payload: InputT, *, run_id: Any, started: float
+    ) -> OutputT:
+        loaded = self.load_prompt()
         system_prompt = self.load_system_prompt()
         base_user_prompt = self.build_user_prompt(payload)
         validation_feedback: list[str] = []
 
+        # Phase 2 policy: one validation repair attempt, then fail (fallback may still apply).
         @retry(
             reraise=True,
-            stop=stop_after_attempt(self.settings.llm_max_retries + 1),
+            stop=stop_after_attempt(2),
             wait=wait_fixed(0.2),
-            retry=retry_if_exception_type((ValidationError, LLMError, json.JSONDecodeError, ValueError)),
+            retry=retry_if_exception_type(
+                (ValidationError, LLMError, json.JSONDecodeError, ValueError)
+            ),
         )
         async def _once() -> OutputT:
             user_prompt = base_user_prompt
@@ -127,11 +127,13 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                 raise ValueError("LLM content must be a JSON object")
             data = sanitize_llm_payload(data)
             model = self.output_model()
-            # Inject/refresh audit metadata when absent
+            latency_ms = (time.perf_counter() - started) * 1000.0
             trace = data.get("trace") or {}
             if isinstance(trace, dict):
                 trace.setdefault("agent_version", self.agent_version)
-                trace.setdefault("prompt_version", self.prompt_version)
+                trace["prompt_version"] = loaded.version
+                trace["prompt_sha256"] = loaded.sha256
+                trace["schema_version"] = self.schema_version
                 trace.setdefault("model_name", response.model)
                 trace.setdefault(
                     "model_parameters",
@@ -140,6 +142,11 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                         "max_tokens": self.settings.llm_max_tokens,
                     },
                 )
+                usage = {}
+                if isinstance(response.raw, dict):
+                    usage = response.raw.get("usage") or {}
+                trace.setdefault("token_usage", usage if isinstance(usage, dict) else {})
+                trace["latency_ms"] = latency_ms
                 trace.setdefault("decision_timestamp", datetime.now(UTC).isoformat())
                 trace.setdefault("run_id", str(run_id))
                 data["trace"] = trace
