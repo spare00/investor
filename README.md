@@ -157,7 +157,7 @@ investor/
 
 ---
 
-## Quick start (Phase 2)
+## Quick start
 
 ```bash
 # 1. Python env
@@ -165,22 +165,54 @@ python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 2. Config
+# 2. Config (add Alpaca paper keys for live paper trading)
 cp .env.example .env
 
-# 3. Infra + migrate
-docker compose up -d db redis
-alembic upgrade head
-
-# 4. Tests
+# 3. Tests
 pytest tests/unit tests/integration -q
-
-# 5. API
-uvicorn app.main:app --reload --port 8000
-# POST http://localhost:8000/workflow/premarket/collect
 ```
 
-Default news/market providers are **stub** so local runs need no API keys.
+### A) Local without Docker (SQLite) — recommended if `docker` is missing
+
+```bash
+# Create local schema
+python - <<'PY'
+import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
+from app.core.database import Base
+import app.models  # noqa: F401
+
+async def main() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///./investor_local.db")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await engine.dispose()
+
+asyncio.run(main())
+PY
+
+# Run API
+DATABASE_URL="sqlite+aiosqlite:///./investor_local.db" \
+  LOG_FORMAT=console \
+  uvicorn app.main:app --reload --port 8000
+
+# Dashboard: http://127.0.0.1:8000/dashboard
+```
+
+Redis is **not required** for current phases (config only; unused at runtime).
+
+### B) With Docker (PostgreSQL)
+
+Install Docker Desktop or [OrbStack](https://orbstack.dev/), then:
+
+```bash
+docker compose up -d db
+alembic upgrade head
+uvicorn app.main:app --reload --port 8000
+```
+
+Default news/market providers are **stub** so analysis can run without news API keys.
+Alpaca paper keys in `.env` are needed for real paper order/portfolio sync.
 
 ---
 
