@@ -107,13 +107,17 @@ class OrderManager:
         await self.session.flush()
 
         try:
+            order_type = intent.order_type
+            limit_price = intent.limit_price
+            if order_type in {"limit", "stop_limit"} and limit_price is None:
+                raise BrokerError(f"{intent.symbol}: limit order missing limit_price")
             result = await self.broker.submit_order(
                 OrderRequest(
                     symbol=intent.symbol,
                     side=OrderSide(intent.side),
                     qty=intent.quantity,
-                    order_type=intent.order_type,
-                    limit_price=intent.limit_price,
+                    order_type=order_type,
+                    limit_price=limit_price,
                     stop_price=intent.stop_price,
                     idempotency_key=intent.idempotency_key,
                 )

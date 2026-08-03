@@ -227,6 +227,29 @@ class TestHardVetoes:
         )
         assert VetoCode.NOT_IN_ALLOWLIST.value in result.hard_vetoes
 
+    def test_sell_exempt_from_allowlist(
+        self, engine: DeterministicRiskEngine, portfolio: PortfolioRiskView
+    ) -> None:
+        result = engine.evaluate_pretrade(
+            portfolio,
+            TradeIntent(
+                symbol="CORZ",
+                side="sell",
+                quantity=11,
+                entry_price=20.0,
+                stop_loss=None,
+                sector="Technology",
+                avg_daily_volume=5_000_000,
+                bid_ask_spread_bps=5,
+                expected_slippage_bps=5,
+            ),
+            allowlist={"QQQ"},
+            data_quality_score=1.0,
+            market_session_clear=True,
+            broker_data_consistent=True,
+        )
+        assert VetoCode.NOT_IN_ALLOWLIST.value not in result.hard_vetoes
+
     def test_penny_stock_blocked(
         self, engine: DeterministicRiskEngine, portfolio: PortfolioRiskView
     ) -> None:

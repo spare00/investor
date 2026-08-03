@@ -42,8 +42,9 @@ class StubMarketDataProvider:
             sym = symbol.upper()
             last = self._quotes.get(sym)
             if last is None:
-                logger.warning("stub_quote_missing", symbol=sym)
-                continue
+                # Synthetic quote so existing off-map holdings remain manageable in stub mode.
+                last = 10.0 + (sum(ord(c) for c in sym) % 90)
+                logger.info("stub_quote_synthetic", symbol=sym, last=last)
             bid = round(last * 0.9999, 4)
             ask = round(last * 1.0001, 4)
             out.append(

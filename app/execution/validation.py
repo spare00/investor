@@ -54,7 +54,8 @@ class ExecutionValidator:
     - trading controls allow new orders
     - risk_approval is true for risk-increasing actions
     - Hard Veto re-check passes on latest portfolio/prices
-    - symbols on allowlist with stops for entries
+    - allowlist required for new entries only (exits allowed for any held symbol)
+    - stops required for entries
     """
 
     def __init__(
@@ -97,9 +98,13 @@ class ExecutionValidator:
 
         if decision.portfolio_action in {
             PortfolioAction.NO_TRADE,
-            PortfolioAction.STAY_CASH,
             PortfolioAction.HOLD,
-        } and not decision.symbol_actions:
+        }:
+            # Portfolio-level hold / no-trade means no broker submits, even if
+            # symbol_actions contain review notes.
+            return ExecutionValidationResult(approved=True, intents=[], rejections=[])
+
+        if decision.portfolio_action == PortfolioAction.STAY_CASH and not decision.symbol_actions:
             return ExecutionValidationResult(approved=True, intents=[], rejections=[])
 
         intents: list[ValidatedOrderIntent] = []
@@ -107,6 +112,8 @@ class ExecutionValidator:
         seen = seen_idempotency_keys or set()
 
         for plan in decision.symbol_actions:
+            if plan.action in {SymbolAction.HOLD, SymbolAction.NO_TRADE, SymbolAction.STAY_CASH}:
+                continue  # informational only — not an order, not a rejection
             result = self._validate_plan(
                 decision,
                 plan,
@@ -145,7 +152,7 @@ class ExecutionValidator:
         allowlist: set[str],
     ) -> ValidatedOrderIntent | str:
         symbol = plan.symbol.upper()
-        if symbol not in allowlist:
+        if plan.action in ENTRY_ACTIONS and symbol not in allowlist:
             return f"{symbol}:not_in_allowlist"
 
         if plan.action in ENTRY_ACTIONS and not decision.risk_approval:
@@ -158,13 +165,16 @@ class ExecutionValidator:
         if price is None or price <= 0:
             return f"{symbol}:missing_latest_price"
 
-        side = "buy" if plan.action in ENTRY_ACTIONS else "sell"
         if plan.action in {SymbolAction.HOLD, SymbolAction.NO_TRADE, SymbolAction.STAY_CASH}:
             return f"{symbol}:non_executable_action"
 
-        # Size from risk engine using stop distance when buying.
+        existing = next((p for p in portfolio.positions if p.symbol.upper() == symbol), None)
+        sector = existing.sector if existing else "Unknown"
+
+        # Size from risk engine using stop distance when opening/adding risk.
         qty = 0.0
-        if side == "buy":
+        if plan.action in ENTRY_ACTIONS:
+            side = "buy"
             if plan.stop_loss is None:
                 return f"{symbol}:buy_requires_numeric_stop_for_sizing"
             sizing = self.engine.position_size(
@@ -182,7 +192,7 @@ class ExecutionValidator:
                 entry_price=price,
                 stop_loss=plan.stop_loss,
                 invalidation=plan.invalidation,
-                sector="Unknown",
+                sector=sector,
                 idempotency_key=f"{decision.decision_id}:{symbol}:buy",
             )
             pre = self.engine.evaluate_pretrade(
@@ -198,18 +208,30 @@ class ExecutionValidator:
                 return f"{symbol}:hard_veto:{','.join(pre.hard_vetoes)}"
             qty = float(pre.adjusted_quantity or 0)
         else:
-            # Reduce/sell — quantity left to position manager in Phase 6; placeholder 0 blocked.
-            existing = next((p for p in portfolio.positions if p.symbol.upper() == symbol), None)
-            if existing is None or existing.quantity <= 0:
-                return f"{symbol}:no_position_to_sell"
+            # Reduce / flatten existing exposure (long → sell, short → buy to cover).
+            if existing is None or existing.quantity == 0:
+                return f"{symbol}:no_position_to_exit"
+            held = abs(float(existing.quantity))
             if plan.action in {SymbolAction.PARTIAL_SELL, SymbolAction.REDUCE}:
-                qty = max(1.0, existing.quantity * 0.5)
+                qty = max(1.0, held * 0.5)
             else:
-                qty = existing.quantity
+                qty = held
+            side = "sell" if existing.quantity > 0 else "buy"
 
         limit_price = None
         if plan.entry_zone is not None:
             limit_price = (plan.entry_zone.min + plan.entry_zone.max) / 2.0
+
+        order_type = plan.order_type.value
+        # Alpaca rejects limit orders without limit_price — fall back to last price,
+        # or coerce exits to market when no price context exists.
+        if order_type in {"limit", "stop_limit"} and limit_price is None:
+            if price and price > 0:
+                limit_price = float(price)
+            elif plan.action not in ENTRY_ACTIONS:
+                order_type = "market"
+            else:
+                return f"{symbol}:limit_order_missing_price"
 
         key = f"{workflow_id or decision.decision_id}:{symbol}:{side}:{plan.action.value}"
         if key in seen:
@@ -219,7 +241,7 @@ class ExecutionValidator:
             symbol=symbol,
             side=side,
             quantity=qty,
-            order_type=plan.order_type.value,
+            order_type=order_type,
             limit_price=limit_price,
             stop_price=plan.stop_loss,
             idempotency_key=key,

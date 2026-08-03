@@ -12,6 +12,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
+from app.agents.llm_sanitize import sanitize_llm_payload, schema_enum_hint
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.schemas.common import AgentName, TraceMetadata
@@ -62,7 +63,10 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     def load_system_prompt(self) -> str:
         path = PROMPTS_DIR / self.prompt_file
         body = path.read_text(encoding="utf-8") if path.exists() else self.default_system_prompt()
-        return f"{body.strip()}\n\n{COMMON_RULES}\n\nPrompt-Version: {self.prompt_version}\n"
+        return (
+            f"{body.strip()}\n\n{COMMON_RULES}\n\n{schema_enum_hint()}\n\n"
+            f"Prompt-Version: {self.prompt_version}\n"
+        )
 
     def default_system_prompt(self) -> str:
         return f"You are the {self.name.value} agent for an internal trading system."
@@ -98,7 +102,8 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
 
     async def _run_validated(self, payload: InputT, *, run_id: Any) -> OutputT:
         system_prompt = self.load_system_prompt()
-        user_prompt = self.build_user_prompt(payload)
+        base_user_prompt = self.build_user_prompt(payload)
+        validation_feedback: list[str] = []
 
         @retry(
             reraise=True,
@@ -107,6 +112,12 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
             retry=retry_if_exception_type((ValidationError, LLMError, json.JSONDecodeError, ValueError)),
         )
         async def _once() -> OutputT:
+            user_prompt = base_user_prompt
+            if validation_feedback:
+                user_prompt = (
+                    f"{base_user_prompt}\n\nPrevious output failed validation. "
+                    f"Fix these errors and resubmit valid JSON only:\n{validation_feedback[-1]}"
+                )
             response = await self.llm.complete_json(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -114,6 +125,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
             data = json.loads(response.content)
             if not isinstance(data, dict):
                 raise ValueError("LLM content must be a JSON object")
+            data = sanitize_llm_payload(data)
             model = self.output_model()
             # Inject/refresh audit metadata when absent
             trace = data.get("trace") or {}
@@ -131,7 +143,12 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                 trace.setdefault("decision_timestamp", datetime.now(UTC).isoformat())
                 trace.setdefault("run_id", str(run_id))
                 data["trace"] = trace
-            return model.model_validate(data)
+            data.setdefault("timestamp", datetime.now(UTC).isoformat())
+            try:
+                return model.model_validate(data)
+            except ValidationError as exc:
+                validation_feedback.append(str(exc)[:2500])
+                raise
 
         return await _once()
 

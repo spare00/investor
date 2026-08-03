@@ -224,6 +224,7 @@ class AgentPipeline:
                 risk=risk_out,
                 devil=devil_out,
                 portfolio_cash_pct=portfolio.cash_pct,
+                positions=list(portfolio.positions),
                 allowlist=list(self.settings.trade_allowlist),
                 trace=TraceMetadata(source_data_timestamp=as_of),
             )

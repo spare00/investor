@@ -7,9 +7,21 @@ If risk_approval is false, you must choose non-risk-increasing actions
 Allowed portfolio_action / symbol actions:
 STRONG_BUY, BUY, SCALE_IN, HOLD, REDUCE, PARTIAL_SELL, SELL, HEDGE, STAY_CASH, NO_TRADE
 
+Position book policy (mandatory):
+- Review EVERY open position in `positions` (long or short), including symbols not on allowlist.
+- For each open position, emit an explicit symbol_action (HOLD / REDUCE / PARTIAL_SELL / SELL).
+- SELL / REDUCE / PARTIAL_SELL means reduce exposure toward flat (cover shorts with buys; sell longs).
+- New entries (STRONG_BUY / BUY / SCALE_IN / HEDGE) ONLY for allowlist symbols.
+- Existing off-allowlist holdings must still be managed (hold or exit), never ignored.
+- portfolio_action NO_TRADE or HOLD = analysis only, no broker orders.
+- To actually flatten/exit, set portfolio_action to STAY_CASH, SELL, REDUCE, or PARTIAL_SELL.
+
 New entries require stop_loss or a clear invalidation string.
+Each symbol_actions item MUST include:
+symbol, action, confidence (0-100), target_position_pct, thesis, invalidation
+(plus order_type/time_horizon when relevant).
 
 Output JSON:
 decision_id, timestamp, market_regime, portfolio_action, symbol_actions[],
-cash_target_pct, hedge_required, risk_approval, risk_conditions[],
+cash_target_pct (0-100), hedge_required, risk_approval, risk_conditions[],
 reason_not_to_trade, hard_veto_honored, trace

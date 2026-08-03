@@ -60,9 +60,10 @@ class OpenAICompatibleClient:
         max_tokens: int | None = None,
     ) -> LLMResponse:
         cfg = self.settings
-        api_key = cfg.llm_api_key.get_secret_value() if cfg.llm_api_key else None
-        if not api_key:
+        if not _llm_api_key_configured(cfg):
+            # Missing key is configuration, not a transient failure — do not retry.
             raise LLMError("LLM_API_KEY is not configured")
+        api_key = cfg.llm_api_key.get_secret_value() if cfg.llm_api_key else ""
 
         payload = {
             "model": model or cfg.llm_model,
@@ -128,9 +129,15 @@ class StubLLMClient:
         )
 
 
+def _llm_api_key_configured(settings: Settings) -> bool:
+    if settings.llm_api_key is None:
+        return False
+    return bool(settings.llm_api_key.get_secret_value().strip())
+
+
 def get_llm_client(settings: Settings | None = None) -> LLMClient:
     cfg = settings or get_settings()
-    if cfg.llm_api_key is None:
+    if not _llm_api_key_configured(cfg):
         logger.warning("llm_client_fallback_stub", reason="missing_api_key")
         return StubLLMClient()
     return OpenAICompatibleClient(cfg)

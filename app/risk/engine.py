@@ -224,11 +224,15 @@ class DeterministicRiskEngine:
         )
 
         symbol = trade.symbol.upper()
-        add(
-            VetoCode.NOT_IN_ALLOWLIST,
-            symbol in {s.upper() for s in allowlist},
-            f"{symbol} allowlist check",
-        )
+        # Allowlist gates new risk (buys) only — existing holdings must remain closable.
+        if trade.side == "buy":
+            add(
+                VetoCode.NOT_IN_ALLOWLIST,
+                symbol in {s.upper() for s in allowlist},
+                f"{symbol} allowlist check",
+            )
+        else:
+            add(VetoCode.NOT_IN_ALLOWLIST, True, f"{symbol} exit exempt from allowlist")
 
         if trade.entry_price < self.limits.penny_stock_max_price:
             add(VetoCode.PENNY_STOCK, False, f"{symbol} below penny stock threshold")

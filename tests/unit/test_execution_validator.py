@@ -203,3 +203,201 @@ def test_validator_sell_requires_position() -> None:
     )
     assert with_pos.approved is True
     assert with_pos.intents[0].quantity == 10
+
+
+def test_validator_no_trade_ignores_symbol_exits() -> None:
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.NEUTRAL,
+        portfolio_action=PortfolioAction.NO_TRADE,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="CORZ",
+                action=SymbolAction.SELL,
+                confidence=70,
+                target_position_pct=0,
+                thesis="should not submit under NO_TRADE",
+                invalidation="n/a",
+            )
+        ],
+        cash_target_pct=100,
+        risk_approval=True,
+    )
+    result = ExecutionValidator(controls=TradingControls()).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=25_000,
+            cash=20_000,
+            cash_pct=80,
+            gross_exposure_pct=20,
+            positions=[
+                PositionRiskView(
+                    symbol="CORZ", quantity=11, market_value=220, sector="Technology", weight_pct=0.8
+                )
+            ],
+        ),
+        latest_prices={"CORZ": 20},
+        data_quality_score=0.9,
+    )
+    assert result.approved is True
+    assert result.intents == []
+
+
+def test_validator_limit_exit_fills_price_from_last() -> None:
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_OFF,
+        portfolio_action=PortfolioAction.SELL,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="CORZ",
+                action=SymbolAction.SELL,
+                confidence=70,
+                target_position_pct=0,
+                order_type=OrderType.LIMIT,
+                thesis="exit without entry_zone",
+                invalidation="n/a",
+            )
+        ],
+        cash_target_pct=100,
+        risk_approval=True,
+    )
+    result = ExecutionValidator(controls=TradingControls()).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=25_000,
+            cash=20_000,
+            cash_pct=80,
+            gross_exposure_pct=20,
+            positions=[
+                PositionRiskView(
+                    symbol="CORZ", quantity=11, market_value=220, sector="Technology", weight_pct=0.8
+                )
+            ],
+        ),
+        latest_prices={"CORZ": 20.5},
+        data_quality_score=0.9,
+    )
+    assert result.approved is True
+    assert result.intents[0].order_type == "limit"
+    assert result.intents[0].limit_price == 20.5
+
+
+def test_validator_allows_exit_for_off_allowlist_long() -> None:
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_OFF,
+        portfolio_action=PortfolioAction.SELL,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="CORZ",
+                action=SymbolAction.SELL,
+                confidence=70,
+                target_position_pct=0,
+                thesis="flatten off-allowlist holding",
+                invalidation="n/a",
+            )
+        ],
+        cash_target_pct=100,
+        risk_approval=True,
+    )
+    result = ExecutionValidator(controls=TradingControls()).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=25_000,
+            cash=20_000,
+            cash_pct=80,
+            gross_exposure_pct=20,
+            positions=[
+                PositionRiskView(
+                    symbol="CORZ", quantity=11, market_value=220, sector="Technology", weight_pct=0.8
+                )
+            ],
+        ),
+        latest_prices={"CORZ": 20},
+        data_quality_score=0.9,
+    )
+    assert result.approved is True
+    assert result.intents[0].side == "sell"
+    assert result.intents[0].quantity == 11
+
+
+def test_validator_covers_short_off_allowlist() -> None:
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.NEUTRAL,
+        portfolio_action=PortfolioAction.STAY_CASH,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="IREN",
+                action=SymbolAction.SELL,
+                confidence=70,
+                target_position_pct=0,
+                thesis="cover short",
+                invalidation="n/a",
+                order_type=OrderType.MARKET,
+            )
+        ],
+        cash_target_pct=100,
+        risk_approval=True,
+    )
+    result = ExecutionValidator(controls=TradingControls()).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=100_000,
+            cash=103_000,
+            cash_pct=103,
+            gross_exposure_pct=3,
+            positions=[
+                PositionRiskView(
+                    symbol="IREN",
+                    quantity=-12,
+                    market_value=-400,
+                    sector="Technology",
+                    weight_pct=-0.4,
+                )
+            ],
+        ),
+        latest_prices={"IREN": 35},
+        data_quality_score=0.9,
+    )
+    assert result.approved is True
+    assert result.intents[0].side == "buy"
+    assert result.intents[0].quantity == 12
+
+
+def test_validator_blocks_buy_off_allowlist() -> None:
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.BUY,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="GME",
+                action=SymbolAction.BUY,
+                confidence=70,
+                target_position_pct=5,
+                stop_loss=10,
+                thesis="blocked",
+                invalidation="x",
+                entry_zone=PriceZone(min=20, max=21),
+            )
+        ],
+        cash_target_pct=50,
+        risk_approval=True,
+    )
+    result = ExecutionValidator(controls=TradingControls()).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0
+        ),
+        latest_prices={"GME": 20},
+        data_quality_score=0.9,
+    )
+    assert result.approved is False
+    assert any("not_in_allowlist" in r for r in result.rejections)

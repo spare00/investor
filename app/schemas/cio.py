@@ -21,7 +21,7 @@ from app.schemas.devils_advocate import DevilsAdvocateOutput
 from app.schemas.macro_strategist import MacroStrategistOutput
 from app.schemas.market_intelligence import MarketIntelligenceOutput
 from app.schemas.quant_strategist import QuantStrategistOutput
-from app.schemas.risk_manager import RiskManagerOutput
+from app.schemas.risk_manager import PositionSnapshot, RiskManagerOutput
 
 
 class SymbolActionPlan(StrictModel):
@@ -61,6 +61,7 @@ class CIOInput(StrictModel):
     risk: RiskManagerOutput
     devil: DevilsAdvocateOutput
     portfolio_cash_pct: float
+    positions: list[PositionSnapshot] = Field(default_factory=list)
     allowlist: list[str] = Field(default_factory=list)
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 

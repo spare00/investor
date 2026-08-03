@@ -181,14 +181,7 @@ class WorkflowService:
                 )
             # Still allow analysis for observability, but validation will fail closed.
 
-        collection = await DataCollectionService(
-            self.session, settings=self.settings, persist=self.persist
-        ).collect_premarket(workflow_id=wf)
-
-        if collection.fail_closed:
-            notes.append("collection_fail_closed")
-
-        # Prefer live paper account state when broker is reachable.
+        # Sync portfolio first so collection covers allowlist ∪ existing holdings.
         port = portfolio
         if port is None:
             try:
@@ -197,8 +190,19 @@ class WorkflowService:
                 port = await pm.portfolio_state_input()
                 notes.append("portfolio_from_broker")
             except Exception:  # noqa: BLE001
-                port = self._default_portfolio(collection.collected_at)
+                port = self._default_portfolio(datetime.now(UTC))
                 notes.append("portfolio_default_fallback")
+
+        held = [p.symbol for p in port.positions]
+        universe = sorted({*self.settings.trade_allowlist, *held})
+
+        collection = await DataCollectionService(
+            self.session, settings=self.settings, persist=self.persist
+        ).collect_premarket(symbols=universe, workflow_id=wf)
+
+        if collection.fail_closed:
+            notes.append("collection_fail_closed")
+
         analysis = await AgentPipeline(settings=self.settings, llm=self.llm).run_from_collection(
             collection,
             portfolio=port,

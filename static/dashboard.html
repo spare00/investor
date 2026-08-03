@@ -140,12 +140,13 @@
     <div>
       <h1>Investor Ops</h1>
       <div class="sub mono" id="asOf">Loading…</div>
+      <div class="sub mono" id="actionStatus" style="margin-top:0.25rem;color:var(--muted,#9aa)"></div>
     </div>
     <div class="actions">
-      <button onclick="refresh()">Refresh</button>
-      <button onclick="runWorkflow('premarket')">Run Premarket</button>
-      <button onclick="runWorkflow('intraday')">Intraday Eval</button>
-      <button class="danger" onclick="emergencyStop()">Emergency Stop</button>
+      <button id="btnRefresh" onclick="refresh()">Refresh</button>
+      <button id="btnPremarket" onclick="runWorkflow('premarket')">Run Premarket</button>
+      <button id="btnIntraday" onclick="runWorkflow('intraday')">Intraday Eval</button>
+      <button id="btnStop" class="danger" onclick="emergencyStop()">Emergency Stop</button>
     </div>
   </header>
   <main>
@@ -228,8 +229,18 @@
       return "OK";
     }
 
+    function setBusy(busy, message) {
+      ["btnRefresh", "btnPremarket", "btnIntraday", "btnStop"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = busy;
+      });
+      const status = document.getElementById("actionStatus");
+      if (status) status.textContent = message || "";
+    }
+
     async function refresh() {
       const res = await fetch("/dashboard/summary");
+      if (!res.ok) throw new Error(`summary HTTP ${res.status}`);
       const data = await res.json();
       document.getElementById("asOf").textContent =
         `UTC ${data.as_of.utc} · ET ${data.as_of.us_eastern} · BNE ${data.as_of.brisbane}`;
@@ -295,18 +306,37 @@
       const path = kind === "premarket" ? "/workflow/premarket/run"
         : kind === "intraday" ? "/workflow/intraday/evaluate?force=true"
         : "/workflow/postmarket/run";
-      await fetch(path, { method: "POST" });
-      await refresh();
+      const label = kind === "premarket" ? "Premarket" : kind === "intraday" ? "Intraday" : "Postmarket";
+      setBusy(true, `${label} running… (may take a minute)`);
+      try {
+        const res = await fetch(path, { method: "POST" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+        }
+        await refresh();
+        const outcome = body.outcome || body.status || "ok";
+        setBusy(false, `${label} done · ${outcome}`);
+      } catch (err) {
+        setBusy(false, `${label} failed: ${err.message || err}`);
+      }
     }
 
     async function emergencyStop() {
       if (!confirm("Trigger emergency stop and cancel open orders?")) return;
-      await fetch("/trading/emergency-stop", { method: "POST" });
-      await refresh();
+      setBusy(true, "Emergency stop…");
+      try {
+        const res = await fetch("/trading/emergency-stop", { method: "POST" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await refresh();
+        setBusy(false, "Emergency stop sent");
+      } catch (err) {
+        setBusy(false, `Emergency stop failed: ${err.message || err}`);
+      }
     }
 
-    refresh();
-    setInterval(refresh, 30000);
+    refresh().catch((err) => setBusy(false, `Load failed: ${err.message || err}`));
+    setInterval(() => { refresh().catch(() => {}); }, 30000);
   </script>
 </body>
 </html>

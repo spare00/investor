@@ -38,11 +38,13 @@ async def test_stub_news_dedupes_on_normalize() -> None:
 async def test_stub_market_quotes_for_allowlist() -> None:
     quotes = await StubMarketDataProvider().fetch_quotes(["SPY", "QQQ", "UNKNOWN"])
     symbols = {q.symbol for q in quotes}
-    assert symbols == {"SPY", "QQQ"}
+    assert symbols == {"SPY", "QQQ", "UNKNOWN"}
     spy = next(q for q in quotes if q.symbol == "SPY")
     norm = normalize_market_quote(spy)
     assert norm.spread_bps is not None
     assert norm.quality_score > 0.5
+    unknown = next(q for q in quotes if q.symbol == "UNKNOWN")
+    assert unknown.last > 0
 
 
 def test_spread_bps_and_macro_quality() -> None:

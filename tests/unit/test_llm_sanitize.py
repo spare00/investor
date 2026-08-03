@@ -1,0 +1,71 @@
+"""Tests for LLM payload sanitization."""
+
+from __future__ import annotations
+
+from app.agents.llm_sanitize import coerce_enum_value, sanitize_llm_payload
+from app.schemas.common import NewsCategory, Sentiment, TrendState, VolatilityState
+from app.schemas.market_intelligence import MarketIntelligenceOutput
+from app.schemas.quant_strategist import QuantStrategistOutput
+
+
+def test_coerce_sentiment_case_and_synonym() -> None:
+    assert coerce_enum_value(Sentiment, "Neutral") is Sentiment.NEUTRAL
+    assert coerce_enum_value(Sentiment, "bullish") is Sentiment.POSITIVE
+
+
+def test_coerce_news_category_free_text() -> None:
+    assert coerce_enum_value(NewsCategory, "Monetary Policy") is NewsCategory.FED
+    assert coerce_enum_value(NewsCategory, "Something Weird") is NewsCategory.OTHER
+
+
+def test_sanitize_market_intelligence_payload() -> None:
+    data = sanitize_llm_payload(
+        {
+            "market_events": [
+                {
+                    "headline": "Fed holds",
+                    "source": "Reuters",
+                    "published_at": "2026-08-03T12:00:00Z",
+                    "category": "Monetary Policy",
+                    "sentiment": "Neutral",
+                    "importance": 4,
+                }
+            ],
+            "top_market_themes": ["rates"],
+            "data_quality_score": 4,
+        }
+    )
+    out = MarketIntelligenceOutput.model_validate(data)
+    assert out.market_events[0].category is NewsCategory.FED
+    assert out.market_events[0].sentiment is Sentiment.NEUTRAL
+    assert out.data_quality_score == 1.0
+
+
+def test_sanitize_quant_synonyms_and_aliases() -> None:
+    data = sanitize_llm_payload(
+        {
+            "market_trend_state": "bullish",
+            "market_momentum_state": "neutral",
+            "market_volatility_state": "moderate",
+            "market_breadth_state": "healthy",
+            "market_liquidity_state": "adequate",
+            "data_quality_score": 0.8,
+            "symbol_views": [
+                {
+                    "symbol": "QQQ",
+                    "trend": "up",
+                    "momentum_state": "steady",
+                    "volatility_state": "normal",
+                    "liquidity_state": "normal",
+                    "probability_estimate": 0.55,
+                    "probability_basis": "test",
+                    "entry_zone": 100,
+                }
+            ],
+        }
+    )
+    out = QuantStrategistOutput.model_validate(data)
+    assert out.market_trend_state is TrendState.UP
+    assert out.market_volatility_state is VolatilityState.NORMAL
+    assert out.symbol_views[0].trend_state is TrendState.UP
+    assert out.symbol_views[0].entry_zone is not None
