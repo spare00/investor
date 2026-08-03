@@ -12,6 +12,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.pipeline import AgentPipeline, AnalysisBundle
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.core.metrics import (
+    HARD_VETOES,
+    OPEN_POSITIONS,
+    ORDERS_BLOCKED,
+    ORDERS_SUBMITTED,
+    PORTFOLIO_CASH,
+    PORTFOLIO_DRAWDOWN_PCT,
+    PORTFOLIO_EQUITY,
+    TRADING_STATE,
+    WORKFLOW_DURATION,
+    WORKFLOW_RUNS,
+    trading_state_value,
+)
 from app.execution.order_manager import OrderManager
 from app.execution.position_manager import PositionManager
 from app.execution.safety_controls import trading_controls
@@ -19,6 +32,7 @@ from app.execution.validation import ExecutionValidationResult, ExecutionValidat
 from app.models import Order
 from app.risk import PortfolioRiskView, PositionRiskView
 from app.schemas.risk_manager import PortfolioStateInput, ProposedTrade
+from app.services.audit import AuditService
 from app.services.collection import CollectionBundle, DataCollectionService
 from app.services.llm import LLMClient, get_llm_client
 from app.services.market_hours import is_regular_session, minutes_to_close
@@ -233,8 +247,38 @@ class WorkflowService:
                 notes.append("submit_skipped_mode")
         elif validation.rejections:
             notes.append(f"validation_rejected:{','.join(validation.rejections[:5])}")
+            for reason in validation.rejections[:10]:
+                ORDERS_BLOCKED.labels(reason=reason.split(":")[0][:64]).inc()
 
+        if self.persist:
+            try:
+                await AuditService(self.session).persist_analysis(analysis)
+                notes.append("audit_persisted")
+            except Exception as exc:  # noqa: BLE001
+                notes.append(f"audit_persist_failed:{exc}")
+                logger.exception("audit_persist_failed", workflow_id=str(wf))
+
+        for code in analysis.risk.hard_vetoes:
+            HARD_VETOES.labels(code=str(code)[:64]).inc()
+        for order in orders:
+            ORDERS_SUBMITTED.labels(
+                symbol=order.symbol, side=order.side, status=order.status
+            ).inc()
+
+        TRADING_STATE.set(trading_state_value(trading_controls.snapshot().state.value))
         finished = datetime.now(UTC)
+        WORKFLOW_DURATION.labels(kind="premarket").observe(
+            (finished - started).total_seconds()
+        )
+        outcome = "ok"
+        if collection.fail_closed:
+            outcome = "fail_closed"
+        elif not validation.approved and validation.intents:
+            outcome = "validation_rejected"
+        elif orders:
+            outcome = "orders_submitted"
+        WORKFLOW_RUNS.labels(kind="premarket", outcome=outcome).inc()
+
         logger.info(
             "workflow_premarket_done",
             workflow_id=str(wf),

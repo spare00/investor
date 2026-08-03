@@ -118,6 +118,19 @@ class PositionManager:
 
         self.session.add(snap)
         await self.session.flush()
+
+        from app.core.metrics import (
+            OPEN_POSITIONS,
+            PORTFOLIO_CASH,
+            PORTFOLIO_DRAWDOWN_PCT,
+            PORTFOLIO_EQUITY,
+        )
+
+        PORTFOLIO_EQUITY.set(equity)
+        PORTFOLIO_CASH.set(cash)
+        PORTFOLIO_DRAWDOWN_PCT.set(snap.drawdown_pct)
+        OPEN_POSITIONS.set(len(positions))
+
         logger.info(
             "positions_synced",
             equity=equity,

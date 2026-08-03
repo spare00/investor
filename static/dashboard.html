@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Investor Ops</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a222c;
+      --line: #2a3542;
+      --text: #e8eef4;
+      --muted: #8b9aab;
+      --accent: #3d9cf0;
+      --good: #3ecf8e;
+      --bad: #f07178;
+      --warn: #e6b450;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", sans-serif;
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #1b2a3a 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #1a2830 0%, transparent 50%),
+        var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 1rem;
+      padding: 1.5rem 2rem 1rem;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      letter-spacing: 0.02em;
+    }
+    .sub { color: var(--muted); font-size: 0.85rem; margin-top: 0.25rem; }
+    .mono { font-family: "IBM Plex Mono", monospace; }
+    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    button {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.45rem 0.8rem;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover { border-color: var(--accent); }
+    button.danger { border-color: var(--bad); color: var(--bad); }
+    main {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 1rem;
+      padding: 1rem 2rem 2rem;
+    }
+    section {
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1rem;
+      grid-column: span 4;
+    }
+    section.wide { grid-column: span 8; }
+    section.full { grid-column: span 12; }
+    h2 {
+      margin: 0 0 0.75rem;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .stat {
+      font-size: 1.6rem;
+      font-family: "IBM Plex Mono", monospace;
+      margin: 0.15rem 0;
+    }
+    .pill {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 0.75rem;
+      font-family: "IBM Plex Mono", monospace;
+    }
+    .pill.good { color: var(--good); border-color: color-mix(in srgb, var(--good) 50%, var(--line)); }
+    .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); }
+    .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.4rem 0.3rem; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 500; font-size: 0.75rem; }
+    ul { margin: 0; padding-left: 1.1rem; color: var(--muted); }
+    li { margin: 0.35rem 0; }
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.75rem;
+    }
+    .agent-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.75rem;
+      background: #121820;
+      min-height: 110px;
+    }
+    .agent-card h3 {
+      margin: 0 0 0.4rem;
+      font-size: 0.85rem;
+    }
+    .muted { color: var(--muted); font-size: 0.8rem; }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.72rem;
+      color: var(--muted);
+      max-height: 140px;
+      overflow: auto;
+      margin: 0.4rem 0 0;
+    }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; padding: 1rem; }
+      section, section.wide, section.full { grid-column: span 1; }
+      header { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Investor Ops</h1>
+      <div class="sub mono" id="asOf">Loading…</div>
+    </div>
+    <div class="actions">
+      <button onclick="refresh()">Refresh</button>
+      <button onclick="runWorkflow('premarket')">Run Premarket</button>
+      <button onclick="runWorkflow('intraday')">Intraday Eval</button>
+      <button class="danger" onclick="emergencyStop()">Emergency Stop</button>
+    </div>
+  </header>
+  <main>
+    <section>
+      <h2>Market / Trading State</h2>
+      <div id="tradingState" class="stat">—</div>
+      <div id="tradingMeta" class="muted"></div>
+    </section>
+    <section>
+      <h2>Portfolio</h2>
+      <div class="stat mono" id="equity">—</div>
+      <div class="muted" id="portfolioMeta"></div>
+    </section>
+    <section>
+      <h2>Risk</h2>
+      <div id="riskPills"></div>
+      <div class="muted" id="riskMeta" style="margin-top:0.5rem"></div>
+    </section>
+
+    <section class="wide">
+      <h2>CIO Decision</h2>
+      <div id="cio" class="muted">No decisions yet.</div>
+    </section>
+    <section>
+      <h2>Next Jobs</h2>
+      <ul id="jobs"><li class="muted">None</li></ul>
+    </section>
+
+    <section class="full">
+      <h2>Six Agents — Latest Opinions</h2>
+      <div class="agent-grid" id="agents"></div>
+    </section>
+
+    <section class="wide">
+      <h2>Positions</h2>
+      <table>
+        <thead><tr><th>Symbol</th><th>Qty</th><th>Value</th><th>uPnL</th><th>Sector</th></tr></thead>
+        <tbody id="positions"><tr><td colspan="5" class="muted">None</td></tr></tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Open Orders</h2>
+      <table>
+        <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th></tr></thead>
+        <tbody id="orders"><tr><td colspan="4" class="muted">None</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="wide">
+      <h2>Recent News</h2>
+      <ul id="news"><li class="muted">None</li></ul>
+    </section>
+    <section>
+      <h2>System Errors</h2>
+      <ul id="errors"><li class="muted">None</li></ul>
+    </section>
+  </main>
+  <script>
+    const AGENT_ORDER = [
+      "market_intelligence",
+      "macro_strategist",
+      "quant_strategist",
+      "risk_manager",
+      "devils_advocate",
+      "cio",
+    ];
+
+    function pill(text, cls) {
+      return `<span class="pill ${cls || ""}">${text}</span>`;
+    }
+
+    function summarizeAgent(name, payload) {
+      if (!payload) return "No data";
+      if (name === "macro_strategist") return `Regime ${payload.market_regime || "?"} · conf ${(payload.confidence ?? 0).toFixed?.(2) ?? payload.confidence}`;
+      if (name === "quant_strategist") return `Trend ${payload.market_trend_state || "?"} · vol ${payload.market_volatility_state || "?"}`;
+      if (name === "risk_manager") return `Verdict ${payload.overall_verdict || "?"} · halt ${payload.halt_new_trades}`;
+      if (name === "devils_advocate") return `NoTrade ${payload.prefer_no_trade} · challenge ${payload.challenge_score}`;
+      if (name === "cio") return `${payload.portfolio_action || "?"} · risk ${payload.risk_approval}`;
+      if (name === "market_intelligence") return `Events ${(payload.market_events || []).length} · q ${payload.data_quality_score}`;
+      return "OK";
+    }
+
+    async function refresh() {
+      const res = await fetch("/dashboard/summary");
+      const data = await res.json();
+      document.getElementById("asOf").textContent =
+        `UTC ${data.as_of.utc} · ET ${data.as_of.us_eastern} · BNE ${data.as_of.brisbane}`;
+
+      const ts = data.market_status.trading_state;
+      const cls = ts === "active" ? "good" : ts === "paused" ? "warn" : "bad";
+      document.getElementById("tradingState").innerHTML = pill(ts, cls);
+      document.getElementById("tradingMeta").textContent =
+        data.market_status.reason || (data.market_status.new_orders_allowed ? "New orders allowed" : "New orders blocked");
+
+      const p = data.portfolio;
+      if (p) {
+        document.getElementById("equity").textContent = `$${Number(p.equity).toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+        document.getElementById("portfolioMeta").textContent =
+          `Cash ${p.cash_pct.toFixed(1)}% · Gross ${p.gross_exposure_pct.toFixed(1)}% · Day PnL ${p.daily_pnl_pct.toFixed(2)}%`;
+        document.getElementById("riskPills").innerHTML = [
+          pill(`DD ${p.drawdown_pct.toFixed(2)}%`, p.drawdown_pct > 5 ? "bad" : "good"),
+          pill(`Cash ${p.cash_pct.toFixed(1)}%`, p.cash_pct < 30 ? "warn" : "good"),
+          pill(`Pos ${p.open_positions}`, ""),
+        ].join(" ");
+        document.getElementById("riskMeta").textContent = `Daily PnL $${Number(p.daily_pnl).toFixed(2)}`;
+      }
+
+      const cio = data.cio;
+      if (cio) {
+        document.getElementById("cio").innerHTML = `
+          <div class="stat" style="font-size:1.2rem">${cio.portfolio_action}</div>
+          <div>${pill(cio.market_regime, "")} ${pill(cio.risk_approval ? "risk approved" : "risk blocked", cio.risk_approval ? "good" : "bad")}</div>
+          <div class="muted" style="margin-top:0.4rem">${cio.timestamp}</div>
+          <pre>${JSON.stringify(cio.payload?.symbol_actions || [], null, 2)}</pre>`;
+      }
+
+      document.getElementById("jobs").innerHTML = (data.next_jobs || []).length
+        ? data.next_jobs.map(j => `<li class="mono">${j.id}: ${j.next_run_time || "n/a"}</li>`).join("")
+        : `<li class="muted">No scheduled jobs</li>`;
+
+      document.getElementById("agents").innerHTML = AGENT_ORDER.map(name => {
+        const a = (data.agents || {})[name];
+        return `<div class="agent-card"><h3>${name}</h3>
+          <div class="muted">${a ? summarizeAgent(name, a.payload) : "—"}</div>
+          <div class="muted">${a?.model_name || ""} ${a?.data_quality_score != null ? "· q " + a.data_quality_score : ""}</div>
+        </div>`;
+      }).join("");
+
+      document.getElementById("positions").innerHTML = (data.positions || []).length
+        ? data.positions.map(p => `<tr><td>${p.symbol}</td><td>${p.quantity}</td><td>${Number(p.market_value).toFixed(2)}</td><td>${Number(p.unrealized_pnl).toFixed(2)}</td><td>${p.sector}</td></tr>`).join("")
+        : `<tr><td colspan="5" class="muted">None</td></tr>`;
+
+      document.getElementById("orders").innerHTML = (data.open_orders || []).length
+        ? data.open_orders.map(o => `<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.qty}</td><td>${o.status}</td></tr>`).join("")
+        : `<tr><td colspan="4" class="muted">None</td></tr>`;
+
+      document.getElementById("news").innerHTML = (data.news || []).length
+        ? data.news.map(n => `<li><strong>${n.headline}</strong><div class="muted">${n.source} · ${n.published_at}</div></li>`).join("")
+        : `<li class="muted">None</li>`;
+
+      document.getElementById("errors").innerHTML = (data.errors || []).length
+        ? data.errors.map(e => `<li><span class="pill ${e.level === "error" ? "bad" : "warn"}">${e.level}</span> ${e.event_type}: ${e.message}</li>`).join("")
+        : `<li class="muted">None</li>`;
+    }
+
+    async def runWorkflow(kind) {
+      const path = kind === "premarket" ? "/workflow/premarket/run"
+        : kind === "intraday" ? "/workflow/intraday/evaluate?force=true"
+        : "/workflow/postmarket/run";
+      await fetch(path, { method: "POST" });
+      await refresh();
+    }
+
+    async function emergencyStop() {
+      if (!confirm("Trigger emergency stop and cancel open orders?")) return;
+      await fetch("/trading/emergency-stop", { method: "POST" });
+      await refresh();
+    }
+
+    refresh();
+    setInterval(refresh, 30000);
+  </script>
+</body>
+</html>
