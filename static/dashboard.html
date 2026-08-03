@@ -291,7 +291,7 @@
         : `<li class="muted">None</li>`;
     }
 
-    async def runWorkflow(kind) {
+    async function runWorkflow(kind) {
       const path = kind === "premarket" ? "/workflow/premarket/run"
         : kind === "intraday" ? "/workflow/intraday/evaluate?force=true"
         : "/workflow/postmarket/run";

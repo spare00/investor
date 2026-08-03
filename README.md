@@ -203,13 +203,24 @@ Redis is **not required** for current phases (config only; unused at runtime).
 
 ### B) With Docker (PostgreSQL)
 
-Install Docker Desktop or [OrbStack](https://orbstack.dev/), then:
+This project expects the Docker CLI. On macOS without Docker Desktop:
+
+```bash
+brew install colima docker docker-compose
+colima start
+mkdir -p ~/.docker/cli-plugins
+ln -sfn "$(brew --prefix)/opt/docker-compose/bin/docker-compose" ~/.docker/cli-plugins/docker-compose
+```
+
+Then:
 
 ```bash
 docker compose up -d db
 alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
+
+Redis is optional and unused in current phases.
 
 Default news/market providers are **stub** so analysis can run without news API keys.
 Alpaca paper keys in `.env` are needed for real paper order/portfolio sync.
