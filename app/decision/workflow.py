@@ -224,31 +224,41 @@ class WorkflowService:
         )
 
         orders: list[Order] = []
-        if validation.approved and validation.intents:
-            if self.settings.trading_mode.value == "paper" or (
-                self.settings.trading_mode.value == "live"
-                and self.settings.is_live_trading_allowed()
-            ):
+        if (
+            validation.approved
+            and validation.intents
+            and self.settings.enable_broker_orders
+            and (
+                self.settings.trading_mode.value == "paper"
+                or (
+                    self.settings.trading_mode.value == "live"
+                    and self.settings.is_live_trading_allowed()
+                )
+            )
+        ):
+            try:
+                orders = await OrderManager(
+                    self.session, settings=self.settings
+                ).submit_validated_intents(
+                    validation,
+                    decision_id=analysis.cio.decision_id,
+                    workflow_id=wf,
+                )
+                notes.append(f"orders_submitted={len(orders)}")
+                # Sync positions after fills (paper often fills immediately)
                 try:
-                    orders = await OrderManager(
-                        self.session, settings=self.settings
-                    ).submit_validated_intents(
-                        validation,
-                        decision_id=analysis.cio.decision_id,
-                        workflow_id=wf,
-                    )
-                    notes.append(f"orders_submitted={len(orders)}")
-                    # Sync positions after fills (paper often fills immediately)
-                    try:
-                        await PositionManager(self.session, settings=self.settings).sync_from_broker()
-                        notes.append("positions_synced")
-                    except Exception as exc:  # noqa: BLE001
-                        notes.append(f"position_sync_failed:{exc}")
+                    await PositionManager(self.session, settings=self.settings).sync_from_broker()
+                    notes.append("positions_synced")
                 except Exception as exc:  # noqa: BLE001
-                    notes.append(f"order_submit_failed:{exc}")
-                    logger.exception("workflow_order_submit_failed", workflow_id=str(wf))
-            else:
-                notes.append("submit_skipped_mode")
+                    notes.append(f"position_sync_failed:{exc}")
+            except Exception as exc:  # noqa: BLE001
+                notes.append(f"order_submit_failed:{exc}")
+                logger.exception("workflow_order_submit_failed", workflow_id=str(wf))
+        elif validation.approved and validation.intents and not self.settings.enable_broker_orders:
+            notes.append("orders_skipped_enable_broker_orders_false")
+            ORDERS_BLOCKED.labels(reason="broker_orders_disabled").inc()
+        elif validation.approved and validation.intents:
+            notes.append("submit_skipped_mode")
         elif validation.rejections:
             notes.append(f"validation_rejected:{','.join(validation.rejections[:5])}")
             for reason in validation.rejections[:10]:
