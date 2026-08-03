@@ -20,6 +20,8 @@ from app.api.data import router as data_router
 from app.api.execution import router as execution_router
 from app.api.intraday import router as intraday_router
 from app.api.market import router as market_router
+from app.api.operations_phase7 import router as operations_phase7_router
+from app.api.performance import router as performance_router
 from app.api.portfolio import router as portfolio_router
 from app.api.trading import router as trading_router
 from app.api.workflow import router as workflow_router
@@ -62,7 +64,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         enable_broker_orders=settings.enable_broker_orders,
         broker_provider=settings.broker_provider,
         require_manual_order_approval=settings.require_manual_order_approval,
-        phase=6,
+        phase=7,
     )
     yield
     await stop_scheduler()
@@ -72,7 +74,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Investor",
     description="Six-agent AI investment firm (paper trading first)",
-    version="0.11.0",
+    version="0.12.0",
     lifespan=lifespan,
 )
 app.include_router(collection_router)
@@ -87,6 +89,8 @@ app.include_router(data_router)
 app.include_router(broker_router)
 app.include_router(execution_router)
 app.include_router(intraday_router)
+app.include_router(performance_router)
+app.include_router(operations_phase7_router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -105,7 +109,8 @@ async def health() -> dict[str, Any]:
     settings = get_settings()
     return {
         "status": "ok",
-        "version": "0.11.0",
+        "version": "0.12.0",
+        "env": settings.app_env.value,
         "trading_mode": require_execution_allowed(settings).value,
         "live_trading_allowed": settings.is_live_trading_allowed(),
         "alpaca_configured": bool(settings.alpaca_api_key and settings.alpaca_api_secret),
@@ -117,7 +122,7 @@ async def health() -> dict[str, Any]:
         "require_manual_order_approval": settings.require_manual_order_approval,
         "intraday_operation_mode": settings.intraday_operation_mode,
         "enable_external_data": settings.enable_external_data,
-        "phase": 6,
+        "phase": 7,
     }
 
 

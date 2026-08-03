@@ -46,6 +46,7 @@ coverage.xml
 # Runtime
 logs/
 data/
+backups/
 *.db
 *.sqlite3
 

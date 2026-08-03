@@ -280,10 +280,21 @@ Allowlist (editable via `TRADE_ALLOWLIST`):
 | 3 | Calendar, DST, daily workflow SM, leases | Complete — `docs/phase3_report.md` |
 | 4 | Data collection & normalization layer | Complete — `docs/phase4_report.md` |
 | 5 | Broker & paper execution layer | Complete — `docs/phase5_report.md` |
-| 6 | Intraday ops & position management | **This release** — `docs/phase6_report.md` |
-| 7 | Performance, ops hardening | Planned |
+| 6 | Intraday ops & position management | Complete — `docs/phase6_report.md` |
+| 7 | Performance metrics, ops, dashboard, simulations | **This release** — `docs/phase7_report.md` |
 
-Docs: `docs/intraday_architecture.md`, `docs/phase5_audit.md`, `docs/phase6_report.md`.
+Docs: `docs/performance_architecture.md`, `docs/operations_runbook.md`, `docs/security_audit_phase7.md`.
+
+```bash
+python -m app.cli performance portfolio
+python -m app.cli operations metrics
+python -m app.cli readiness evaluate
+python -m app.cli simulation run --scenario bull-market --days 5
+python -m app.cli backup create
+curl -s localhost:8000/performance/risk | jq .
+```
+
+Phase 7 adds read-only performance/ops APIs and dashboard tabs. **Live trading remains NOT READY** — see `docs/live_trading_readiness_checklist.md`.
 
 ```bash
 python -m app.cli intraday status

@@ -230,6 +230,27 @@ class Settings(BaseSettings):
     sec_user_agent: str = "InvestorBot/0.8 (contact: investor-dev@example.com)"
     calculation_version: str = "indicators_v1"
 
+    # Phase 7 operations / observability
+    primary_benchmark: str = "SPY"
+    secondary_benchmark: str = "QQQ"
+    risk_free_rate_annual: float = 0.0
+    min_performance_observations: int = 20
+    min_calibration_sample_size: int = 30
+    enable_dashboard: bool = True
+    dashboard_read_only: bool = True
+    enable_prometheus_metrics: bool = True
+    enable_alerts: bool = True
+    alert_provider: str = "log"  # log | email | webhook | fake
+    critical_alert_cooldown_seconds: int = 60
+    warning_alert_cooldown_seconds: int = 300
+    enable_fault_injection: bool = False
+    enable_long_running_simulation: bool = False
+    raw_provider_payload_retention_days: int = 30
+    canonical_market_data_retention_days: int = 365
+    audit_log_retention_days: int = 2555
+    metric_retention_days: int = 1825
+    performance_calculation_version: str = "perf_v1"
+
     # Scheduler (legacy cron placeholders; Phase 3 prefers enable_scheduler + dynamic jobs)
     scheduler_enabled: bool = False
     premarket_cron_hour: int = 8

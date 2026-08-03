@@ -30,6 +30,14 @@
       color: var(--text);
       min-height: 100vh;
     }
+    .dev-banner {
+      background: color-mix(in srgb, var(--warn) 18%, var(--panel));
+      border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line));
+      padding: 0.5rem 2rem;
+      font-size: 0.85rem;
+      color: var(--warn);
+      display: none;
+    }
     header {
       display: flex;
       justify-content: space-between;
@@ -38,14 +46,32 @@
       padding: 1.5rem 2rem 1rem;
       border-bottom: 1px solid var(--line);
     }
-    h1 {
-      margin: 0;
-      font-size: 1.5rem;
-      letter-spacing: 0.02em;
-    }
+    h1 { margin: 0; font-size: 1.5rem; letter-spacing: 0.02em; }
     .sub { color: var(--muted); font-size: 0.85rem; margin-top: 0.25rem; }
     .mono { font-family: "IBM Plex Mono", monospace; }
     .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .tabs {
+      display: flex;
+      gap: 0.35rem;
+      padding: 0.75rem 2rem 0;
+      border-bottom: 1px solid var(--line);
+      flex-wrap: wrap;
+    }
+    .tab {
+      background: transparent;
+      border: 1px solid transparent;
+      border-bottom: none;
+      border-radius: 6px 6px 0 0;
+      padding: 0.45rem 0.9rem;
+      color: var(--muted);
+      cursor: pointer;
+      font: inherit;
+    }
+    .tab.active {
+      color: var(--text);
+      background: var(--panel);
+      border-color: var(--line);
+    }
     button {
       background: var(--panel);
       color: var(--text);
@@ -63,6 +89,8 @@
       gap: 1rem;
       padding: 1rem 2rem 2rem;
     }
+    .tab-panel { display: none; grid-column: span 12; }
+    .tab-panel.active { display: contents; }
     section {
       background: color-mix(in srgb, var(--panel) 92%, transparent);
       border: 1px solid var(--line);
@@ -80,11 +108,7 @@
       color: var(--muted);
       font-weight: 600;
     }
-    .stat {
-      font-size: 1.6rem;
-      font-family: "IBM Plex Mono", monospace;
-      margin: 0.15rem 0;
-    }
+    .stat { font-size: 1.6rem; font-family: "IBM Plex Mono", monospace; margin: 0.15rem 0; }
     .pill {
       display: inline-block;
       padding: 0.15rem 0.5rem;
@@ -101,22 +125,9 @@
     th { color: var(--muted); font-weight: 500; font-size: 0.75rem; }
     ul { margin: 0; padding-left: 1.1rem; color: var(--muted); }
     li { margin: 0.35rem 0; }
-    .agent-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 0.75rem;
-    }
-    .agent-card {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 0.75rem;
-      background: #121820;
-      min-height: 110px;
-    }
-    .agent-card h3 {
-      margin: 0 0 0.4rem;
-      font-size: 0.85rem;
-    }
+    .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; }
+    .agent-card { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem; background: #121820; min-height: 110px; }
+    .agent-card h3 { margin: 0 0 0.4rem; font-size: 0.85rem; }
     .muted { color: var(--muted); font-size: 0.8rem; }
     pre {
       white-space: pre-wrap;
@@ -124,7 +135,7 @@
       font-family: "IBM Plex Mono", monospace;
       font-size: 0.72rem;
       color: var(--muted);
-      max-height: 140px;
+      max-height: 200px;
       overflow: auto;
       margin: 0.4rem 0 0;
     }
@@ -132,10 +143,12 @@
       main { grid-template-columns: 1fr; padding: 1rem; }
       section, section.wide, section.full { grid-column: span 1; }
       header { flex-direction: column; align-items: flex-start; }
+      .tabs { padding: 0.75rem 1rem 0; }
     }
   </style>
 </head>
 <body>
+  <div id="devBanner" class="dev-banner mono">DEV ONLY — no authentication · read-only dashboard · live trading disabled</div>
   <header>
     <div>
       <h1>Investor Ops</h1>
@@ -143,75 +156,152 @@
       <div class="sub mono" id="actionStatus" style="margin-top:0.25rem;color:var(--muted,#9aa)"></div>
     </div>
     <div class="actions">
-      <button id="btnRefresh" onclick="refresh()">Refresh</button>
+      <button id="btnRefresh" onclick="refreshAll()">Refresh</button>
       <button id="btnPremarket" onclick="runWorkflow('premarket')">Run Premarket</button>
       <button id="btnIntraday" onclick="runWorkflow('intraday')">Intraday Eval</button>
       <button id="btnStop" class="danger" onclick="emergencyStop()">Emergency Stop</button>
     </div>
   </header>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="performance">Performance</button>
+    <button class="tab" data-tab="agents">Agents</button>
+    <button class="tab" data-tab="operations">Operations</button>
+    <button class="tab" data-tab="audit">Audit</button>
+  </nav>
   <main>
-    <section>
-      <h2>Market / Trading State</h2>
-      <div id="tradingState" class="stat">—</div>
-      <div id="tradingMeta" class="muted"></div>
-    </section>
-    <section>
-      <h2>Portfolio</h2>
-      <div class="stat mono" id="equity">—</div>
-      <div class="muted" id="portfolioMeta"></div>
-    </section>
-    <section>
-      <h2>Risk</h2>
-      <div id="riskPills"></div>
-      <div class="muted" id="riskMeta" style="margin-top:0.5rem"></div>
-    </section>
+    <div id="panel-overview" class="tab-panel active">
+      <section>
+        <h2>Market / Trading State</h2>
+        <div id="tradingState" class="stat">—</div>
+        <div id="tradingMeta" class="muted"></div>
+      </section>
+      <section>
+        <h2>Portfolio</h2>
+        <div class="stat mono" id="equity">—</div>
+        <div class="muted" id="portfolioMeta"></div>
+      </section>
+      <section>
+        <h2>Risk</h2>
+        <div id="riskPills"></div>
+        <div class="muted" id="riskMeta" style="margin-top:0.5rem"></div>
+      </section>
+      <section class="wide">
+        <h2>CIO Decision</h2>
+        <div id="cio" class="muted">No decisions yet.</div>
+      </section>
+      <section>
+        <h2>Next Jobs</h2>
+        <ul id="jobs"><li class="muted">None</li></ul>
+      </section>
+      <section class="full">
+        <h2>Six Agents — Latest Opinions</h2>
+        <div class="agent-grid" id="agents"></div>
+      </section>
+      <section class="wide">
+        <h2>Positions</h2>
+        <table>
+          <thead><tr><th>Symbol</th><th>Qty</th><th>Value</th><th>uPnL</th><th>Sector</th></tr></thead>
+          <tbody id="positions"><tr><td colspan="5" class="muted">None</td></tr></tbody>
+        </table>
+      </section>
+      <section>
+        <h2>Open Orders</h2>
+        <table>
+          <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th></tr></thead>
+          <tbody id="orders"><tr><td colspan="4" class="muted">None</td></tr></tbody>
+        </table>
+      </section>
+      <section class="wide">
+        <h2>Recent News</h2>
+        <ul id="news"><li class="muted">None</li></ul>
+      </section>
+      <section>
+        <h2>System Errors</h2>
+        <ul id="errors"><li class="muted">None</li></ul>
+      </section>
+    </div>
 
-    <section class="wide">
-      <h2>CIO Decision</h2>
-      <div id="cio" class="muted">No decisions yet.</div>
-    </section>
-    <section>
-      <h2>Next Jobs</h2>
-      <ul id="jobs"><li class="muted">None</li></ul>
-    </section>
+    <div id="panel-performance" class="tab-panel">
+      <section class="wide">
+        <h2>Portfolio Performance</h2>
+        <pre id="perfPortfolio">Loading…</pre>
+      </section>
+      <section>
+        <h2>Returns</h2>
+        <pre id="perfReturns">Loading…</pre>
+      </section>
+      <section>
+        <h2>Risk Metrics</h2>
+        <pre id="perfRisk">Loading…</pre>
+      </section>
+      <section class="wide">
+        <h2>Drawdowns</h2>
+        <pre id="perfDrawdowns">Loading…</pre>
+      </section>
+      <section>
+        <h2>Trade Metrics</h2>
+        <pre id="perfTrades">Loading…</pre>
+      </section>
+      <section>
+        <h2>Execution Quality</h2>
+        <pre id="perfExecution">Loading…</pre>
+      </section>
+    </div>
 
-    <section class="full">
-      <h2>Six Agents — Latest Opinions</h2>
-      <div class="agent-grid" id="agents"></div>
-    </section>
+    <div id="panel-agents" class="tab-panel">
+      <section class="wide">
+        <h2>Agent Attribution</h2>
+        <pre id="agentPerf">Loading…</pre>
+      </section>
+      <section>
+        <h2>Calibration</h2>
+        <pre id="agentCalibration">Loading…</pre>
+      </section>
+      <section class="wide">
+        <h2>Decision Evaluations</h2>
+        <pre id="decisionEval">Loading…</pre>
+      </section>
+    </div>
 
-    <section class="wide">
-      <h2>Positions</h2>
-      <table>
-        <thead><tr><th>Symbol</th><th>Qty</th><th>Value</th><th>uPnL</th><th>Sector</th></tr></thead>
-        <tbody id="positions"><tr><td colspan="5" class="muted">None</td></tr></tbody>
-      </table>
-    </section>
-    <section>
-      <h2>Open Orders</h2>
-      <table>
-        <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th></tr></thead>
-        <tbody id="orders"><tr><td colspan="4" class="muted">None</td></tr></tbody>
-      </table>
-    </section>
+    <div id="panel-operations" class="tab-panel">
+      <section class="wide">
+        <h2>Operational KPIs</h2>
+        <pre id="opsMetrics">Loading…</pre>
+      </section>
+      <section>
+        <h2>Alerts</h2>
+        <ul id="opsAlerts"><li class="muted">None</li></ul>
+      </section>
+      <section>
+        <h2>Readiness Gate</h2>
+        <pre id="opsReadiness">Loading…</pre>
+      </section>
+      <section class="wide">
+        <h2>Simulations</h2>
+        <pre id="opsSimulations">Loading…</pre>
+      </section>
+    </div>
 
-    <section class="wide">
-      <h2>Recent News</h2>
-      <ul id="news"><li class="muted">None</li></ul>
-    </section>
-    <section>
-      <h2>System Errors</h2>
-      <ul id="errors"><li class="muted">None</li></ul>
-    </section>
+    <div id="panel-audit" class="tab-panel">
+      <section class="wide">
+        <h2>System Status</h2>
+        <pre id="auditStatus">Loading…</pre>
+      </section>
+      <section>
+        <h2>Health</h2>
+        <pre id="auditHealth">Loading…</pre>
+      </section>
+      <section class="wide">
+        <h2>Recent Decisions (audit trail)</h2>
+        <pre id="auditDecisions">Loading…</pre>
+      </section>
+    </div>
   </main>
   <script>
     const AGENT_ORDER = [
-      "market_intelligence",
-      "macro_strategist",
-      "quant_strategist",
-      "risk_manager",
-      "devils_advocate",
-      "cio",
+      "market_intelligence", "macro_strategist", "quant_strategist",
+      "risk_manager", "devils_advocate", "cio",
     ];
 
     function pill(text, cls) {
@@ -238,19 +328,40 @@
       if (status) status.textContent = message || "";
     }
 
-    async function refresh() {
-      const res = await fetch("/dashboard/summary");
-      if (!res.ok) throw new Error(`summary HTTP ${res.status}`);
-      const data = await res.json();
+    async function fetchJson(path) {
+      const res = await fetch(path);
+      if (!res.ok) throw new Error(`${path} HTTP ${res.status}`);
+      return res.json();
+    }
+
+    function showTab(name) {
+      document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === `panel-${name}`));
+    }
+
+    document.getElementById("tabs").addEventListener("click", (e) => {
+      const btn = e.target.closest(".tab");
+      if (!btn) return;
+      showTab(btn.dataset.tab);
+    });
+
+    async function loadHealthBanner() {
+      try {
+        const h = await fetchJson("/health");
+        const dev = h.env === "development" || h.env === "test" || !h.live_trading_allowed;
+        document.getElementById("devBanner").style.display = dev ? "block" : "none";
+      } catch (_) {}
+    }
+
+    async function refreshOverview() {
+      const data = await fetchJson("/dashboard/summary");
       document.getElementById("asOf").textContent =
         `UTC ${data.as_of.utc} · ET ${data.as_of.us_eastern} · BNE ${data.as_of.brisbane}`;
-
       const ts = data.market_status.trading_state;
       const cls = ts === "active" ? "good" : ts === "paused" ? "warn" : "bad";
       document.getElementById("tradingState").innerHTML = pill(ts, cls);
       document.getElementById("tradingMeta").textContent =
         data.market_status.reason || (data.market_status.new_orders_allowed ? "New orders allowed" : "New orders blocked");
-
       const p = data.portfolio;
       if (p) {
         document.getElementById("equity").textContent = `$${Number(p.equity).toLocaleString(undefined, {maximumFractionDigits: 2})}`;
@@ -263,7 +374,6 @@
         ].join(" ");
         document.getElementById("riskMeta").textContent = `Daily PnL $${Number(p.daily_pnl).toFixed(2)}`;
       }
-
       const cio = data.cio;
       if (cio) {
         document.getElementById("cio").innerHTML = `
@@ -272,11 +382,9 @@
           <div class="muted" style="margin-top:0.4rem">${cio.timestamp}</div>
           <pre>${JSON.stringify(cio.payload?.symbol_actions || [], null, 2)}</pre>`;
       }
-
       document.getElementById("jobs").innerHTML = (data.next_jobs || []).length
         ? data.next_jobs.map(j => `<li class="mono">${j.id}: ${j.next_run_time || "n/a"}</li>`).join("")
         : `<li class="muted">No scheduled jobs</li>`;
-
       document.getElementById("agents").innerHTML = AGENT_ORDER.map(name => {
         const a = (data.agents || {})[name];
         return `<div class="agent-card"><h3>${name}</h3>
@@ -284,22 +392,89 @@
           <div class="muted">${a?.model_name || ""} ${a?.data_quality_score != null ? "· q " + a.data_quality_score : ""}</div>
         </div>`;
       }).join("");
-
       document.getElementById("positions").innerHTML = (data.positions || []).length
         ? data.positions.map(p => `<tr><td>${p.symbol}</td><td>${p.quantity}</td><td>${Number(p.market_value).toFixed(2)}</td><td>${Number(p.unrealized_pnl).toFixed(2)}</td><td>${p.sector}</td></tr>`).join("")
         : `<tr><td colspan="5" class="muted">None</td></tr>`;
-
       document.getElementById("orders").innerHTML = (data.open_orders || []).length
         ? data.open_orders.map(o => `<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.qty}</td><td>${o.status}</td></tr>`).join("")
         : `<tr><td colspan="4" class="muted">None</td></tr>`;
-
       document.getElementById("news").innerHTML = (data.news || []).length
         ? data.news.map(n => `<li><strong>${n.headline}</strong><div class="muted">${n.source} · ${n.published_at}</div></li>`).join("")
         : `<li class="muted">None</li>`;
-
       document.getElementById("errors").innerHTML = (data.errors || []).length
         ? data.errors.map(e => `<li><span class="pill ${e.level === "error" ? "bad" : "warn"}">${e.level}</span> ${e.event_type}: ${e.message}</li>`).join("")
         : `<li class="muted">None</li>`;
+    }
+
+    async function refreshPerformance() {
+      const [portfolio, returns, risk, drawdowns, trades, execution] = await Promise.all([
+        fetchJson("/performance/portfolio"),
+        fetchJson("/performance/returns"),
+        fetchJson("/performance/risk"),
+        fetchJson("/performance/drawdowns"),
+        fetchJson("/performance/trades"),
+        fetchJson("/performance/execution"),
+      ]);
+      document.getElementById("perfPortfolio").textContent = JSON.stringify(portfolio, null, 2);
+      document.getElementById("perfReturns").textContent = JSON.stringify(returns, null, 2);
+      document.getElementById("perfRisk").textContent = JSON.stringify(risk, null, 2);
+      document.getElementById("perfDrawdowns").textContent = JSON.stringify(drawdowns, null, 2);
+      document.getElementById("perfTrades").textContent = JSON.stringify(trades, null, 2);
+      document.getElementById("perfExecution").textContent = JSON.stringify(execution, null, 2);
+    }
+
+    async function refreshAgentsTab() {
+      const [agents, calibration, decisions] = await Promise.all([
+        fetchJson("/performance/agents"),
+        fetchJson("/performance/calibration"),
+        fetchJson("/performance/decisions"),
+      ]);
+      document.getElementById("agentPerf").textContent = JSON.stringify(agents, null, 2);
+      document.getElementById("agentCalibration").textContent = JSON.stringify(calibration, null, 2);
+      document.getElementById("decisionEval").textContent = JSON.stringify(decisions, null, 2);
+    }
+
+    async function refreshOperations() {
+      const [metrics, alerts, readiness, sims] = await Promise.all([
+        fetchJson("/operations/metrics"),
+        fetchJson("/operations/alerts"),
+        fetchJson("/operations/readiness"),
+        fetchJson("/simulations"),
+      ]);
+      document.getElementById("opsMetrics").textContent = JSON.stringify(metrics, null, 2);
+      document.getElementById("opsAlerts").innerHTML = (alerts.alerts || []).length
+        ? alerts.alerts.map(a => `<li>${pill(a.severity, a.severity === "critical" ? "bad" : "warn")} ${a.code}: ${a.message}</li>`).join("")
+        : `<li class="muted">No active alerts</li>`;
+      document.getElementById("opsReadiness").textContent = JSON.stringify(readiness, null, 2);
+      document.getElementById("opsSimulations").textContent = JSON.stringify(sims, null, 2);
+    }
+
+    async function refreshAudit() {
+      const [status, health, decisions] = await Promise.all([
+        fetchJson("/status"),
+        fetchJson("/health"),
+        fetchJson("/decisions?limit=10"),
+      ]);
+      document.getElementById("auditStatus").textContent = JSON.stringify(status, null, 2);
+      document.getElementById("auditHealth").textContent = JSON.stringify(health, null, 2);
+      document.getElementById("auditDecisions").textContent = JSON.stringify(decisions, null, 2);
+    }
+
+    async function refreshAll() {
+      setBusy(true, "Refreshing…");
+      try {
+        await Promise.all([
+          loadHealthBanner(),
+          refreshOverview(),
+          refreshPerformance(),
+          refreshAgentsTab(),
+          refreshOperations(),
+          refreshAudit(),
+        ]);
+        setBusy(false, "Updated");
+      } catch (err) {
+        setBusy(false, `Refresh failed: ${err.message || err}`);
+      }
     }
 
     async function runWorkflow(kind) {
@@ -311,12 +486,9 @@
       try {
         const res = await fetch(path, { method: "POST" });
         const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(body.detail || body.message || `HTTP ${res.status}`);
-        }
-        await refresh();
-        const outcome = body.outcome || body.status || "ok";
-        setBusy(false, `${label} done · ${outcome}`);
+        if (!res.ok) throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+        await refreshAll();
+        setBusy(false, `${label} done · ${body.outcome || body.status || "ok"}`);
       } catch (err) {
         setBusy(false, `${label} failed: ${err.message || err}`);
       }
@@ -328,15 +500,15 @@
       try {
         const res = await fetch("/trading/emergency-stop", { method: "POST" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        await refresh();
+        await refreshAll();
         setBusy(false, "Emergency stop sent");
       } catch (err) {
         setBusy(false, `Emergency stop failed: ${err.message || err}`);
       }
     }
 
-    refresh().catch((err) => setBusy(false, `Load failed: ${err.message || err}`));
-    setInterval(() => { refresh().catch(() => {}); }, 30000);
+    refreshAll().catch((err) => setBusy(false, `Load failed: ${err.message || err}`));
+    setInterval(() => { refreshAll().catch(() => {}); }, 60000);
   </script>
 </body>
 </html>

@@ -304,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     psub = providers.add_subparsers(dest="providers_cmd", required=True)
     psub.add_parser("list")
     psub.add_parser("health")
+    psub.add_parser("reliability")
 
     collect = sub.add_parser("collect")
     csub = collect.add_subparsers(dest="collect_cmd", required=True)
@@ -386,6 +387,40 @@ def main(argv: list[str] | None = None) -> int:
     ptrev.add_argument("--position-id", required=True)
     ptrev.add_argument("--symbol", default="UNKNOWN")
 
+    performance = sub.add_parser("performance")
+    perf_sub = performance.add_subparsers(dest="perf_cmd", required=True)
+    for name in ("portfolio", "risk", "drawdowns", "trades", "agents", "recalculate"):
+        perf_sub.add_parser(name)
+
+    operations = sub.add_parser("operations")
+    operations.add_subparsers(dest="ops_cmd", required=True).add_parser("metrics")
+
+    alerts = sub.add_parser("alerts")
+    alert_sub = alerts.add_subparsers(dest="alert_cmd", required=True)
+    alert_sub.add_parser("list")
+    alert_ack = alert_sub.add_parser("acknowledge")
+    alert_ack.add_argument("--id", required=True)
+
+    simulation = sub.add_parser("simulation")
+    sim_sub = simulation.add_subparsers(dest="sim_cmd", required=True)
+    sim_run = sim_sub.add_parser("run")
+    sim_run.add_argument("--scenario", default="bull-market")
+    sim_run.add_argument("--days", type=int, default=5)
+    sim_report = sim_sub.add_parser("report")
+    sim_report.add_argument("--id", required=True)
+
+    readiness = sub.add_parser("readiness")
+    readiness.add_subparsers(dest="readiness_cmd", required=True).add_parser("evaluate")
+
+    backup = sub.add_parser("backup")
+    backup_sub = backup.add_subparsers(dest="backup_cmd", required=True)
+    backup_sub.add_parser("create")
+    backup_verify = backup_sub.add_parser("verify")
+    backup_verify.add_argument("--path", required=True)
+
+    security = sub.add_parser("security", help="Security audit checks (Phase 7)")
+    security.add_subparsers(dest="security_cmd").add_parser("audit")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "run-analysis":
@@ -423,6 +458,8 @@ def main(argv: list[str] | None = None) -> int:
                 for n in ("fixture", "alpaca", "sec_edgar")
             ]
         }
+    elif args.cmd == "providers" and args.providers_cmd == "reliability":
+        result = asyncio.run(_providers_reliability())
     elif args.cmd == "collect":
         syms = (
             [s.strip().upper() for s in args.symbols.split(",")]
@@ -473,6 +510,20 @@ def main(argv: list[str] | None = None) -> int:
         result = asyncio.run(_postmarket_settle())
     elif args.cmd == "posttrade" and args.posttrade_cmd == "review":
         result = asyncio.run(_posttrade_review(args.position_id, args.symbol))
+    elif args.cmd == "performance":
+        result = asyncio.run(_performance_cmd(args.perf_cmd))
+    elif args.cmd == "operations" and args.ops_cmd == "metrics":
+        result = asyncio.run(_operations_metrics())
+    elif args.cmd == "alerts":
+        result = asyncio.run(_alerts_cmd(args))
+    elif args.cmd == "simulation":
+        result = asyncio.run(_simulation_cmd(args))
+    elif args.cmd == "readiness" and args.readiness_cmd == "evaluate":
+        result = asyncio.run(_readiness_evaluate())
+    elif args.cmd == "backup":
+        result = asyncio.run(_backup_cmd(args))
+    elif args.cmd == "security":
+        result = _security_audit()
     else:
         return 1
 
@@ -581,6 +632,184 @@ async def _posttrade_review(position_id: str, symbol: str) -> dict:
         )
         await session.commit()
         return result
+
+
+async def _providers_reliability() -> dict:
+    from app.performance.service import PerformanceService
+
+    factory = get_session_factory()
+    async with factory() as session:
+        stats = {"providers": list_providers(get_settings())}
+        return PerformanceService(session).providers(stats)
+
+
+async def _performance_cmd(cmd: str) -> dict:
+    from datetime import UTC, datetime, timedelta
+
+    from app.performance.service import PerformanceService
+
+    end = datetime.now(UTC)
+    start = end - timedelta(days=90)
+    factory = get_session_factory()
+    async with factory() as session:
+        svc = PerformanceService(session, settings=get_settings())
+        if cmd == "portfolio":
+            result = await svc.portfolio_summary(start, end)
+        elif cmd == "risk":
+            result = await svc.risk_summary(start, end)
+        elif cmd == "drawdowns":
+            result = await svc.drawdowns(start, end)
+        elif cmd == "trades":
+            result = await svc.trade_metrics(start, end)
+        elif cmd == "agents":
+            result = await svc.agents(start, end)
+        elif cmd == "recalculate":
+            result = await svc.recalculate(start, end)
+        else:
+            raise SystemExit(f"unknown performance command: {cmd}")
+        return result
+
+
+async def _operations_metrics() -> dict:
+    from app.performance.service import PerformanceService
+
+    factory = get_session_factory()
+    async with factory() as session:
+        counters = {"window_seconds": 86400}
+        return {"kpis": PerformanceService(session).operational(counters)}
+
+
+async def _alerts_cmd(args: argparse.Namespace) -> dict:
+    from uuid import UUID
+
+    from app.alerts.service import AlertService
+
+    factory = get_session_factory()
+    async with factory() as session:
+        svc = AlertService(session, settings=get_settings())
+        if args.alert_cmd == "list":
+            alerts = await svc.list_alerts()
+            return {
+                "alerts": [
+                    {"id": str(a.id), "code": a.code, "severity": a.severity.value, "status": a.status.value}
+                    for a in alerts
+                ]
+            }
+        if args.alert_cmd == "acknowledge":
+            out = await svc.acknowledge(UUID(args.id))
+            await session.commit()
+            return {"emitted": out.emitted, "reason": out.reason, "alert_id": str(out.alert_id)}
+        raise SystemExit("unknown alerts command")
+
+
+async def _simulation_cmd(args: argparse.Namespace) -> dict:
+    from uuid import UUID
+
+    from app.simulation.runner import MultiDaySimulationRunner
+
+    factory = get_session_factory()
+    async with factory() as session:
+        if args.sim_cmd == "run":
+            try:
+                summary = await MultiDaySimulationRunner(session, settings=get_settings()).run(
+                    args.scenario, days=args.days
+                )
+                try:
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                return summary.to_dict() if hasattr(summary, "to_dict") else summary
+            except Exception as exc:  # noqa: BLE001
+                await session.rollback()
+                # Offline-friendly: run without DB persistence
+                summary = await MultiDaySimulationRunner(None, settings=get_settings()).run(
+                    args.scenario, days=args.days
+                )
+                payload = summary.to_dict() if hasattr(summary, "to_dict") else summary
+                if isinstance(payload, dict):
+                    payload["persist_warning"] = str(exc)[:200]
+                return payload
+        if args.sim_cmd == "report":
+            from app.models import SimulationRunRecord
+
+            row = await session.get(SimulationRunRecord, UUID(args.id))
+            if row is None:
+                raise SystemExit("simulation_not_found")
+            return {"id": str(row.id), "scenario": row.scenario, "payload": row.payload, "status": row.status}
+        raise SystemExit("unknown simulation command")
+
+
+async def _readiness_evaluate() -> dict:
+    from datetime import UTC, datetime
+
+    from app.ops.readiness import GateEvaluator, ReadinessGate
+
+    result = GateEvaluator(get_settings()).evaluate(ReadinessGate.DEVELOPMENT)
+    factory = get_session_factory()
+    async with factory() as session:
+        try:
+            from app.models import ReadinessEvaluationRecord
+
+            row = ReadinessEvaluationRecord(
+                gate=ReadinessGate.DEVELOPMENT.value,
+                result=result,
+                evaluated_at=datetime.now(UTC),
+            )
+            session.add(row)
+            await session.commit()
+            return {"evaluation_id": str(row.id), **result}
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            return {**result, "persisted": False, "persist_warning": str(exc)[:200]}
+
+
+async def _backup_cmd(args: argparse.Namespace) -> dict:
+    from app.ops.backup import BackupService
+
+    factory = get_session_factory()
+    async with factory() as session:
+        svc = BackupService(session=session)
+        if args.backup_cmd == "create":
+            created = await svc.create(as_zip=True)
+            return {
+                "backup_id": created.backup_id,
+                "path": created.path,
+                "file_count": created.file_count,
+            }
+        if args.backup_cmd == "verify":
+            verified = svc.verify(args.path)
+            return {"valid": verified.valid, "errors": verified.errors, "backup_id": verified.backup_id}
+        raise SystemExit("unknown backup command")
+
+
+def _security_audit() -> dict:
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parents[1] / "docs" / "security_audit_phase7.md"
+    settings = get_settings()
+    checks = [
+        {
+            "name": "live_trading_allowed",
+            "passed": not settings.is_live_trading_allowed(),
+            "detail": "LIVE must remain blocked",
+        },
+        {
+            "name": "enable_live_trading_flag",
+            "passed": not settings.enable_live_trading,
+            "detail": "ENABLE_LIVE_TRADING must be false",
+        },
+        {
+            "name": "dashboard_read_only",
+            "passed": settings.dashboard_read_only,
+            "detail": "Dashboard must stay read-only",
+        },
+    ]
+    return {
+        "audit_doc": str(doc),
+        "audit_doc_exists": doc.exists(),
+        "checks": checks,
+        "all_passed": all(c["passed"] for c in checks),
+    }
 
 
 if __name__ == "__main__":

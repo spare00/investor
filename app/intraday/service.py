@@ -23,7 +23,7 @@ from app.intraday.posttrade import PostTradeReviewService
 from app.intraday.recovery import IntradayRecoveryService
 from app.intraday.risk import DynamicRiskRevalidator
 from app.intraday.settlement import SettlementService
-from app.models import OrderIntent, PositionLifecycle, PositionSnapshotRecord
+from app.models import OrderIntent, PortfolioSnapshot, PositionLifecycle, PositionSnapshotRecord
 
 
 class IntradayService:
@@ -70,19 +70,36 @@ class IntradayService:
         }
 
     async def monitor_all(self, prices: dict[str, float] | None = None) -> list[dict[str, Any]]:
+        if not self.settings.enable_intraday_monitoring:
+            return [{"skipped": True, "reason": "enable_intraday_monitoring_false"}]
         prices = prices or {}
+        equity = float(self.settings.starting_cash)
+        daily_pnl_pct = 0.0
+        drawdown_pct = 0.0
+
+        snap = (
+            await self.session.execute(
+                select(PortfolioSnapshot).order_by(PortfolioSnapshot.as_of.desc()).limit(1)
+            )
+        ).scalar_one_or_none()
+        if snap is not None:
+            equity = float(snap.equity or equity)
+            daily_pnl_pct = float(snap.daily_pnl_pct or 0.0)
+            drawdown_pct = float(snap.drawdown_pct or 0.0)
         out: list[dict[str, Any]] = []
         for lc in await self.monitor.list_lifecycles():
             result = await self.monitor.evaluate(
                 lc,
                 current_price=prices.get(lc.symbol),
-                equity=self.settings.starting_cash,
+                equity=equity,
+                daily_pnl_pct=daily_pnl_pct,
+                drawdown_pct=drawdown_pct,
             )
             risk = await self.risk.evaluate(
                 lc,
-                equity=self.settings.starting_cash,
-                daily_pnl_pct=0.0,
-                drawdown_pct=0.0,
+                equity=equity,
+                daily_pnl_pct=daily_pnl_pct,
+                drawdown_pct=drawdown_pct,
                 price=prices.get(lc.symbol),
             )
             stop = await self.exits.check_stop(

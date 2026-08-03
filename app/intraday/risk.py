@@ -97,15 +97,17 @@ class DynamicRiskRevalidator:
         await self.session.flush()
 
         if status in {"EXIT_REQUIRED", "EMERGENCY_STOP_REQUIRED", "TRADING_PAUSE_REQUIRED"}:
+            critical = status in {"EXIT_REQUIRED", "EMERGENCY_STOP_REQUIRED", "TRADING_PAUSE_REQUIRED"}
+            etype = "RISK_LIMIT_BREACH" if critical else "RISK_LIMIT_WARNING"
             await self.bus.publish(
-                event_type="RISK_LIMIT_BREACH" if "limit" in ",".join(reasons) else "RISK_LIMIT_WARNING",
+                event_type=etype,
                 source="dynamic_risk",
                 symbols=[lifecycle.symbol],
                 deduplication_key=f"risk:{lifecycle.id}:{status}:{datetime.now(UTC).strftime('%Y%m%d%H%M')}",
                 position_id=lifecycle.id,
                 requires_risk_review=True,
-                bypass_cooldown=status in {"EXIT_REQUIRED", "EMERGENCY_STOP_REQUIRED"},
-                importance="critical" if status != "RISK_WARNING" else "high",
+                bypass_cooldown=critical,
+                importance="critical" if critical else "high",
                 payload={"status": status, "reasons": reasons},
             )
         return DynamicRiskResult(status=status, reasons=reasons, review_id=str(review.id))

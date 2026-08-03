@@ -111,7 +111,7 @@ async def test_audit_persist_and_metrics(session: AsyncSession) -> None:
 
 def test_dashboard_routes_exist() -> None:
     client = TestClient(app)
-    assert client.get("/health").json()["phase"] == 6
+    assert client.get("/health").json()["phase"] == 7
     dash = client.get("/dashboard")
     assert dash.status_code == 200
     assert b"Investor Ops" in dash.content

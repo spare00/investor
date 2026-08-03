@@ -817,3 +817,330 @@ class IntradayRecoveryRun(Base, TimestampMixin):
     actions: Mapped[list[Any]] = mapped_column(JSONType, default=list)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
 
+
+# --- Phase 7 performance / operations persistence ---
+
+
+class PortfolioValuationRecord(Base, TimestampMixin):
+    __tablename__ = "portfolio_valuations"
+    __table_args__ = (
+        UniqueConstraint("portfolio_id", "as_of", "valuation_kind", name="uq_portfolio_valuation"),
+        Index("ix_portfolio_valuations_portfolio_as_of", "portfolio_id", "as_of"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    portfolio_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    valuation_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    cash: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    long_market_value: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    short_market_value: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    gross_exposure: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    net_exposure: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    portfolio_value: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    equity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    buying_power: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    realized_pl_day: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    unrealized_pl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    fees_day: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    estimated_slippage_day: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    net_liquidation_value: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    benchmark_values: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    source_snapshot_ids: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    data_quality: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    calculation_version: Mapped[str] = mapped_column(String(32), nullable=False, default="perf_v1")
+
+
+class PortfolioReturnRecord(Base, TimestampMixin):
+    __tablename__ = "portfolio_returns"
+    __table_args__ = (Index("ix_portfolio_returns_period", "portfolio_id", "period_start", "period_end"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    portfolio_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    method: Mapped[str] = mapped_column(String(32), nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    excess_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    active_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    benchmark: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="AVAILABLE")
+    calculation_version: Mapped[str] = mapped_column(String(32), nullable=False, default="perf_v1")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class PerformanceMetricRecord(Base, TimestampMixin):
+    __tablename__ = "performance_metrics"
+    __table_args__ = (Index("ix_performance_metrics_name_period", "metric_name", "period_start"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    metric_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    observation_count: Mapped[int] = mapped_column(Integer, default=0)
+    annualization_factor: Mapped[float | None] = mapped_column(Float, nullable=True)
+    risk_free_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    benchmark: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    method: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    calculation_version: Mapped[str] = mapped_column(String(32), nullable=False, default="perf_v1")
+    data_quality: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="AVAILABLE")
+    metric_scope: Mapped[str] = mapped_column(String(64), nullable=False, default="portfolio")
+    calculation_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+
+
+class DrawdownPeriodRecord(Base, TimestampMixin):
+    __tablename__ = "drawdown_periods"
+    __table_args__ = (Index("ix_drawdown_periods_peak", "peak_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    peak_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    peak_value: Mapped[float] = mapped_column(Float, nullable=False)
+    trough_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    trough_value: Mapped[float] = mapped_column(Float, nullable=False)
+    recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    drawdown_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    duration_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    recovery_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class TradeMetricRecord(Base, TimestampMixin):
+    __tablename__ = "trade_metrics"
+    __table_args__ = (Index("ix_trade_metrics_scope_period", "scope", "period_start"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    scope: Mapped[str] = mapped_column(String(64), nullable=False, default="portfolio")
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    calculation_version: Mapped[str] = mapped_column(String(32), nullable=False, default="perf_v1")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="AVAILABLE")
+
+
+class ExecutionQualityRecord(Base, TimestampMixin):
+    __tablename__ = "execution_quality_metrics"
+    __table_args__ = (Index("ix_execution_quality_order", "order_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    order_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="AVAILABLE")
+    calculation_version: Mapped[str] = mapped_column(String(32), nullable=False, default="perf_v1")
+
+
+class DecisionEvaluationRecord(Base, TimestampMixin):
+    __tablename__ = "decision_evaluations"
+    __table_args__ = (Index("ix_decision_evaluations_decision", "decision_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    decision_type: Mapped[str] = mapped_column(String(64), nullable=False, default="cio")
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    decision_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    evaluation_horizon: Mapped[str] = mapped_column(String(32), nullable=False, default="1d")
+    price_at_horizon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    return_after_decision: Mapped[float | None] = mapped_column(Float, nullable=True)
+    benchmark_return_after_decision: Mapped[float | None] = mapped_column(Float, nullable=True)
+    excess_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_adverse_move: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_favorable_move: Mapped[float | None] = mapped_column(Float, nullable=True)
+    thesis_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    invalidation_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    action_quality: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    abstention_quality: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="AVAILABLE")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class AgentEvaluationRecord(Base, TimestampMixin):
+    __tablename__ = "agent_evaluations"
+    __table_args__ = (Index("ix_agent_evaluations_agent", "agent_name", "evaluated_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    report_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    prediction_horizon: Mapped[str] = mapped_column(String(64), nullable=False, default="1d")
+    directional_view: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    key_claims: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    risk_warnings: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    abstained: Mapped[bool] = mapped_column(Boolean, default=False)
+    actual_outcome: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    direction_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    warning_useful: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    invalidation_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    confidence_error: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evaluation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class AgentCalibrationRecord(Base, TimestampMixin):
+    __tablename__ = "agent_calibration_metrics"
+    __table_args__ = (Index("ix_agent_calibration_agent_bucket", "agent_name", "bucket"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    bucket: Mapped[str] = mapped_column(String(32), nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    calibration_gap: Mapped[float | None] = mapped_column(Float, nullable=True)
+    brier_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ece: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="AVAILABLE")
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    calculation_version: Mapped[str] = mapped_column(String(32), nullable=False, default="perf_v1")
+
+
+class ProviderReliabilityRecord(Base, TimestampMixin):
+    __tablename__ = "provider_reliability_metrics"
+    __table_args__ = (Index("ix_provider_reliability_name", "provider_name", "period_start"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    provider_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="AVAILABLE")
+    calculation_version: Mapped[str] = mapped_column(String(32), nullable=False, default="perf_v1")
+
+
+class ProviderIncidentRecord(Base, TimestampMixin):
+    __tablename__ = "provider_incidents"
+    __table_args__ = (Index("ix_provider_incidents_name_started", "provider_name", "started_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    provider_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    affected_workflows: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    affected_decisions: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    trading_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    data_quality_impact: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class OperationalMetricRecord(Base, TimestampMixin):
+    __tablename__ = "operational_metrics"
+    __table_args__ = (Index("ix_operational_metrics_name_as_of", "metric_name", "as_of"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    metric_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    labels: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    calculation_version: Mapped[str] = mapped_column(String(32), nullable=False, default="perf_v1")
+
+
+class BenchmarkSnapshotRecord(Base, TimestampMixin):
+    __tablename__ = "benchmark_snapshots"
+    __table_args__ = (Index("ix_benchmark_snapshots_symbol_as_of", "symbol", "as_of"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    total_return_index: Mapped[float | None] = mapped_column(Float, nullable=True)
+    adjusted_close: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="fixture")
+    provenance: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    freshness_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class MetricCalculationRun(Base, TimestampMixin):
+    __tablename__ = "metric_calculation_runs"
+    __table_args__ = (Index("ix_metric_calc_runs_scope", "metric_scope", "started_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    metric_scope: Mapped[str] = mapped_column(String(64), nullable=False, default="portfolio")
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RUNNING")
+    input_snapshot_ids: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    calculation_version: Mapped[str] = mapped_column(String(32), nullable=False, default="perf_v1")
+    records_processed: Mapped[int] = mapped_column(Integer, default=0)
+    records_rejected: Mapped[int] = mapped_column(Integer, default=0)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class AlertRecordModel(Base, TimestampMixin):
+    """Operational alert persistence — class name avoids clash with alerts.base.AlertRecord."""
+
+    __tablename__ = "operational_alerts"
+    __table_args__ = (
+        Index("ix_operational_alerts_status", "status", "detected_at"),
+        Index("ix_operational_alerts_dedupe", "deduplication_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    alert_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_event_ids: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    deduplication_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class SimulationRunRecord(Base, TimestampMixin):
+    __tablename__ = "simulation_runs"
+    __table_args__ = (Index("ix_simulation_runs_scenario", "scenario", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    scenario: Mapped[str] = mapped_column(String(64), nullable=False)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trading_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    workflow_success_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trade_count: Mapped[int] = mapped_column(Integer, default=0)
+    return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    benchmark_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_drawdown: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sharpe: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sortino: Mapped[float | None] = mapped_column(Float, nullable=True)
+    win_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    profit_factor: Mapped[float | None] = mapped_column(Float, nullable=True)
+    risk_limit_breaches: Mapped[int] = mapped_column(Integer, default=0)
+    emergency_stops: Mapped[int] = mapped_column(Integer, default=0)
+    recovery_count: Mapped[int] = mapped_column(Integer, default=0)
+    agent_failures: Mapped[int] = mapped_column(Integer, default=0)
+    provider_failures: Mapped[int] = mapped_column(Integer, default=0)
+    code_version: Mapped[str] = mapped_column(String(32), nullable=False, default="0.12.0")
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False, default="indicators_v1")
+    model_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    configuration_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="COMPLETED")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class ReadinessEvaluationRecord(Base, TimestampMixin):
+    __tablename__ = "readiness_evaluations"
+    __table_args__ = (Index("ix_readiness_evaluations_gate", "gate", "evaluated_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    gate: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    operator_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
