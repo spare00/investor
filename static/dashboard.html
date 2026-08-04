@@ -83,6 +83,9 @@
     }
     button:hover { border-color: var(--accent); }
     button.danger { border-color: var(--bad); color: var(--bad); }
+    button.good { border-color: var(--good); color: var(--good); }
+    button.warn { border-color: var(--warn); color: var(--warn); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
     main {
       display: grid;
       grid-template-columns: repeat(12, 1fr);
@@ -259,6 +262,8 @@
       <button id="btnRefresh" onclick="refreshAll()">Refresh</button>
       <button id="btnPremarket" onclick="runWorkflow('premarket')">Run Premarket</button>
       <button id="btnIntraday" onclick="runWorkflow('intraday')">Intraday Eval</button>
+      <button id="btnPause" class="warn" onclick="pauseTrading()" style="display:none">Pause</button>
+      <button id="btnRestart" class="good" onclick="restartTrading()" style="display:none">Restart Trading</button>
       <button id="btnStop" class="danger" onclick="emergencyStop()">Emergency Stop</button>
     </div>
   </header>
@@ -428,12 +433,43 @@
     }
 
     function setBusy(busy, message) {
-      ["btnRefresh", "btnPremarket", "btnIntraday", "btnStop"].forEach((id) => {
+      ["btnRefresh", "btnPremarket", "btnIntraday", "btnPause", "btnRestart", "btnStop"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.disabled = busy;
       });
       const status = document.getElementById("actionStatus");
       if (status) status.textContent = message || "";
+    }
+
+    function syncTradingControls(state) {
+      const pauseBtn = document.getElementById("btnPause");
+      const restartBtn = document.getElementById("btnRestart");
+      const stopBtn = document.getElementById("btnStop");
+      if (!pauseBtn || !restartBtn || !stopBtn) return;
+      if (state === "active") {
+        pauseBtn.style.display = "";
+        pauseBtn.textContent = "Pause";
+        restartBtn.style.display = "none";
+        stopBtn.style.display = "";
+        stopBtn.disabled = false;
+      } else if (state === "paused") {
+        pauseBtn.style.display = "none";
+        restartBtn.style.display = "";
+        restartBtn.textContent = "Resume Trading";
+        stopBtn.style.display = "";
+        stopBtn.disabled = false;
+      } else if (state === "emergency_stop") {
+        pauseBtn.style.display = "none";
+        restartBtn.style.display = "";
+        restartBtn.textContent = "Restart Trading";
+        stopBtn.style.display = "";
+        stopBtn.disabled = true;
+      } else {
+        pauseBtn.style.display = "none";
+        restartBtn.style.display = "";
+        restartBtn.textContent = "Restart Trading";
+        stopBtn.style.display = "";
+      }
     }
 
     async function fetchJson(path) {
@@ -540,6 +576,7 @@
       document.getElementById("tradingState").innerHTML = pill(ts, cls);
       document.getElementById("tradingMeta").textContent =
         data.market_status.reason || (data.market_status.new_orders_allowed ? "New orders allowed" : "New orders blocked");
+      syncTradingControls(ts);
       const p = data.portfolio;
       if (p) {
         document.getElementById("equity").textContent = `$${Number(p.equity).toLocaleString(undefined, {maximumFractionDigits: 2})}`;
@@ -690,6 +727,35 @@
         setBusy(false, "Emergency stop sent");
       } catch (err) {
         setBusy(false, `Emergency stop failed: ${err.message || err}`);
+      }
+    }
+
+    async function pauseTrading() {
+      if (!confirm("Pause trading? New orders will be blocked until you resume.")) return;
+      setBusy(true, "Pausing…");
+      try {
+        const res = await fetch("/trading/pause", { method: "POST" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+        await refreshAll();
+        setBusy(false, `Paused · ${body.state || "paused"}`);
+      } catch (err) {
+        setBusy(false, `Pause failed: ${err.message || err}`);
+      }
+    }
+
+    async function restartTrading() {
+      const label = document.getElementById("btnRestart")?.textContent || "Restart Trading";
+      if (!confirm(`${label}? This re-enables new paper orders.`)) return;
+      setBusy(true, `${label}…`);
+      try {
+        const res = await fetch("/trading/restart", { method: "POST" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+        await refreshAll();
+        setBusy(false, `Trading ${body.state || "active"} · ${(body.steps || []).join(" → ") || "ok"}`);
+      } catch (err) {
+        setBusy(false, `Restart failed: ${err.message || err}`);
       }
     }
 

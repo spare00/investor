@@ -163,6 +163,7 @@ async def status() -> dict[str, Any]:
             "premarket_run": "POST /workflow/premarket/run",
             "portfolio": "GET /portfolio",
             "emergency_stop": "POST /trading/emergency-stop",
+            "restart_trading": "POST /trading/restart",
         },
     }
 

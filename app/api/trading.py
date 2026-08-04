@@ -27,19 +27,37 @@ async def trading_state() -> dict[str, Any]:
 
 @router.post("/pause")
 async def pause_trading(reason: str = "manual_pause") -> dict[str, Any]:
+    from app.core.database import get_session_factory
+
     snap = trading_controls.pause(reason=reason)
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await persist_trading_controls(session, trading_controls, changed_by="api")
+            await session.commit()
+    except Exception:  # noqa: BLE001
+        pass
     return {"state": snap.state.value, "reason": snap.reason, "changed_at": snap.changed_at.isoformat()}
 
 
 @router.post("/resume")
 async def resume_trading(reason: str = "manual_resume") -> dict[str, Any]:
+    from app.core.database import get_session_factory
+
     snap = trading_controls.resume(reason=reason)
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await persist_trading_controls(session, trading_controls, changed_by="api")
+            await session.commit()
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "state": snap.state.value,
         "reason": snap.reason,
         "changed_at": snap.changed_at.isoformat(),
         "note": (
-            "Emergency stop cannot be cleared via resume; use /trading/clear-emergency first"
+            "Emergency stop cannot be cleared via resume; use /trading/clear-emergency or /trading/restart"
             if snap.state.value == "emergency_stop"
             else None
         ),
@@ -100,4 +118,33 @@ async def clear_emergency(reason: str = "emergency_cleared") -> dict[str, Any]:
         "reason": snap.reason,
         "changed_at": snap.changed_at.isoformat(),
         "next": "POST /trading/resume to re-enable new orders",
+    }
+
+
+@router.post("/restart")
+async def restart_trading(reason: str = "dashboard_restart") -> dict[str, Any]:
+    """One-click ops recovery: clear emergency if needed, then resume to active."""
+    from app.core.database import get_session_factory
+
+    steps: list[str] = []
+    before = trading_controls.snapshot().state.value
+    if before == "emergency_stop":
+        trading_controls.clear_emergency(reason=f"{reason}:clear")
+        steps.append("cleared_emergency")
+    snap = trading_controls.resume(reason=reason)
+    steps.append("resumed")
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await persist_trading_controls(session, trading_controls, changed_by="api")
+            await session.commit()
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "state": snap.state.value,
+        "reason": snap.reason,
+        "changed_at": snap.changed_at.isoformat(),
+        "before": before,
+        "steps": steps,
+        "new_orders_allowed": trading_controls.is_new_order_allowed(),
     }
