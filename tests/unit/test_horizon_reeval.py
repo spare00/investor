@@ -23,13 +23,25 @@ def test_scalp_reeval_faster_than_medium() -> None:
 
 
 def test_planned_interval_follows_tightest_watchlist_horizon() -> None:
-    settings = Settings(intraday_reevaluation_interval_minutes=20)
+    settings = Settings(intraday_reevaluation_interval_minutes=20, max_intraday_reanalyses=24)
     assert planned_intraday_interval_minutes([], settings) == 20
     assert planned_intraday_interval_minutes(None, settings) == 20
     assert planned_intraday_interval_minutes(["medium"], settings) == 60
     assert planned_intraday_interval_minutes(["short"], settings) == 15
     assert planned_intraday_interval_minutes(["day"], settings) == 5
     assert planned_intraday_interval_minutes(["scalp", "medium"], settings) == 2
+
+
+def test_planned_interval_floors_by_llm_budget() -> None:
+    settings = Settings(intraday_reevaluation_interval_minutes=20, max_intraday_reanalyses=12)
+    # 360m session / (12*2 jobs) = 15m floor → scalp 2m becomes 15m
+    assert (
+        planned_intraday_interval_minutes(["scalp"], settings, session_minutes=360) == 15
+    )
+    # Medium still 60 (above floor)
+    assert (
+        planned_intraday_interval_minutes(["medium"], settings, session_minutes=360) == 60
+    )
 
 
 def test_min_among_open_books_picks_tightest() -> None:

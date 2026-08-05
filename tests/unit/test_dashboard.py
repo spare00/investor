@@ -120,8 +120,16 @@ def test_dashboard_routes_exist() -> None:
     assert b"Raw JSON" in dash.content
     assert b"usSessionChip" in dash.content
     assert b"renderUsSession" in dash.content
+    assert b"renderIntradayCadence" in dash.content
+    assert b"universePaused" in dash.content
     assert b"refreshStrip" in dash.content
     assert b"Promise.allSettled" in dash.content
+    summary = client.get("/dashboard/summary")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert "force_close" in body
+    assert "session_jobs" in body
+    assert "universe" in body
     metrics = client.get("/metrics")
     assert metrics.status_code == 200
     assert b"investor_" in metrics.content or b"python_" in metrics.content

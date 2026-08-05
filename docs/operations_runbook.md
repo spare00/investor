@@ -2,6 +2,28 @@
 
 Commands match `python -m app.cli` and HTTP APIs.
 
+## Paper firm arming (unattended)
+
+Fail-closed defaults keep orders off. To run the 6-agent paper loop:
+
+1. `.env`: `TRADING_MODE=paper`, `BROKER_ENVIRONMENT=paper`, `INTRADAY_OPERATION_MODE=PAPER_AUTOMATED`
+2. Unlock paper submits: `ENABLE_BROKER_ORDERS=true`, `ENABLE_AUTOMATED_EXECUTION=true`, `REQUIRE_MANUAL_ORDER_APPROVAL=false`
+3. Scheduler: `ENABLE_SCHEDULER=true` (plans `intraday_eval_*`, `closing_window`, optional `universe_refresh`)
+4. Force flatten near close (optional): `AUTO_EXECUTE_FORCE_CLOSE=true` — otherwise closing creates intents only
+5. Universe: `UNIVERSE_MODE=dynamic`, `UNIVERSE_MANAGER_ENABLED=true`
+
+Verify:
+
+```bash
+python -m app.cli daily-workflow prepare
+python -m app.cli scheduler list
+python -m app.cli universe show
+python -m app.cli closing run   # or wait for closing_window job
+curl -s localhost:8000/dashboard/summary | jq '{workflow:.market_status.workflow,force_close,session_jobs:(.session_jobs|length)}'
+```
+
+Overview shows reeval budget (`reeval used/max`), planned interval, session job plan, paused hygiene names, and force-close arming.
+
 ## Daily observe (paper)
 
 ```bash

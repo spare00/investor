@@ -363,6 +363,7 @@
         <h2>US Market Session</h2>
         <div id="usSessionState" class="stat" style="font-size:1.25rem">—</div>
         <div id="usSessionMeta" class="muted"></div>
+        <div id="intradayCadence" class="muted" style="margin-top:0.45rem"></div>
         <div id="tradingState" style="margin-top:0.65rem"></div>
         <div id="tradingMeta" class="muted"></div>
       </section>
@@ -375,6 +376,7 @@
         <h2>Universe <button id="btnUniverse" type="button" style="float:right;font-size:0.8rem;padding:0.25rem 0.55rem" onclick="refreshUniverseNow()">Refresh Universe</button></h2>
         <div id="universeMeta" class="muted">Loading…</div>
         <div id="universeBook" style="margin-top:0.5rem"></div>
+        <div id="universePaused" style="margin-top:0.5rem"></div>
         <div id="universeFocus" style="margin-top:0.5rem"></div>
         <div id="universeByHorizon" style="margin-top:0.75rem"></div>
       </section>
@@ -396,6 +398,7 @@
       <section>
         <h2>Next Jobs</h2>
         <ul id="jobs"><li class="muted">None</li></ul>
+        <div id="sessionJobs" class="muted" style="margin-top:0.65rem"></div>
       </section>
       <section class="full">
         <h2>Six Agents — Latest Opinions</h2>
@@ -906,17 +909,20 @@
       const focusEl = document.getElementById("universeFocus");
       const byEl = document.getElementById("universeByHorizon");
       const bookEl = document.getElementById("universeBook");
+      const pausedEl = document.getElementById("universePaused");
       if (!meta || !focusEl || !byEl) return;
       if (!u) {
         meta.textContent = "Universe unavailable";
         focusEl.innerHTML = "";
         byEl.innerHTML = "";
         if (bookEl) bookEl.innerHTML = "";
+        if (pausedEl) pausedEl.innerHTML = "";
         return;
       }
       const mode = u.mode || "—";
       const limits = u.limits || {};
       const wl = (u.watchlist || []).filter((r) => (r.status || "active") === "active");
+      const pausedRows = (u.watchlist || []).filter((r) => (r.status || "") === "paused");
       const cand = (u.candidate_pool || []).length;
       meta.innerHTML = [
         pill(`mode ${mode}`, mode === "dynamic" ? "good" : "warn"),
@@ -936,6 +942,26 @@
       const hy = (u.focus && u.focus.hygiene) || u.hygiene;
       if (hy && (hy.paused || []).length) {
         meta.innerHTML += " " + pill(`paused illiquid ${hy.paused.length}`, "warn");
+      } else if (pausedRows.length) {
+        meta.innerHTML += " " + pill(`paused ${pausedRows.length}`, "warn");
+      }
+      if (pausedEl) {
+        if (pausedRows.length) {
+          pausedEl.innerHTML =
+            `<div class="muted" style="margin-bottom:0.35rem">Paused</div>` +
+            pausedRows
+              .map((r) => {
+                const why =
+                  (r.payload && (r.payload.pause_reason || r.payload.reason)) ||
+                  r.notes ||
+                  r.thesis ||
+                  "paused";
+                return pill(`${r.symbol}: ${why}`, "warn");
+              })
+              .join(" ");
+        } else {
+          pausedEl.innerHTML = "";
+        }
       }
       if (bookEl) {
         const usage = u.book_usage || {};
@@ -1032,6 +1058,50 @@
         dataTable(["Symbol", "Side", "Qty", "Status", "Thesis"], irows, 5);
     }
 
+    function renderIntradayCadence(wf, sessionJobs) {
+      const el = document.getElementById("intradayCadence");
+      if (!el) return;
+      if (!wf) {
+        el.innerHTML = pill("no daily workflow", "warn");
+        return;
+      }
+      const used = wf.intraday_reanalysis_count ?? 0;
+      const max = wf.max_intraday_reanalyses ?? "—";
+      const budgetCls = max !== "—" && used >= max ? "bad" : used ? "good" : "";
+      const intra = (sessionJobs || []).filter((j) => String(j.job_key || "").startsWith("intraday_eval"));
+      const interval = intra.find((j) => j.interval_minutes != null);
+      const planned = (sessionJobs || []).filter((j) => j.status === "planned").length;
+      const done = (sessionJobs || []).filter((j) => j.status === "completed" || j.status === "skipped").length;
+      el.innerHTML = [
+        pill(`WF ${wf.state || "—"}`, ""),
+        pill(`reeval ${used}/${max}`, budgetCls),
+        interval ? pill(`plan ${interval.interval_minutes}m`, "") : "",
+        pill(`jobs ${done}/${(sessionJobs || []).length || 0}`, ""),
+        wf.last_intraday_result ? pill(String(wf.last_intraday_result), "") : "",
+        wf.last_intraday_eval_at ? pill(`last ${fmtWhen(wf.last_intraday_eval_at)}`, "") : "",
+      ].filter(Boolean).join(" ");
+    }
+
+    function renderSessionJobs(jobs) {
+      const el = document.getElementById("sessionJobs");
+      if (!el) return;
+      const rows = jobs || [];
+      if (!rows.length) {
+        el.innerHTML = `<div class="muted">No session job plan (prepare a trading day)</div>`;
+        return;
+      }
+      const show = rows.slice(0, 12);
+      const body = show.map((j) => `<tr>
+          <td class="mono">${esc(j.job_key)}</td>
+          <td>${esc(fmtWhen(j.planned_at))}</td>
+          <td>${pill(j.status || "—", j.status === "completed" ? "good" : j.status === "skipped" ? "warn" : "")}</td>
+          <td class="muted">${j.interval_minutes != null ? esc(j.interval_minutes) + "m" : "—"}</td>
+        </tr>`).join("");
+      el.innerHTML =
+        `<div class="muted" style="margin-bottom:0.35rem">Session plan (first ${show.length}/${rows.length})</div>` +
+        dataTable(["Job", "Planned", "Status", "Interval"], body, 4);
+    }
+
     async function refreshOverview() {
       const data = await fetchJson("/dashboard/summary");
       document.getElementById("asOf").textContent =
@@ -1064,6 +1134,8 @@
       }
       renderUniverse(data.universe);
       renderForceClose(data);
+      renderIntradayCadence(data.market_status && data.market_status.workflow, data.session_jobs);
+      renderSessionJobs(data.session_jobs);
       const cio = data.cio;
       if (cio) {
         const actions = cio.payload?.symbol_actions || [];

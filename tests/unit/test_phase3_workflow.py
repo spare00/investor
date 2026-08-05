@@ -101,7 +101,7 @@ async def test_prepare_trading_day_plans_jobs(session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSession) -> None:
-    """Seeded allowlist includes scalp (SPY/QQQ) → ~2m intraday_eval spacing."""
+    """Seeded scalp + LLM budget → denser than legacy 20m, not raw 2m flood."""
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-08-03")
     jobs = await svc.planned_jobs("2026-08-03")
@@ -113,8 +113,10 @@ async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSess
         t0 = t0.replace(tzinfo=UTC)
     if t1.tzinfo is None:
         t1 = t1.replace(tzinfo=UTC)
-    assert (t1 - t0) == timedelta(minutes=2)
-    # Coarser than legacy 20m fixed spacing
+    gap = t1 - t0
+    # Budget floor with default max_intraday_reanalyses=24 → ~8m on a full session
+    assert gap < timedelta(minutes=20)
+    assert gap >= timedelta(minutes=2)
     assert len(intra) > 15
 
 

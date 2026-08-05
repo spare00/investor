@@ -33,6 +33,7 @@ from app.models import (
     OrderIntent,
     PortfolioSnapshot,
     Position,
+    ScheduledJobRecord,
     SystemEvent,
 )
 from app.workflow.daily import DailyWorkflowService
@@ -278,16 +279,47 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     settings = get_settings()
     us_session = MarketCalendarService(settings).get_market_status(now).to_dict()
     workflow_summary: dict[str, Any] | None = None
+    session_jobs: list[dict[str, Any]] = []
     try:
-        run = await DailyWorkflowService(session, settings=settings).get_current()
+        daily = DailyWorkflowService(session, settings=settings)
+        run = await daily.get_current()
         if run is not None:
+            meta = dict(run.metadata_json or {})
             workflow_summary = {
                 "session_date": run.session_date,
                 "state": run.current_state,
                 "status": run.status,
+                "intraday_reanalysis_count": int(run.intraday_reanalysis_count or 0),
+                "max_intraday_reanalyses": int(settings.max_intraday_reanalyses),
+                "last_intraday_eval_at": meta.get("last_intraday_eval_at"),
+                "last_intraday_result": meta.get("last_intraday_result"),
+                "last_force_close": meta.get("last_force_close"),
             }
+            jrows = list(
+                (
+                    await session.execute(
+                        select(ScheduledJobRecord)
+                        .where(ScheduledJobRecord.session_date == run.session_date)
+                        .order_by(ScheduledJobRecord.planned_at)
+                        .limit(80)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for j in jrows:
+                jmeta = j.metadata_json if isinstance(j.metadata_json, dict) else {}
+                session_jobs.append(
+                    {
+                        "job_key": j.job_key,
+                        "planned_at": j.planned_at.isoformat() if j.planned_at else None,
+                        "status": j.status,
+                        "interval_minutes": jmeta.get("interval_minutes"),
+                    }
+                )
     except Exception:  # noqa: BLE001 — dashboard should still render
         workflow_summary = None
+        session_jobs = []
 
     universe_summary: dict[str, Any] | None = None
     try:
@@ -429,5 +461,6 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             for e in errors
         ],
         "next_jobs": upcoming_jobs(),
+        "session_jobs": session_jobs,
         "llm_budget": snapshot_llm_budget().to_dict(),
     }

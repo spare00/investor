@@ -54,16 +54,28 @@ def global_reeval_gap_minutes(
 def planned_intraday_interval_minutes(
     horizons: list[str] | None,
     settings: Settings,
+    *,
+    session_minutes: float | None = None,
 ) -> int:
     """Minutes between planned ``intraday_eval_*`` scheduler jobs.
 
     Uses the tightest active-watchlist horizon so scalp/day books get denser
     ticks; falls back to ``intraday_reevaluation_interval_minutes`` when empty.
+
+    When ``session_minutes`` is set, spacing is also floored so we do not plan
+    more than roughly ``2 * max_intraday_reanalyses`` ticks (LLM budget).
     Runtime cooldowns still skip early runs when open books are slower.
     """
     fallback = max(1, int(settings.intraday_reevaluation_interval_minutes))
     cleaned = [h for h in (horizons or []) if h]
-    if not cleaned:
-        return fallback
-    secs = min(reeval_seconds_for_horizon(h, settings) for h in cleaned)
-    return max(1, int(math.ceil(secs / 60.0)))
+    if cleaned:
+        secs = min(reeval_seconds_for_horizon(h, settings) for h in cleaned)
+        horizon_mins = max(1, int(math.ceil(secs / 60.0)))
+    else:
+        horizon_mins = fallback
+
+    if session_minutes is not None and session_minutes > 0:
+        max_jobs = max(4, int(settings.max_intraday_reanalyses) * 2)
+        budget_mins = max(1, int(math.ceil(float(session_minutes) / max_jobs)))
+        return max(horizon_mins, budget_mins)
+    return horizon_mins

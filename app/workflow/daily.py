@@ -532,6 +532,7 @@ class DailyWorkflowService:
         result = IntradayEvalResult.NO_CHANGE
         reason = "ok"
         agent_result: dict[str, Any] | None = None
+        force_close_result: dict[str, Any] | None = None
         meta = dict(run.metadata_json or {})
         last = meta.get("last_intraday_eval_at")
         if last:
@@ -565,7 +566,7 @@ class DailyWorkflowService:
                 except Exception:  # noqa: BLE001
                     horizons = {}
                 need_gap = global_reeval_gap_minutes(open_syms, horizons, self.settings)
-                if gap < need_gap and trigger == "interval":
+                if gap < need_gap and trigger == "interval" and not status.in_force_close_window:
                     return {
                         **self._run_dict(run),
                         "intraday": {
@@ -618,6 +619,24 @@ class DailyWorkflowService:
                     "mode": agent_result.get("mode"),
                 }
 
+        # Force-close window: materialize exits even when analysis is paused.
+        if status.in_force_close_window:
+            try:
+                from app.intraday.closing import ClosingService
+
+                force_close_result = await ClosingService(
+                    self.session, settings=self.settings
+                ).run_closing(in_closing_window=True)
+                meta["last_force_close"] = {
+                    "intent_ids": force_close_result.get("intent_ids") or [],
+                    "orders_submitted": force_close_result.get("orders_submitted") or 0,
+                    "notes": force_close_result.get("notes") or [],
+                }
+                reason = "force_close_run"
+            except Exception as exc:  # noqa: BLE001
+                meta["last_force_close_error"] = str(exc)
+                reason = f"force_close_failed:{exc}"
+
         meta["last_intraday_eval_at"] = now.isoformat()
         meta["last_intraday_result"] = result.value
         run.metadata_json = meta
@@ -631,8 +650,12 @@ class DailyWorkflowService:
             "intraday": {
                 "result": result.value,
                 "reason": reason,
-                "broker_orders": bool((agent_result or {}).get("broker_orders_submitted")),
+                "broker_orders": bool(
+                    (agent_result or {}).get("broker_orders_submitted")
+                    or (force_close_result or {}).get("broker_orders_submitted")
+                ),
                 "agent": agent_result,
+                "force_close": force_close_result,
             },
         }
 
@@ -658,14 +681,37 @@ class DailyWorkflowService:
             await self._set_state(
                 run, DailyWorkflowState.CLOSING_WINDOW, trigger="start_closing", reason="enter"
             )
-        decision = self.closing.decide(
-            as_of=now, positions=positions or [], policy=policy, intraday_symbols=set()
+
+        # Horizon-aware force flatten + OrderIntents (optional paper submit).
+        from app.intraday.closing import ClosingService
+
+        closing_svc = await ClosingService(self.session, settings=self.settings).run_closing(
+            in_closing_window=True
         )
+        # Legacy policy shape for callers that only pass explicit positions.
+        legacy = self.closing.decide(
+            as_of=now,
+            positions=positions or [],
+            policy=policy,
+            intraday_symbols=set(),
+        ).to_dict()
+        closing_payload = {
+            **legacy,
+            "policy": closing_svc.get("policy") or legacy.get("policy"),
+            "plans": closing_svc.get("plans") or legacy.get("plans") or [],
+            "notes": list(closing_svc.get("notes") or []) + list(legacy.get("notes") or []),
+            "intent_ids": closing_svc.get("intent_ids") or [],
+            "intent_drafts": closing_svc.get("intent_drafts") or [],
+            "broker_orders_submitted": bool(closing_svc.get("broker_orders_submitted")),
+            "orders_submitted": int(closing_svc.get("orders_submitted") or 0),
+            "review_id": closing_svc.get("review_id"),
+            "broker_orders_allowed": False,
+        }
         meta = dict(run.metadata_json or {})
-        meta["closing_decision"] = decision.to_dict()
+        meta["closing_decision"] = closing_payload
         run.metadata_json = meta
         await self.session.flush()
-        return {**self._run_dict(run), "closing": decision.to_dict()}
+        return {**self._run_dict(run), "closing": closing_payload}
 
     async def run_postmarket(
         self, *, session_date: str | None = None, now: datetime | None = None
@@ -791,17 +837,21 @@ class DailyWorkflowService:
                 close_t + timedelta(minutes=cfg.postmarket_review_minutes_after_close),
             ),
         ]
-        # Intraday interval jobs — denser when watchlist includes scalp/day books.
+        # Intraday interval jobs — denser when watchlist includes scalp/day books,
+        # but floored by LLM reanalysis budget (≈ 2 × max_intraday_reanalyses ticks).
+        end = close_t - timedelta(minutes=cfg.closing_window_minutes_before_close)
+        session_mins = max(0.0, (end - open_t).total_seconds() / 60.0)
         try:
             from app.universe.reeval import planned_intraday_interval_minutes
             from app.universe.service import UniverseService
 
             hz_map = await UniverseService(self.session, settings=cfg).horizon_by_symbol()
-            interval_min = planned_intraday_interval_minutes(list(hz_map.values()), cfg)
+            interval_min = planned_intraday_interval_minutes(
+                list(hz_map.values()), cfg, session_minutes=session_mins
+            )
         except Exception:  # noqa: BLE001
             interval_min = max(1, int(cfg.intraday_reevaluation_interval_minutes))
         cursor = open_t + timedelta(minutes=interval_min)
-        end = close_t - timedelta(minutes=cfg.closing_window_minutes_before_close)
         idx = 0
         while cursor < end:
             plans.append((f"intraday_eval_{idx}", cursor))

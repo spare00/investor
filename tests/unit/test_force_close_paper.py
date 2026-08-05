@@ -139,3 +139,50 @@ async def test_force_close_intent_only_when_not_armed(session: AsyncSession) -> 
     assert closing["intent_ids"]
     assert closing["broker_orders_submitted"] is False
     assert "force_close_intents_pending_submit" in closing["notes"]
+
+
+@pytest.mark.asyncio
+async def test_daily_start_closing_materializes_intents(session: AsyncSession) -> None:
+    """Unattended scheduler path: DailyWorkflowService.start_closing → ClosingService."""
+    from app.workflow.daily import DailyWorkflowService
+    from app.workflow.states import DailyWorkflowState
+
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        broker_environment="paper",
+        enable_broker_orders=True,
+        enable_automated_execution=True,
+        require_manual_order_approval=False,
+        auto_execute_force_close=False,
+        intraday_operation_mode="PAPER_AUTOMATED",
+        default_closing_policy="CLOSE_INTRADAY_ONLY",
+        enable_scheduler=False,
+    )
+    svc = DailyWorkflowService(session, settings=settings)
+    await svc.prepare(session_date="2026-08-03")
+    run = await svc.get_current("2026-08-03")
+    assert run is not None
+    run.current_state = DailyWorkflowState.INTRADAY.value
+    # prepare() seeds QQQ as scalp/day — attach an open lifecycle for flatten.
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="QQQ",
+            status="OPEN",
+            quantity=8,
+            average_entry_price=400,
+            current_price=405,
+            overnight_allowed=False,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+
+    out = await svc.start_closing(session_date="2026-08-03")
+    assert out["current_state"] == DailyWorkflowState.CLOSING_WINDOW.value
+    closing = out["closing"]
+    assert closing["broker_orders_allowed"] is False
+    assert closing["intent_ids"]
+    assert closing["broker_orders_submitted"] is False
+    assert any(p.get("action") == "close" for p in (closing.get("plans") or []))

@@ -2,6 +2,11 @@
 
 `ClosingService` applies `ClosingPolicyEngine` to live `position_lifecycles`.
 
+## Unattended path
+
+Scheduler job `closing_window` → `DailyWorkflowService.start_closing` → `ClosingService.run_closing`.
+Intraday interval jobs inside the force-close window also call `ClosingService` (analysis stays paused).
+
 ## Behavior
 
 - Scalp/day watchlist horizons force flatten near close (intraday-only), even if `overnight_allowed` was mis-set.
