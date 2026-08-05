@@ -540,10 +540,41 @@ class DailyWorkflowService:
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=UTC)
                 gap = (now - ts).total_seconds() / 60.0
-                if gap < self.settings.min_reevaluation_gap_minutes and trigger == "interval":
+                # Horizon-aware min gap for interval triggers.
+                from app.models import PositionLifecycle
+                from app.universe.reeval import global_reeval_gap_minutes
+                from app.universe.service import UniverseService
+                from sqlalchemy import select as sa_select
+
+                open_syms = [
+                    p.symbol
+                    for p in (
+                        await self.session.execute(
+                            sa_select(PositionLifecycle).where(
+                                PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"])
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                ]
+                try:
+                    horizons = await UniverseService(
+                        self.session, settings=self.settings
+                    ).horizon_by_symbol()
+                except Exception:  # noqa: BLE001
+                    horizons = {}
+                need_gap = global_reeval_gap_minutes(open_syms, horizons, self.settings)
+                if gap < need_gap and trigger == "interval":
                     return {
                         **self._run_dict(run),
-                        "intraday": {"result": result.value, "reason": "min_gap", "skipped": True},
+                        "intraday": {
+                            "result": result.value,
+                            "reason": "min_gap",
+                            "skipped": True,
+                            "need_gap_minutes": need_gap,
+                            "gap_minutes": gap,
+                        },
                     }
             except ValueError:
                 pass

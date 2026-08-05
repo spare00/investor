@@ -67,17 +67,28 @@ class IntradayAgentService:
         if not self.settings.enable_intraday_agent_reanalysis:
             return {"skipped": True, "reason": "enable_intraday_agent_reanalysis_false"}
 
-        open_syms = [
-            p.symbol
-            for p in (
+        open_rows = list(
+            (
                 await self.session.execute(
                     select(PositionLifecycle).where(PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"]))
                 )
             )
             .scalars()
             .all()
-        ]
-        ok, why = self.bus.allow_reanalysis(symbols=open_syms or ["PORTFOLIO"], bypass=bypass_cooldown)
+        )
+        open_syms = [p.symbol for p in open_rows]
+        horizons: dict[str, str] = {}
+        try:
+            from app.universe.service import UniverseService
+
+            horizons = await UniverseService(self.session, settings=self.settings).horizon_by_symbol()
+        except Exception:  # noqa: BLE001
+            horizons = {}
+        ok, why = self.bus.allow_reanalysis(
+            symbols=open_syms or ["PORTFOLIO"],
+            bypass=bypass_cooldown,
+            horizon_by_symbol=horizons,
+        )
         if not ok:
             return {"skipped": True, "reason": why, "broker_orders_submitted": False}
 

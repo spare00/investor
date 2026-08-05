@@ -129,10 +129,14 @@ class IntradayEventBus:
         symbols: list[str],
         bypass: bool = False,
         now: datetime | None = None,
+        horizon_by_symbol: dict[str, str] | None = None,
     ) -> tuple[bool, str | None]:
         if bypass:
             return True, None
+        from app.universe.reeval import global_reeval_gap_minutes, symbol_reeval_gap_minutes
+
         now = now or datetime.now(UTC)
+        horizons = horizon_by_symbol or {}
         # global max
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         day_count = sum(1 for t in self._reanalysis_times if t >= day_start)
@@ -140,14 +144,16 @@ class IntradayEventBus:
             return False, "max_intraday_reanalyses"
         if self._reanalysis_times:
             gap = (now - self._reanalysis_times[-1]).total_seconds() / 60.0
-            if gap < self.settings.min_global_reanalysis_gap_minutes:
+            need = global_reeval_gap_minutes(symbols or ["PORTFOLIO"], horizons, self.settings)
+            if gap < need:
                 return False, "global_cooldown"
         for sym in symbols:
             times = self._symbol_reanalysis.get(sym.upper(), [])
             day_sym = sum(1 for t in times if t >= day_start)
             if day_sym >= self.settings.max_symbol_reanalyses_per_day:
                 return False, f"symbol_max:{sym}"
-            if times and (now - times[-1]).total_seconds() / 60.0 < self.settings.min_symbol_reanalysis_gap_minutes:
+            need_sym = symbol_reeval_gap_minutes(sym, horizons, self.settings)
+            if times and (now - times[-1]).total_seconds() / 60.0 < need_sym:
                 return False, f"symbol_cooldown:{sym}"
         return True, None
 

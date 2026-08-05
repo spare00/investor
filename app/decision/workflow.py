@@ -393,7 +393,27 @@ class WorkflowService:
         wf = uuid4()
         notes: list[str] = []
 
-        min_interval = timedelta(seconds=self.settings.intraday_min_reeval_seconds)
+        # Horizon-aware cooldown: scalp books can re-eval faster than medium.
+        held_syms: list[str] = []
+        if portfolio is not None:
+            held_syms = [p.symbol for p in portfolio.positions if p.quantity]
+        else:
+            try:
+                pm = PositionManager(self.session, settings=self.settings)
+                port_probe = await pm.portfolio_state_input()
+                held_syms = [p.symbol for p in port_probe.positions if p.quantity]
+            except Exception:  # noqa: BLE001
+                held_syms = []
+        try:
+            from app.universe.reeval import min_reeval_seconds_for_symbols
+            from app.universe.service import UniverseService
+
+            horizons = await UniverseService(self.session, settings=self.settings).horizon_by_symbol()
+            min_secs = min_reeval_seconds_for_symbols(held_syms, horizons, self.settings)
+        except Exception:  # noqa: BLE001
+            min_secs = self.settings.intraday_min_reeval_seconds
+        min_interval = timedelta(seconds=min_secs)
+        notes.append(f"reeval_interval_seconds={min_secs}")
         if (
             not force
             and self._last_intraday_at is not None
@@ -405,7 +425,7 @@ class WorkflowService:
                 started_at=started,
                 finished_at=datetime.now(UTC),
                 skipped_reason="min_reeval_interval",
-                notes=["cooldown_active"],
+                notes=["cooldown_active", f"reeval_interval_seconds={min_secs}"],
             )
 
         if not force and not is_regular_session(started):
