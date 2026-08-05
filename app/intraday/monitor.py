@@ -240,6 +240,8 @@ class PositionMonitor:
             existing.average_entry_price = avg_entry
             await self.session.flush()
             return existing
+        holding = await self._default_max_holding(symbol)
+        overnight = await self._overnight_allowed(symbol)
         row = PositionLifecycle(
             id=uuid4(),
             symbol=symbol.upper(),
@@ -250,30 +252,49 @@ class PositionMonitor:
             stop_price=stop_price,
             decision_id=decision_id,
             opened_at=datetime.now(UTC),
-            overnight_allowed=False,
+            overnight_allowed=overnight,
             closing_policy=self.settings.default_closing_policy,
             protection_submitted=False,
-            max_holding_minutes=await self._default_max_holding(symbol),
+            max_holding_minutes=holding,
             exit_policy={"stop_loss": stop_price},
         )
         self.session.add(row)
         await self.session.flush()
         return row
 
-    async def _default_max_holding(self, symbol: str) -> int | None:
-        """Prefer watchlist horizon policy; otherwise leave unset."""
-        from sqlalchemy import select
-
+    async def _watchlist_horizon(self, symbol: str) -> str | None:
         from app.models import WatchlistSymbol
-        from app.universe.horizons import policy_for
 
         row = (
             await self.session.execute(
                 select(WatchlistSymbol).where(WatchlistSymbol.symbol == symbol.upper()).limit(1)
             )
         ).scalar_one_or_none()
-        if row is None:
+        return None if row is None else str(row.horizon)
+
+    async def _default_max_holding(self, symbol: str) -> int | None:
+        """Prefer watchlist horizon policy; otherwise leave unset."""
+        from app.universe.horizons import policy_for
+
+        horizon = await self._watchlist_horizon(symbol)
+        if horizon is None:
             return None
+        try:
+            return int(policy_for(horizon).max_holding_minutes or 0) or None
+        except ValueError:
+            return None
+
+    async def _overnight_allowed(self, symbol: str) -> bool:
+        """Scalp/day books default to flatten; short/medium may hold overnight."""
+        from app.universe.horizons import UniverseHorizon
+
+        horizon = await self._watchlist_horizon(symbol)
+        if horizon is None:
+            return False
+        try:
+            return UniverseHorizon(horizon) in {UniverseHorizon.SHORT, UniverseHorizon.MEDIUM}
+        except ValueError:
+            return False
         try:
             return int(policy_for(row.horizon).max_holding_minutes or 0) or None
         except ValueError:

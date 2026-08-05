@@ -68,3 +68,25 @@ async def test_static_mode_uses_allowlist(session: AsyncSession) -> None:
     svc = UniverseService(session, settings=settings)
     assert await svc.entry_universe() == {"QQQ"}
     assert await svc.collection_universe(holdings=["AAPL"]) == ["AAPL", "QQQ"]
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_inherits_horizon_hold_policy(session: AsyncSession) -> None:
+    from app.intraday.monitor import PositionMonitor
+    from app.models import WatchlistSymbol
+
+    settings = Settings(universe_mode="dynamic", trade_allowlist=["SPY", "MSFT"])
+    session.add(
+        WatchlistSymbol(symbol="SPY", horizon="scalp", status="active", priority=80, thesis="t")
+    )
+    session.add(
+        WatchlistSymbol(symbol="MSFT", horizon="medium", status="active", priority=70, thesis="t")
+    )
+    await session.flush()
+    mon = PositionMonitor(session, settings=settings)
+    scalp = await mon.ensure_lifecycle_from_broker(symbol="SPY", quantity=1, avg_entry=100)
+    medium = await mon.ensure_lifecycle_from_broker(symbol="MSFT", quantity=1, avg_entry=100)
+    assert scalp.overnight_allowed is False
+    assert scalp.max_holding_minutes == policy_for("scalp").max_holding_minutes
+    assert medium.overnight_allowed is True
+    assert medium.max_holding_minutes == policy_for("medium").max_holding_minutes
