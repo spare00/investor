@@ -197,11 +197,55 @@ async def test_revalidation_stale_triggers_reanalysis(session: AsyncSession) -> 
     r1 = await svc.revalidate(
         session_date="2026-08-04", now=now, fixture={"stale_data": True}, fake_llm=True
     )
-    assert "follow_up" in r1 or r1["current_state"] in {
-        DailyWorkflowState.PREOPEN_REVALIDATION.value,
-        DailyWorkflowState.PREMARKET_ANALYSIS.value,
-        DailyWorkflowState.FAILED.value,
-    }
+    # Reanalysis must settle via a second revalidate in the same call — never leave
+    # the session stuck in PREOPEN_REVALIDATION.
+    assert "follow_up" in r1
+    assert r1["current_state"] == DailyWorkflowState.INTRADAY.value
+    assert r1.get("revalidation", {}).get("result") in {"VALID", "VALID_WITH_RESTRICTIONS", "NO_TRADE"}
+
+
+@pytest.mark.asyncio
+async def test_revalidation_market_events_do_not_stick_session(
+    session: AsyncSession,
+) -> None:
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-04")
+    await svc.run_analysis(session_date="2026-08-04", fake_llm=True)
+    run = await svc.get_current("2026-08-04")
+    assert run is not None
+    meta = dict(run.metadata_json or {})
+    meta["market_events"] = [
+        {
+            "requires_reanalysis": True,
+            "detected_at": "2026-08-04T12:00:00+00:00",
+            "effective_at": "2026-08-02T12:00:00+00:00",
+            "event_type": "SEC_MATERIAL_FILING",
+            "symbols": ["SPY"],
+        }
+    ]
+    # Make events look "new" relative to a slightly earlier analysis stamp.
+    meta["analysis_completed_at"] = "2026-08-04T11:00:00+00:00"
+    run.metadata_json = meta
+    await session.flush()
+    now = datetime(2026, 8, 4, 13, 20, tzinfo=UTC)
+    out = await svc.revalidate(session_date="2026-08-04", now=now, fake_llm=True)
+    assert out["current_state"] == DailyWorkflowState.INTRADAY.value
+    run2 = await svc.get_current("2026-08-04")
+    assert run2 is not None
+    events = (run2.metadata_json or {}).get("market_events") or []
+    assert events and events[0].get("requires_reanalysis") is False
+
+
+@pytest.mark.asyncio
+async def test_catch_up_enters_intraday_after_open(session: AsyncSession) -> None:
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-04")
+    await svc.run_analysis(session_date="2026-08-04", fake_llm=True)
+    # Stuck in PREOPEN (as Aug 4 production bug) while regular session is open.
+    now = datetime(2026, 8, 4, 15, 0, tzinfo=UTC)  # 11:00 ET
+    out = await svc.catch_up_to_intraday(session_date="2026-08-04", now=now, fake_llm=True)
+    assert out["current_state"] == DailyWorkflowState.INTRADAY.value
+    assert out["catch_up"]["skipped"] is False
 
 
 @pytest.mark.asyncio

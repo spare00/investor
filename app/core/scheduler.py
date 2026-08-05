@@ -115,6 +115,20 @@ async def _dispatch_due_jobs() -> None:
                 await session.rollback()
                 return
 
+            # Near open / already open with incomplete prep → catch up (throttled).
+            try:
+                fake = not bool(settings.llm_api_key)
+                catch = await svc.catch_up_to_intraday(fake_llm=fake, now=now)
+                if not (catch.get("catch_up") or {}).get("skipped", True):
+                    logger.info("scheduler_session_catch_up", **(catch.get("catch_up") or {}))
+                await session.commit()
+            except DailyWorkflowError as exc:
+                logger.warning("scheduler_catch_up_skipped", error=str(exc))
+                await session.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception("scheduler_catch_up_failed")
+                await session.rollback()
+
             candidates = list(
                 (
                     await session.execute(

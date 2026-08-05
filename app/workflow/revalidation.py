@@ -161,9 +161,13 @@ class RevalidationService:
                 cutoff_ts = None
 
         def _is_new_event(ev: dict[str, Any]) -> bool:
+            # Prefer detection time: effective_at can be days earlier (filings) and must
+            # not keep forcing reanalysis forever after the event was already seen.
+            if ev.get("incorporated_at") or ev.get("requires_reanalysis") is False:
+                return False
             if cutoff_ts is None:
-                return True
-            raw = ev.get("effective_at") or ev.get("detected_at")
+                return bool(ev.get("requires_reanalysis"))
+            raw = ev.get("detected_at") or ev.get("effective_at")
             if not raw:
                 return False
             try:

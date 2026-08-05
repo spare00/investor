@@ -283,36 +283,64 @@ class DailyWorkflowService:
         fixture: dict[str, Any] | None = None,
         now: datetime | None = None,
         fake_llm: bool = False,
+        _reentry_depth: int = 0,
     ) -> dict[str, Any]:
         self._broker_guard()
+        now = now or datetime.now(UTC)
         run = await self._require_run(session_date)
         self._assert_not_blocked(run)
         if run.current_state != DailyWorkflowState.PREOPEN_REVALIDATION.value:
             raise DailyWorkflowError(f"revalidate_not_allowed_from:{run.current_state}")
         report = await self.revalidation.revalidate(run, now=now, fixture=fixture)
         if report.result == RevalidationResult.REANALYSIS_REQUIRED:
-            if report.attempt > self.settings.max_revalidation_retries:
+            if report.attempt > self.settings.max_revalidation_retries or _reentry_depth >= 2:
+                # Prefer entering the day in a no-trade posture over leaving the
+                # session stuck in PREOPEN_REVALIDATION (no second scheduled job).
+                meta = dict(run.metadata_json or {})
+                meta["no_trade_reason"] = f"reanalysis_unresolved:{report.reason}"
+                run.metadata_json = meta
                 await self._set_state(
                     run,
-                    DailyWorkflowState.FAILED,
+                    DailyWorkflowState.MARKET_OPEN,
                     trigger="revalidate",
-                    reason="reanalysis_limit",
+                    reason="reanalysis_unresolved_enter",
                 )
-            else:
                 await self._set_state(
                     run,
-                    DailyWorkflowState.PREMARKET_ANALYSIS,
+                    DailyWorkflowState.INTRADAY,
                     trigger="revalidate",
-                    reason="reanalysis_required",
+                    reason="enter_intraday_after_reanalysis_limit",
                 )
                 return {
                     **self._run_dict(run),
                     "revalidation": report.to_dict(),
-                    "follow_up": await self.run_analysis(
-                        session_date=run.session_date, fake_llm=fake_llm, now=now
-                    ),
+                    "note": "entered_intraday_after_reanalysis_limit",
                 }
-        elif report.result in {RevalidationResult.VALID, RevalidationResult.VALID_WITH_RESTRICTIONS}:
+            await self._set_state(
+                run,
+                DailyWorkflowState.PREMARKET_ANALYSIS,
+                trigger="revalidate",
+                reason="reanalysis_required",
+            )
+            follow_up = await self.run_analysis(
+                session_date=run.session_date, fake_llm=fake_llm, now=now
+            )
+            await self._mark_reanalysis_incorporated(run, now=now)
+            # Same job continues: re-check after fresh analysis (do not re-apply
+            # one-shot fixtures like stale_data that forced the first reanalysis).
+            settled = await self.revalidate(
+                session_date=run.session_date,
+                fixture=None,
+                now=now,
+                fake_llm=fake_llm,
+                _reentry_depth=_reentry_depth + 1,
+            )
+            return {
+                **settled,
+                "follow_up": follow_up,
+                "prior_revalidation": report.to_dict(),
+            }
+        if report.result in {RevalidationResult.VALID, RevalidationResult.VALID_WITH_RESTRICTIONS}:
             await self._set_state(
                 run,
                 DailyWorkflowState.MARKET_OPEN,
@@ -350,6 +378,126 @@ class DailyWorkflowService:
             )
         return {**self._run_dict(run), "revalidation": report.to_dict()}
 
+    async def _mark_reanalysis_incorporated(
+        self, run: DailyWorkflowRun, *, now: datetime
+    ) -> None:
+        meta = dict(run.metadata_json or {})
+        events = list(meta.get("market_events") or [])
+        changed = False
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            if ev.get("requires_reanalysis"):
+                ev["requires_reanalysis"] = False
+                ev["incorporated_at"] = now.isoformat()
+                changed = True
+        if changed:
+            meta["market_events"] = events
+            run.metadata_json = meta
+            await self.session.flush()
+
+    def _should_catch_up_session(self, run: DailyWorkflowRun, now: datetime) -> bool:
+        """True when prep is incomplete and market is near open or already open."""
+        if run.current_state not in {
+            DailyWorkflowState.PREMARKET_PREPARATION.value,
+            DailyWorkflowState.PREMARKET_ANALYSIS.value,
+            DailyWorkflowState.PREOPEN_REVALIDATION.value,
+        }:
+            return False
+        status = self.calendar.get_market_status(now)
+        if not status.is_trading_day:
+            return False
+        if status.phase in {"REGULAR", "CLOSING"} or status.in_closing_window or status.in_force_close_window:
+            return True
+        mins = status.minutes_to_open
+        if mins is None:
+            return False
+        # Inside the preopen revalidation window (default 10m), or analysis lead
+        # when we have not even analyzed yet.
+        if mins <= self.settings.preopen_revalidation_minutes_before_open:
+            return True
+        if (
+            run.current_state == DailyWorkflowState.PREMARKET_PREPARATION.value
+            and mins <= self.settings.premarket_analysis_minutes_before_open
+        ):
+            return True
+        return False
+
+    async def catch_up_to_intraday(
+        self,
+        *,
+        session_date: str | None = None,
+        now: datetime | None = None,
+        fake_llm: bool = False,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Advance a late/incomplete session into INTRADAY when the market needs it."""
+        self._broker_guard()
+        now = now or datetime.now(UTC)
+        run = await self.get_current(session_date)
+        if run is None:
+            prepared = await self.prepare(session_date=session_date, now=now)
+            run = await self._require_run(session_date or prepared.get("session_date"))
+        self._assert_not_blocked(run)
+
+        if run.current_state in {
+            DailyWorkflowState.INTRADAY.value,
+            DailyWorkflowState.MARKET_OPEN.value,
+        }:
+            return {**self._run_dict(run), "catch_up": {"skipped": True, "reason": "already_ready"}}
+
+        if not force and not self._should_catch_up_session(run, now):
+            return {
+                **self._run_dict(run),
+                "catch_up": {"skipped": True, "reason": "not_near_or_in_session"},
+            }
+
+        meta = dict(run.metadata_json or {})
+        last = meta.get("last_catch_up_at")
+        if last and not force:
+            try:
+                ts = datetime.fromisoformat(str(last))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                gap_min = (now - ts).total_seconds() / 60.0
+                if gap_min < max(5, self.settings.min_reevaluation_gap_minutes):
+                    return {
+                        **self._run_dict(run),
+                        "catch_up": {"skipped": True, "reason": "catch_up_cooldown", "gap_min": gap_min},
+                    }
+            except ValueError:
+                pass
+
+        steps: list[str] = []
+        meta["last_catch_up_at"] = now.isoformat()
+        run.metadata_json = meta
+        await self.session.flush()
+
+        if run.current_state == DailyWorkflowState.PREMARKET_PREPARATION.value:
+            await self.run_analysis(session_date=run.session_date, fake_llm=fake_llm, now=now)
+            steps.append("analysis")
+            run = await self._require_run(run.session_date)
+        elif run.current_state == DailyWorkflowState.PREMARKET_ANALYSIS.value:
+            await self.run_analysis(session_date=run.session_date, fake_llm=fake_llm, now=now)
+            steps.append("analysis")
+            run = await self._require_run(run.session_date)
+
+        if run.current_state == DailyWorkflowState.PREOPEN_REVALIDATION.value:
+            settled = await self.revalidate(
+                session_date=run.session_date, fake_llm=fake_llm, now=now
+            )
+            steps.append("revalidate")
+            return {
+                **settled,
+                "catch_up": {"skipped": False, "steps": steps, "reason": "advanced"},
+            }
+
+        run = await self._require_run(run.session_date)
+        return {
+            **self._run_dict(run),
+            "catch_up": {"skipped": False, "steps": steps, "reason": "partial"},
+        }
+
     async def evaluate_intraday(
         self,
         *,
@@ -366,7 +514,19 @@ class DailyWorkflowService:
             DailyWorkflowState.INTRADAY.value,
             DailyWorkflowState.MARKET_OPEN.value,
         }:
-            raise DailyWorkflowError(f"intraday_not_allowed_from:{run.current_state}")
+            # Late start / stuck preopen: finish prep then continue as intraday.
+            catch = await self.catch_up_to_intraday(
+                session_date=run.session_date, now=now, fake_llm=fake_llm
+            )
+            run = await self._require_run(run.session_date)
+            if run.current_state not in {
+                DailyWorkflowState.INTRADAY.value,
+                DailyWorkflowState.MARKET_OPEN.value,
+            }:
+                raise DailyWorkflowError(
+                    f"intraday_not_allowed_from:{run.current_state}"
+                    + (f":catch_up={catch.get('catch_up')}" if isinstance(catch, dict) else "")
+                )
 
         status = self.calendar.get_market_status(now)
         result = IntradayEvalResult.NO_CHANGE
