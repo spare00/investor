@@ -132,6 +132,8 @@ class Settings(BaseSettings):
     universe_screener_min_price: float = 5.0
     # When true, fetch live quotes; otherwise use latest DB market snapshots (+ stub fill).
     universe_screener_fetch_live: bool = False
+    # Pause active watchlist names that fail the liquidity screen (never pause holdings).
+    universe_screener_pause_illiquid: bool = True
 
     trade_allowlist: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [

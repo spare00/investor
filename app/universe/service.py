@@ -151,6 +151,9 @@ class UniverseService:
                 "symbols": focus.symbols,
                 "holdings": focus.holdings,
                 "rationale": focus.rationale,
+                "hygiene": (focus.payload or {}).get("hygiene")
+                if isinstance(focus.payload, dict)
+                else None,
             },
             "limits": {
                 "watchlist": self.settings.universe_watchlist_limit,
@@ -252,6 +255,7 @@ class UniverseService:
         )
         out = await self.agent.run(payload)
         await self._apply_proposals(out, candidate_symbols=set(screened))
+        hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
         focus_doc = await self._persist_focus(
             symbols=out.focus_symbols,
             holdings=holdings or [],
@@ -262,6 +266,7 @@ class UniverseService:
                 "notes": out.notes,
                 "quality": out.data_quality_score,
                 "screener": screen_meta,
+                "hygiene": hygiene,
             },
         )
         return {
@@ -270,6 +275,55 @@ class UniverseService:
             "focus": focus_doc,
             "notes": out.notes,
             "screener": screen_meta,
+            "hygiene": hygiene,
+        }
+
+    async def hygiene_active_watchlist(
+        self,
+        *,
+        holdings: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Pause active names that fail liquidity screen (holdings exempt)."""
+        from app.universe.screener import screen_candidates
+
+        if not self.settings.universe_screener_enabled:
+            return {"skipped": True, "reason": "screener_disabled", "paused": []}
+        if not self.settings.universe_screener_pause_illiquid:
+            return {"skipped": True, "reason": "pause_illiquid_disabled", "paused": []}
+
+        held = {h.upper() for h in (holdings or [])}
+        active = await self.list_active()
+        symbols = [r.symbol.upper() for r in active if r.symbol.upper() not in held]
+        if not symbols:
+            return {"skipped": False, "paused": [], "checked": 0}
+
+        result = await screen_candidates(self.session, self.settings, symbols)
+        reject_map = {h.symbol: h for h in result.rejected}
+        now = utc_now()
+        paused: list[dict[str, Any]] = []
+        for row in active:
+            sym = row.symbol.upper()
+            if sym in held or sym not in reject_map:
+                continue
+            hit = reject_map[sym]
+            row.status = "paused"
+            row.last_reviewed_at = now
+            row.payload = {
+                **(row.payload or {}),
+                "paused_by": "liquidity_screener",
+                "reasons": list(hit.reasons),
+                "avg_volume_20d": hit.avg_volume_20d,
+                "spread_bps": hit.spread_bps,
+            }
+            paused.append({"symbol": sym, "reasons": list(hit.reasons)})
+        if paused:
+            await self.session.flush()
+            logger.info("universe_hygiene_paused", count=len(paused), symbols=[p["symbol"] for p in paused])
+        return {
+            "skipped": False,
+            "checked": len(symbols),
+            "paused": paused,
+            "screener_source": result.source,
         }
 
     async def build_focus_without_llm(

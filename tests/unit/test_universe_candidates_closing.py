@@ -76,6 +76,63 @@ def test_regime_maps_to_themes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_hygiene_pauses_illiquid_active(session: AsyncSession) -> None:
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from app.models import MarketSnapshot, WatchlistSymbol
+    from app.universe.service import UniverseService
+
+    settings = Settings(
+        universe_mode="dynamic",
+        trade_allowlist=["SPY", "THIN"],
+        universe_manager_enabled=False,
+        universe_screener_enabled=True,
+        universe_screener_pause_illiquid=True,
+        universe_screener_min_avg_volume=1_000_000,
+        universe_screener_max_spread_bps=30,
+        universe_screener_fetch_live=False,
+    )
+    now = datetime.now(UTC)
+    session.add(
+        WatchlistSymbol(symbol="SPY", horizon="scalp", status="active", priority=80, thesis="ok")
+    )
+    session.add(
+        WatchlistSymbol(symbol="THIN", horizon="day", status="active", priority=70, thesis="illiquid")
+    )
+    session.add(
+        MarketSnapshot(
+            id=uuid4(),
+            symbol="SPY",
+            as_of=now,
+            provider="test",
+            last=500.0,
+            avg_volume_20d=50_000_000,
+            spread_bps=5,
+        )
+    )
+    session.add(
+        MarketSnapshot(
+            id=uuid4(),
+            symbol="THIN",
+            as_of=now,
+            provider="test",
+            last=20.0,
+            avg_volume_20d=1_000,
+            spread_bps=90,
+        )
+    )
+    await session.flush()
+    svc = UniverseService(session, settings=settings)
+    out = await svc.hygiene_active_watchlist(holdings=["SPY"])
+    assert any(p["symbol"] == "THIN" for p in out["paused"])
+    rows = {r.symbol: r.status for r in (await svc.list_active())}
+    # list_active only returns active — SPY remains, THIN paused
+    assert "SPY" in rows
+    assert "THIN" not in rows
+
+
+@pytest.mark.asyncio
 async def test_apply_session_context_boosts_theme_names(session: AsyncSession) -> None:
     settings = Settings(
         universe_mode="dynamic",

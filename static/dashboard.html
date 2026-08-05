@@ -933,6 +933,10 @@
           pill(scr.source || "screen", ""),
         ].join(" ");
       }
+      const hy = (u.focus && u.focus.hygiene) || u.hygiene;
+      if (hy && (hy.paused || []).length) {
+        meta.innerHTML += " " + pill(`paused illiquid ${hy.paused.length}`, "warn");
+      }
       if (bookEl) {
         const usage = u.book_usage || {};
         const order = ["scalp", "day", "short", "medium"];
