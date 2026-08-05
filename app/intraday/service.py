@@ -86,6 +86,10 @@ class IntradayService:
             equity = float(snap.equity or equity)
             daily_pnl_pct = float(snap.daily_pnl_pct or 0.0)
             drawdown_pct = float(snap.drawdown_pct or 0.0)
+        mode = resolve_mode(
+            self.settings, emergency=self.controls.snapshot().state.value == "emergency_stop"
+        )
+        caps = ModeCapabilities(mode)
         out: list[dict[str, Any]] = []
         for lc in await self.monitor.list_lifecycles():
             result = await self.monitor.evaluate(
@@ -105,19 +109,74 @@ class IntradayService:
             stop = await self.exits.check_stop(
                 lc, price=float(prices.get(lc.symbol) or lc.current_price or 0), kind=StopKind.FIXED_PRICE
             )
-            out.append(
-                {
-                    "position_id": str(lc.id),
-                    "symbol": lc.symbol,
-                    "monitor": {"verdict": result.verdict, "reasons": result.reasons},
-                    "risk": {"status": risk.status, "reasons": risk.reasons},
-                    "stop": {"triggered": stop.triggered, "status": stop.status},
-                }
-            )
-            # Hard stop → exit intent draft (never direct broker)
+            entry: dict[str, Any] = {
+                "position_id": str(lc.id),
+                "symbol": lc.symbol,
+                "monitor": {"verdict": result.verdict, "reasons": result.reasons},
+                "risk": {"status": risk.status, "reasons": risk.reasons},
+                "stop": {"triggered": stop.triggered, "status": stop.status},
+            }
+            # Hard stop → exit intent (optional paper submit when armed).
             if stop.triggered:
-                await self._exit_intent(lc, reason="hard_stop", qty=float(lc.quantity or 0))
+                if lc.status == "PENDING_CLOSE":
+                    entry["exit_skipped"] = "already_pending_close"
+                else:
+                    intent = await self._exit_intent(
+                        lc, reason="hard_stop", qty=float(lc.quantity or 0)
+                    )
+                    if intent is not None:
+                        entry["exit_intent_id"] = str(intent.id)
+                        if self._should_auto_submit_hard_stops(caps):
+                            submitted = await self._submit_hard_stop(lc)
+                            entry["orders_submitted"] = submitted
+                            if submitted:
+                                entry["notes"] = ["hard_stop_orders_submitted"]
+                        else:
+                            entry["notes"] = ["hard_stop_intent_pending_submit"]
+            out.append(entry)
         return out
+
+    def _should_auto_submit_hard_stops(self, caps: ModeCapabilities) -> bool:
+        from app.execution.firm_execution import paper_auto_submit_allowed
+
+        if not self.settings.auto_execute_hard_stops:
+            return False
+        if not caps.can_submit:
+            return False
+        return paper_auto_submit_allowed(self.settings)
+
+    async def _submit_hard_stop(self, lc: PositionLifecycle) -> int:
+        """Paper-submit a market exit for a hard-stop lifecycle."""
+        from app.execution.order_manager import OrderManager
+        from app.execution.validation import ExecutionValidationResult, ValidatedOrderIntent
+
+        if not self.controls.is_new_order_allowed():
+            return 0
+        qty = abs(float(lc.quantity or 0))
+        if qty <= 0:
+            return 0
+        side = "sell" if float(lc.quantity or 0) >= 0 else "buy"
+        key = f"hard-stop:{lc.id}:{datetime.now(UTC).date().isoformat()}"
+        validation = ExecutionValidationResult(
+            approved=True,
+            intents=[
+                ValidatedOrderIntent(
+                    symbol=lc.symbol.upper(),
+                    side=side,
+                    quantity=qty,
+                    order_type="market",
+                    limit_price=None,
+                    stop_price=lc.stop_price,
+                    idempotency_key=key,
+                    decision_id=str(lc.decision_id) if lc.decision_id else str(uuid4()),
+                    thesis="hard_stop",
+                )
+            ],
+        )
+        orders = await OrderManager(self.session, settings=self.settings).submit_validated_intents(
+            validation
+        )
+        return len(orders)
 
     async def _exit_intent(
         self, lc: PositionLifecycle, *, reason: str, qty: float, reduce_fraction: float | None = None
@@ -150,7 +209,8 @@ class IntradayService:
             exit_policy=dict(lc.exit_policy or {}),
             metadata_json={"source": "intraday", "reason": reason, "lifecycle_id": str(lc.id)},
         )
-        if not self.settings.auto_execute_hard_stops and reason == "hard_stop":
+        # Default fail-closed: hard stops wait for approval unless auto-submit is armed.
+        if reason == "hard_stop" and not self._should_auto_submit_hard_stops(caps):
             intent.status = IntentStatus.PENDING_APPROVAL.value
         self.session.add(intent)
         lc.status = "PENDING_CLOSE" if reduce_fraction is None else "REDUCING"

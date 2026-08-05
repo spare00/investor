@@ -28,11 +28,13 @@ from app.models import (
     AgentRun,
     CIODecisionRecord,
     ClosingReview,
+    IntradayEvent,
     NewsItem,
     Order,
     OrderIntent,
     PortfolioSnapshot,
     Position,
+    PositionLifecycle,
     ScheduledJobRecord,
     SystemEvent,
 )
@@ -294,6 +296,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 "last_intraday_eval_at": meta.get("last_intraday_eval_at"),
                 "last_intraday_result": meta.get("last_intraday_result"),
                 "last_force_close": meta.get("last_force_close"),
+                "last_monitor": meta.get("last_monitor"),
             }
             jrows = list(
                 (
@@ -337,6 +340,78 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
         "armed": bool(settings.auto_execute_force_close) and paper_auto_submit_allowed(settings),
         "intraday_mode": settings.intraday_operation_mode,
     }
+
+    hard_stop_ops = {
+        "auto_execute_hard_stops": bool(settings.auto_execute_hard_stops),
+        "enable_intraday_monitoring": bool(settings.enable_intraday_monitoring),
+        "paper_auto_submit_allowed": paper_auto_submit_allowed(settings),
+        "armed": bool(settings.auto_execute_hard_stops) and paper_auto_submit_allowed(settings),
+        "intraday_mode": settings.intraday_operation_mode,
+    }
+
+    monitor_positions: list[dict[str, Any]] = []
+    try:
+        lc_rows = list(
+            (
+                await session.execute(
+                    select(PositionLifecycle)
+                    .where(
+                        PositionLifecycle.status.in_(
+                            ["OPEN", "ADDING", "REDUCING", "PENDING_CLOSE", "PENDING_OPEN"]
+                        )
+                    )
+                    .order_by(PositionLifecycle.updated_at.desc())
+                    .limit(20)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for lc in lc_rows:
+            monitor_positions.append(
+                {
+                    "id": str(lc.id),
+                    "symbol": lc.symbol,
+                    "status": lc.status,
+                    "quantity": lc.quantity,
+                    "current_price": lc.current_price,
+                    "stop_price": lc.stop_price,
+                    "take_profit_price": lc.take_profit_price,
+                    "verdict": lc.last_monitor_verdict,
+                    "unrealized_pl": lc.unrealized_pl,
+                }
+            )
+    except Exception:  # noqa: BLE001
+        monitor_positions = []
+
+    pending_events: list[dict[str, Any]] = []
+    try:
+        ev_rows = list(
+            (
+                await session.execute(
+                    select(IntradayEvent)
+                    .where(IntradayEvent.status == "NEW")
+                    .order_by(desc(IntradayEvent.detected_at))
+                    .limit(12)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for ev in ev_rows:
+            pending_events.append(
+                {
+                    "id": str(ev.id),
+                    "event_type": ev.event_type,
+                    "importance": ev.importance,
+                    "symbols": ev.symbols or [],
+                    "status": ev.status,
+                    "requires_analysis": bool(ev.requires_analysis),
+                    "detected_at": ev.detected_at.isoformat() if ev.detected_at else None,
+                }
+            )
+    except Exception:  # noqa: BLE001
+        pending_events = []
 
     latest_closing: dict[str, Any] | None = None
     try:
@@ -385,6 +460,36 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     except Exception:  # noqa: BLE001
         closing_intents = []
 
+    hard_stop_intents: list[dict[str, Any]] = []
+    try:
+        irows = list(
+            (
+                await session.execute(
+                    select(OrderIntent).order_by(desc(OrderIntent.created_at)).limit(30)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for intent in irows:
+            meta = intent.metadata_json or {}
+            thesis = (intent.thesis or "").lower()
+            if meta.get("reason") == "hard_stop" or thesis == "hard_stop":
+                hard_stop_intents.append(
+                    {
+                        "id": str(intent.id),
+                        "symbol": intent.symbol,
+                        "side": intent.side,
+                        "quantity": intent.quantity,
+                        "status": intent.status,
+                        "thesis": intent.thesis,
+                        "created_at": intent.created_at.isoformat() if intent.created_at else None,
+                    }
+                )
+        hard_stop_intents = hard_stop_intents[:8]
+    except Exception:  # noqa: BLE001
+        hard_stop_intents = []
+
     return {
         "as_of": dual_timezone_labels(now),
         "market_status": {
@@ -396,6 +501,10 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
         },
         "universe": universe_summary,
         "force_close": force_close_ops,
+        "hard_stop": hard_stop_ops,
+        "monitor_positions": monitor_positions,
+        "pending_events": pending_events,
+        "hard_stop_intents": hard_stop_intents,
         "latest_closing": latest_closing,
         "closing_intents": closing_intents,
         "portfolio": None

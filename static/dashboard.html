@@ -386,6 +386,13 @@
         <div id="forceClosePlans" style="margin-top:0.65rem"></div>
         <div id="forceCloseIntents" style="margin-top:0.65rem"></div>
       </section>
+      <section class="wide">
+        <h2>Position Monitor / Hard Stops</h2>
+        <div id="monitorMeta" class="muted">Loading…</div>
+        <div id="monitorPositions" style="margin-top:0.65rem"></div>
+        <div id="pendingEvents" style="margin-top:0.65rem"></div>
+        <div id="hardStopIntents" style="margin-top:0.65rem"></div>
+      </section>
       <section>
         <h2>Risk</h2>
         <div id="riskPills"></div>
@@ -1013,6 +1020,73 @@
       }).join("");
     }
 
+    function renderMonitor(data) {
+      const meta = document.getElementById("monitorMeta");
+      const posEl = document.getElementById("monitorPositions");
+      const evEl = document.getElementById("pendingEvents");
+      const intentEl = document.getElementById("hardStopIntents");
+      if (!meta || !posEl || !evEl || !intentEl) return;
+      const hs = data.hard_stop || {};
+      const wf = (data.market_status && data.market_status.workflow) || {};
+      const lastMon = wf.last_monitor || {};
+      meta.innerHTML = [
+        pill(hs.enable_intraday_monitoring ? "monitoring on" : "monitoring off", hs.enable_intraday_monitoring ? "good" : "warn"),
+        pill(hs.armed ? "hard-stop auto ARMED" : "hard-stop safe", hs.armed ? "warn" : "good"),
+        pill(`AUTO_EXECUTE_HARD_STOPS=${hs.auto_execute_hard_stops ? "on" : "off"}`, hs.auto_execute_hard_stops ? "warn" : ""),
+        lastMon.actionable != null ? pill(`last actionable ${lastMon.actionable}`, lastMon.actionable ? "warn" : "good") : "",
+        lastMon.pending_events != null ? pill(`pending ev ${lastMon.pending_events}`, lastMon.pending_events ? "warn" : "") : "",
+        lastMon.error ? pill(`monitor err`, "bad") : "",
+      ].filter(Boolean).join(" ");
+
+      const positions = data.monitor_positions || [];
+      const prows = positions.length
+        ? positions.map((p) => {
+            const v = p.verdict || "—";
+            const vCls = /EXIT|EMERGENCY|RISK|ANALYSIS/.test(v) ? "bad" : v === "WATCH" ? "warn" : v === "HEALTHY" ? "good" : "";
+            return `<tr>
+              <td class="mono">${esc(p.symbol)}</td>
+              <td>${esc(p.status)}</td>
+              <td>${esc(p.quantity)}</td>
+              <td>${esc(p.current_price ?? "—")}</td>
+              <td>${esc(p.stop_price ?? "—")}</td>
+              <td>${pill(v, vCls)}</td>
+              <td class="muted">${esc(p.unrealized_pl ?? "")}</td>
+            </tr>`;
+          }).join("")
+        : "";
+      posEl.innerHTML =
+        `<div class="muted" style="margin-bottom:0.35rem">Open lifecycles</div>` +
+        dataTable(["Symbol", "Status", "Qty", "Px", "Stop", "Verdict", "uPnL"], prows, 7);
+
+      const events = data.pending_events || [];
+      const erows = events.length
+        ? events.map((e) => `<tr>
+            <td class="mono">${esc(e.event_type)}</td>
+            <td>${pill(e.importance || "—", e.importance === "critical" ? "bad" : e.importance === "high" ? "warn" : "")}</td>
+            <td>${esc((e.symbols || []).join(",") || "—")}</td>
+            <td>${e.requires_analysis ? pill("analyze", "warn") : "—"}</td>
+            <td class="muted">${esc(fmtWhen(e.detected_at))}</td>
+          </tr>`).join("")
+        : "";
+      evEl.innerHTML =
+        `<div class="muted" style="margin-bottom:0.35rem">Pending NEW events</div>` +
+        dataTable(["Type", "Importance", "Symbols", "Flag", "When"], erows, 5);
+
+      const intents = data.hard_stop_intents || [];
+      const irows = intents.length
+        ? intents.map((i) => `<tr>
+            <td class="mono">${esc(i.symbol)}</td>
+            <td>${esc(i.side)}</td>
+            <td>${esc(i.quantity)}</td>
+            <td>${pill(i.status || "—", i.status === "PENDING_APPROVAL" ? "warn" : "")}</td>
+            <td class="muted">${esc(fmtWhen(i.created_at))}</td>
+          </tr>`).join("")
+        : "";
+      intentEl.innerHTML =
+        `<div class="muted" style="margin-bottom:0.35rem">Hard-stop exit intents</div>` +
+        dataTable(["Symbol", "Side", "Qty", "Status", "When"], irows, 5);
+    }
+
     function renderForceClose(data) {
       const meta = document.getElementById("forceCloseMeta");
       const plansEl = document.getElementById("forceClosePlans");
@@ -1077,6 +1151,9 @@
         pill(`reeval ${used}/${max}`, budgetCls),
         interval ? pill(`plan ${interval.interval_minutes}m`, "") : "",
         pill(`jobs ${done}/${(sessionJobs || []).length || 0}`, ""),
+        wf.last_monitor && wf.last_monitor.actionable != null
+          ? pill(`mon ${wf.last_monitor.actionable}`, wf.last_monitor.actionable ? "warn" : "")
+          : "",
         wf.last_intraday_result ? pill(String(wf.last_intraday_result), "") : "",
         wf.last_intraday_eval_at ? pill(`last ${fmtWhen(wf.last_intraday_eval_at)}`, "") : "",
       ].filter(Boolean).join(" ");
@@ -1134,6 +1211,7 @@
       }
       renderUniverse(data.universe);
       renderForceClose(data);
+      renderMonitor(data);
       renderIntradayCadence(data.market_status && data.market_status.workflow, data.session_jobs);
       renderSessionJobs(data.session_jobs);
       const cio = data.cio;
