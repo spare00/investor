@@ -30,6 +30,7 @@ _month_completion_tokens = 0
 _month_calls = 0
 _warned_soft = False
 _month_warned_soft = False
+_last_loaded_mtime: float | None = None
 
 
 class LLMBudgetExceeded(Exception):
@@ -147,29 +148,60 @@ def _state_path(settings: Settings) -> Path | None:
     return Path(raw).expanduser()
 
 
-def _load_from_disk(settings: Settings, day: str, month: str) -> None:
+def _load_from_disk(settings: Settings, day: str, month: str, *, merge: bool = False) -> None:
     global _prompt_tokens, _completion_tokens, _calls, _warned_soft
     global _month_prompt_tokens, _month_completion_tokens, _month_calls, _month_warned_soft
+    global _last_loaded_mtime
     path = _state_path(settings)
     if path is None or not path.exists():
         return
     try:
+        mtime = path.stat().st_mtime
         data = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return
-    if str(data.get("day")) == day:
-        _prompt_tokens = int(data.get("prompt_tokens") or 0)
-        _completion_tokens = int(data.get("completion_tokens") or 0)
-        _calls = int(data.get("calls") or 0)
-        _warned_soft = bool(data.get("soft_warned"))
-    if str(data.get("month")) == month:
-        _month_prompt_tokens = int(data.get("month_prompt_tokens") or 0)
-        _month_completion_tokens = int(data.get("month_completion_tokens") or 0)
-        _month_calls = int(data.get("month_calls") or 0)
-        _month_warned_soft = bool(data.get("month_soft_warned"))
+    file_day = str(data.get("day") or "")
+    file_month = str(data.get("month") or "")
+    if not file_month and file_day:
+        file_month = file_day[:7]
+
+    def _take(current: int, incoming: int) -> int:
+        return max(current, incoming) if merge else incoming
+
+    if file_day == day:
+        _prompt_tokens = _take(_prompt_tokens, int(data.get("prompt_tokens") or 0))
+        _completion_tokens = _take(_completion_tokens, int(data.get("completion_tokens") or 0))
+        _calls = _take(_calls, int(data.get("calls") or 0))
+        if data.get("soft_warned"):
+            _warned_soft = True
+    if file_month == month:
+        # Prefer explicit month counters; legacy files without month_* only seed on cold start.
+        if "month_prompt_tokens" in data or "month_calls" in data:
+            mp = int(data.get("month_prompt_tokens") or 0)
+            mc = int(data.get("month_completion_tokens") or 0)
+            mcalls = int(data.get("month_calls") or 0)
+        elif (
+            not merge
+            and _month_prompt_tokens == 0
+            and _month_completion_tokens == 0
+            and _month_calls == 0
+        ):
+            mp = int(data.get("prompt_tokens") or 0)
+            mc = int(data.get("completion_tokens") or 0)
+            mcalls = int(data.get("calls") or 0)
+        else:
+            mp = mc = mcalls = None
+        if mp is not None and mc is not None and mcalls is not None:
+            _month_prompt_tokens = _take(_month_prompt_tokens, mp)
+            _month_completion_tokens = _take(_month_completion_tokens, mc)
+            _month_calls = _take(_month_calls, mcalls)
+            if data.get("month_soft_warned") or data.get("soft_warned"):
+                _month_warned_soft = True
+    _last_loaded_mtime = mtime
 
 
 def _save_to_disk(settings: Settings, day: str, month: str) -> None:
+    global _last_loaded_mtime
     path = _state_path(settings)
     if path is None:
         return
@@ -193,8 +225,24 @@ def _save_to_disk(settings: Settings, day: str, month: str) -> None:
                 indent=2,
             )
         )
+        _last_loaded_mtime = path.stat().st_mtime
     except OSError as exc:
         logger.warning("llm_budget_state_write_failed", error=str(exc))
+
+
+def _sync_disk_if_newer(settings: Settings, day: str, month: str) -> None:
+    """Pick up counters written by another process/worker."""
+    global _last_loaded_mtime
+    path = _state_path(settings)
+    if path is None or not path.exists():
+        return
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return
+    if _last_loaded_mtime is not None and mtime <= _last_loaded_mtime:
+        return
+    _load_from_disk(settings, day, month, merge=True)
 
 
 def _roll_period(settings: Settings) -> tuple[str, str]:
@@ -219,7 +267,9 @@ def _roll_period(settings: Settings) -> tuple[str, str]:
         _state_month = month
         # Load disk after reset so same-day/month restart restores counters.
         if prev_day is None or prev_month is None or prev_day != day or prev_month != month:
-            _load_from_disk(settings, day, month)
+            _load_from_disk(settings, day, month, merge=False)
+    else:
+        _sync_disk_if_newer(settings, day, month)
     return day, month
 
 
@@ -228,6 +278,7 @@ def reset_llm_budget_for_tests() -> None:
     global _state_day, _state_month
     global _prompt_tokens, _completion_tokens, _calls, _warned_soft
     global _month_prompt_tokens, _month_completion_tokens, _month_calls, _month_warned_soft
+    global _last_loaded_mtime
     with _lock:
         _state_day = None
         _state_month = None
@@ -239,6 +290,7 @@ def reset_llm_budget_for_tests() -> None:
         _month_completion_tokens = 0
         _month_calls = 0
         _month_warned_soft = False
+        _last_loaded_mtime = None
 
 
 def snapshot_llm_budget(settings: Settings | None = None) -> LLMBudgetSnapshot:

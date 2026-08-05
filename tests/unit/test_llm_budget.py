@@ -108,3 +108,40 @@ async def test_client_raises_llm_error_when_budget_exhausted(tmp_path) -> None:
     client = OpenAICompatibleClient(settings)
     with pytest.raises(LLMError, match="token_budget"):
         await client.complete_json(system_prompt="s", user_prompt="u")
+
+
+def test_legacy_state_file_seeds_month_and_survives_reload(tmp_path) -> None:
+    from datetime import UTC, datetime
+
+    day = datetime.now(UTC).date().isoformat()
+    path = tmp_path / "budget.json"
+    path.write_text(
+        '{"day": "%s", "prompt_tokens": 100, "completion_tokens": 20, "calls": 3, '
+        '"soft_warned": false, "updated_at": "%sT00:00:00+00:00"}' % (day, day)
+    )
+    settings = Settings(
+        llm_budget_enforce=True,
+        llm_daily_token_budget=1_000_000,
+        llm_daily_call_budget=1000,
+        llm_monthly_aud_budget=10,
+        llm_budget_state_path=str(path),
+    )
+    snap = snapshot_llm_budget(settings)
+    assert snap.total_tokens == 120
+    assert snap.calls == 3
+    assert snap.month_total_tokens == 120
+    assert snap.month_calls == 3
+
+    reset_llm_budget_for_tests()
+    snap2 = snapshot_llm_budget(settings)
+    assert snap2.total_tokens == 120
+    assert snap2.month_calls == 3
+
+
+def test_dashboard_html_isolates_usage_strip() -> None:
+    from pathlib import Path
+
+    html = Path("static/dashboard.html").read_text()
+    assert "async function refreshStrip" in html
+    assert "Promise.allSettled" in html
+    assert "meta.dataset.hasValue" in html

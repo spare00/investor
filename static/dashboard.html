@@ -139,11 +139,12 @@
       color: var(--muted);
       font-weight: 600;
       white-space: nowrap;
+      flex: 0 0 auto;
     }
     .usage-meter {
-      flex: 1 1 180px;
-      min-width: 140px;
-      max-width: 420px;
+      flex: 0 1 200px;
+      min-width: 120px;
+      max-width: 280px;
       height: 8px;
       border-radius: 999px;
       background: #121820;
@@ -163,9 +164,12 @@
     .usage-meter.level-bad > span { background: linear-gradient(90deg, #c45b63, var(--bad)); }
     .usage-meter.level-off > span { background: #445266; }
     .usage-meta {
+      flex: 1 1 240px;
+      min-width: 200px;
       font-size: 0.78rem;
       color: var(--muted);
-      white-space: nowrap;
+      white-space: normal;
+      line-height: 1.35;
     }
     .usage-meta strong { color: var(--text); font-weight: 500; }
     .agent-lamps {
@@ -214,6 +218,7 @@
       display: inline-flex;
       align-items: center;
       gap: 0.4rem;
+      flex: 0 1 auto;
       flex-wrap: wrap;
       padding: 0.2rem 0.55rem;
       border-radius: 999px;
@@ -223,6 +228,7 @@
       font-family: "IBM Plex Mono", monospace;
       color: var(--muted);
       white-space: nowrap;
+      max-width: 100%;
     }
     .session-chip .phase { color: var(--text); font-weight: 600; }
     .session-chip.phase-regular { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
@@ -819,9 +825,12 @@
       const meta = document.getElementById("llmUsageMeta");
       if (!meter || !fill || !meta) return;
       if (!budget) {
-        meter.className = "usage-meter level-off";
-        fill.style.width = "0%";
-        meta.textContent = "Budget unavailable";
+        // Keep last good reading — don't flash "unavailable" on a single failed poll.
+        if (!meta.dataset.hasValue) {
+          meter.className = "usage-meter level-off";
+          fill.style.width = "0%";
+          meta.textContent = "Budget unavailable";
+        }
         return;
       }
       const tokenBudget = Number(budget.token_budget) || 0;
@@ -851,12 +860,32 @@
         : budget.blocked
           ? (budget.month_blocked ? "MONTH BLOCKED" : "BLOCKED")
           : `${pctShow}%`;
+      meta.dataset.hasValue = "1";
       meta.innerHTML =
         `<strong>${status}</strong>` +
         ` · day ${formatTokens(total)} / ${tokenBudget > 0 ? formatTokens(tokenBudget) : "∞"} tok` +
         ` · ${calls} / ${callBudget > 0 ? callBudget : "∞"} calls` +
         ` · month A$${monthAud.toFixed(2)} / ${monthBudget > 0 ? "A$" + monthBudget.toFixed(0) : "∞"}` +
         ` · UTC ${budget.day || "—"}`;
+    }
+
+    /** Lightweight strip update — avoids depending on heavy /dashboard/summary. */
+    async function refreshStrip() {
+      try {
+        const [status, market] = await Promise.all([
+          fetchJson("/status"),
+          fetchJson("/market/status"),
+        ]);
+        renderLlmUsage(status.llm_budget);
+        renderUsSession({
+          trading_state: status.trading_state,
+          new_orders_allowed: status.new_orders_allowed,
+          us_session: market,
+          workflow: null,
+        });
+      } catch (_) {
+        /* keep last good strip values */
+      }
     }
 
     async function refreshOverview() {
@@ -1227,18 +1256,23 @@
 
     async function refreshAll() {
       setBusy(true, "Refreshing…");
-      try {
-        await Promise.all([
-          loadHealthBanner(),
-          refreshOverview(),
-          refreshPerformance(),
-          refreshAgentsTab(),
-          refreshOperations(),
-          refreshAudit(),
-        ]);
+      await refreshStrip();
+      const results = await Promise.allSettled([
+        loadHealthBanner(),
+        refreshOverview(),
+        refreshPerformance(),
+        refreshAgentsTab(),
+        refreshOperations(),
+        refreshAudit(),
+      ]);
+      const failed = results.filter((r) => r.status === "rejected");
+      if (failed.length === 0) {
         setBusy(false, "Updated");
-      } catch (err) {
-        setBusy(false, `Refresh failed: ${err.message || err}`);
+      } else if (failed.length === results.length) {
+        const reason = failed[0].reason;
+        setBusy(false, `Refresh failed: ${reason?.message || reason}`);
+      } else {
+        setBusy(false, `Updated · ${failed.length} panel(s) failed`);
       }
     }
 
@@ -1302,6 +1336,7 @@
     }
 
     refreshAll().catch((err) => setBusy(false, `Load failed: ${err.message || err}`));
+    setInterval(() => { refreshStrip().catch(() => {}); }, 15000);
     setInterval(() => { refreshAll().catch(() => {}); }, 60000);
   </script>
 </body>
