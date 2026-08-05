@@ -5,15 +5,21 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.models import Position
 from app.universe.service import UniverseService
-from sqlalchemy import select
 
 router = APIRouter(prefix="/universe", tags=["universe"])
+
+
+class UniverseRefreshRequest(BaseModel):
+    themes: list[str] = Field(default_factory=list)
+    market_regime: str | None = None
 
 
 @router.get("")
@@ -22,14 +28,21 @@ async def universe_snapshot(session: AsyncSession = Depends(get_db_session)) -> 
 
 
 @router.post("/refresh")
-async def universe_refresh(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def universe_refresh(
+    body: UniverseRefreshRequest | None = None,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
     settings = get_settings()
     holdings = [
-        p.symbol
-        for p in (await session.execute(select(Position))).scalars().all()
+        p.symbol for p in (await session.execute(select(Position))).scalars().all()
     ]
+    req = body or UniverseRefreshRequest()
     svc = UniverseService(session, settings=settings)
-    result = await svc.refresh(holdings=holdings)
+    result = await svc.refresh(
+        holdings=holdings,
+        market_regime=req.market_regime,
+        themes=req.themes,
+    )
     await session.commit()
     return result
 

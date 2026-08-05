@@ -26,7 +26,8 @@ Policies live in `app/universe/horizons.py` (capacity, re-eval cadence, liquidit
 
 - Watchlist horizons `scalp` / `day` are treated as intraday-only at the closing window (force flatten), even if `overnight_allowed` was mis-set.
 - New entries are skipped in the closing / force-close window when `ALLOW_NEW_POSITIONS_IN_CLOSING_WINDOW=false` (exits still validate).
-- Intraday eval inside the force-close window also runs `ClosingService` to draft close plans.
+- Intraday eval inside the force-close window also runs `ClosingService` to create exit intents (and optional paper submits when `AUTO_EXECUTE_FORCE_CLOSE=true` plus paper automation flags).
+- Candidate pool can be theme-ranked (`tech`, `ai`, `risk_on`, …) when refresh receives themes / market_regime.
 
 ## APIs
 

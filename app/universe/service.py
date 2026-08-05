@@ -159,10 +159,17 @@ class UniverseService:
             "allow_candidate_adds": self.settings.universe_allow_candidate_adds,
         }
 
-    def _candidate_pool(self) -> list[str]:
-        from app.universe.candidates import curated_candidate_pool
+    def _candidate_pool(
+        self,
+        *,
+        themes: list[str] | None = None,
+        market_regime: str | None = None,
+    ) -> list[str]:
+        from app.universe.candidates import ranked_candidate_pool
 
-        return curated_candidate_pool(self.settings)
+        return ranked_candidate_pool(
+            self.settings, themes=themes, market_regime=market_regime
+        )
 
     async def refresh(
         self,
@@ -193,7 +200,9 @@ class UniverseService:
             current_watchlist=[self._row_dict(r) for r in paused],
             holdings=[h.upper() for h in (holdings or [])],
             seed_pool=list(self.settings.trade_allowlist),
-            candidate_pool=self._candidate_pool(),
+            candidate_pool=self._candidate_pool(
+                themes=themes, market_regime=market_regime
+            ),
             market_regime=market_regime,
             themes=themes or [],
             horizon_policies=all_horizon_summaries(),
