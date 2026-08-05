@@ -169,9 +169,9 @@ class Settings(BaseSettings):
     premarket_preparation_minutes_before_open: int = 180
     premarket_analysis_minutes_before_open: int = 120
     preopen_revalidation_minutes_before_open: int = 10
-    intraday_reevaluation_interval_minutes: int = 20
-    min_reevaluation_gap_minutes: int = 10
-    max_intraday_reanalyses: int = 24
+    intraday_reevaluation_interval_minutes: int = 30
+    min_reevaluation_gap_minutes: int = 15
+    max_intraday_reanalyses: int = 12
     closing_window_minutes_before_close: int = 30
     postmarket_review_minutes_after_close: int = 30
     workflow_lease_seconds: int = 300

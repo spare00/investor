@@ -1075,7 +1075,7 @@ class DailyWorkflowService:
             ),
         ]
         # Intraday interval jobs — denser when watchlist includes scalp/day books,
-        # but floored by LLM reanalysis budget (≈ 2 × max_intraday_reanalyses ticks).
+        # but floored by LLM reanalysis budget (≈ 1.5 × max_intraday_reanalyses ticks).
         await self._plan_intraday_jobs(run, session)
 
         for key, planned in plans:

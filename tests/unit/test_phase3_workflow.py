@@ -101,8 +101,16 @@ async def test_prepare_trading_day_plans_jobs(session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSession) -> None:
-    """Seeded scalp + LLM budget → denser than legacy 20m, not raw 2m flood."""
-    svc = DailyWorkflowService(session, settings=get_settings())
+    """Seeded scalp + LLM budget → denser than legacy 30m fallback, not raw 2m flood."""
+    from app.core.config import Settings
+
+    settings = Settings(
+        app_env="test",
+        max_intraday_reanalyses=12,
+        intraday_reevaluation_interval_minutes=30,
+        enable_scheduler=False,
+    )
+    svc = DailyWorkflowService(session, settings=settings)
     await svc.prepare(session_date="2026-08-03")
     jobs = await svc.planned_jobs("2026-08-03")
     intra = [j for j in jobs if j["job_key"].startswith("intraday_eval_")]
@@ -114,10 +122,10 @@ async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSess
     if t1.tzinfo is None:
         t1 = t1.replace(tzinfo=UTC)
     gap = t1 - t0
-    # Budget floor with default max_intraday_reanalyses=24 → ~8m on a full session
-    assert gap < timedelta(minutes=20)
-    assert gap >= timedelta(minutes=2)
-    assert len(intra) > 15
+    # Budget floor with max_intraday_reanalyses=12 → ~20m on a full session
+    assert gap < timedelta(minutes=30)
+    assert gap >= timedelta(minutes=10)
+    assert 8 <= len(intra) <= 25
 
 
 @pytest.mark.asyncio

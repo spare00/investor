@@ -33,10 +33,10 @@ def test_planned_interval_follows_tightest_watchlist_horizon() -> None:
 
 
 def test_planned_interval_floors_by_llm_budget() -> None:
-    settings = Settings(intraday_reevaluation_interval_minutes=20, max_intraday_reanalyses=12)
-    # 360m session / (12*2 jobs) = 15m floor → scalp 2m becomes 15m
+    settings = Settings(intraday_reevaluation_interval_minutes=30, max_intraday_reanalyses=12)
+    # 360m session / ceil(12*1.5)=18 jobs → 20m floor → scalp 2m becomes 20m
     assert (
-        planned_intraday_interval_minutes(["scalp"], settings, session_minutes=360) == 15
+        planned_intraday_interval_minutes(["scalp"], settings, session_minutes=360) == 20
     )
     # Medium still 60 (above floor)
     assert (

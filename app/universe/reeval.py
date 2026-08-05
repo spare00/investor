@@ -63,7 +63,7 @@ def planned_intraday_interval_minutes(
     ticks; falls back to ``intraday_reevaluation_interval_minutes`` when empty.
 
     When ``session_minutes`` is set, spacing is also floored so we do not plan
-    more than roughly ``2 * max_intraday_reanalyses`` ticks (LLM budget).
+    more than roughly ``1.5 * max_intraday_reanalyses`` ticks (LLM budget).
     Runtime cooldowns still skip early runs when open books are slower.
     """
     fallback = max(1, int(settings.intraday_reevaluation_interval_minutes))
@@ -75,7 +75,7 @@ def planned_intraday_interval_minutes(
         horizon_mins = fallback
 
     if session_minutes is not None and session_minutes > 0:
-        max_jobs = max(4, int(settings.max_intraday_reanalyses) * 2)
+        max_jobs = max(4, int(math.ceil(int(settings.max_intraday_reanalyses) * 1.5)))
         budget_mins = max(1, int(math.ceil(float(session_minutes) / max_jobs)))
         return max(horizon_mins, budget_mins)
     return horizon_mins
