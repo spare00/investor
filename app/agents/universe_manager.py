@@ -25,7 +25,9 @@ class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput
     def build_user_prompt(self, payload: UniverseManagerInput) -> str:
         return (
             "Maintain the horizon-grouped watchlist and today's focus set. "
-            "Prefer seed_pool / current watchlist symbols. Optimize for max return / min loss "
+            "Prefer seed_pool, then candidate_pool, then current watchlist. "
+            "You may add liquid names from candidate_pool that fit a horizon book. "
+            "Do not invent obscure tickers. Optimize for max return / min loss "
             "via selection quality — do not scan the whole market.\n\n"
             f"{dump_for_prompt(payload)}"
         )

@@ -20,7 +20,13 @@ Policies live in `app/universe/horizons.py` (capacity, re-eval cadence, liquidit
 - `UNIVERSE_MODE=dynamic` (default): active watchlist gates **new entries**; collection uses focus ∪ holdings.
 - `UNIVERSE_MODE=static`: legacy allowlist-only behavior.
 
-`TRADE_ALLOWLIST` seeds the watchlist and acts as a soft boundary (unknown AI-invented tickers are rejected on add).
+`TRADE_ALLOWLIST` seeds the watchlist. A curated **candidate pool** (or `UNIVERSE_CANDIDATE_POOL`) expands what the AI may add; unknown invented tickers are still rejected.
+
+## Closing / overnight
+
+- Watchlist horizons `scalp` / `day` are treated as intraday-only at the closing window (force flatten), even if `overnight_allowed` was mis-set.
+- New entries are skipped in the closing / force-close window when `ALLOW_NEW_POSITIONS_IN_CLOSING_WINDOW=false` (exits still validate).
+- Intraday eval inside the force-close window also runs `ClosingService` to draft close plans.
 
 ## APIs
 

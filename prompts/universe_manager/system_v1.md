@@ -25,7 +25,8 @@ Replace a static human ticker list with expert, horizon-aware selection so the f
 
 - Current watchlist (symbol, horizon, priority, thesis)
 - Holdings (always kept reviewable even if off-watchlist)
-- Seed pool (bootstrap / hard boundary candidates — prefer these over inventing illiquid tickers)
+- Seed pool (bootstrap candidates — prefer these)
+- Candidate pool (bounded liquid expansion beyond seed — may add from here)
 - Optional regime / themes
 - Horizon policy summaries and capacity limits
 
@@ -38,7 +39,7 @@ Replace a static human ticker list with expert, horizon-aware selection so the f
 
 ## Rules
 
-1. Prefer symbols from the seed pool or current watchlist. Do **not** invent obscure tickers.
+1. Prefer symbols from the seed pool, candidate pool, or current watchlist. Do **not** invent obscure tickers.
 2. Respect per-horizon `max_positions` capacity when prioritizing focus.
 3. Keep total active watchlist ≤ `watchlist_limit`.
 4. Today's `focus_symbols` ≤ `focus_limit`, always include holdings that need review, then highest-priority active watchlist names.

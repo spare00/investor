@@ -122,6 +122,9 @@ class Settings(BaseSettings):
     universe_manager_enabled: bool = True
     # Periodic Universe Manager refresh when ENABLE_SCHEDULER=true (seconds).
     universe_refresh_seconds: int = 900
+    # Extra symbols AI may add beyond TRADE_ALLOWLIST (empty → built-in curated pool).
+    universe_candidate_pool: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    universe_allow_candidate_adds: bool = True
 
     trade_allowlist: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
@@ -283,6 +286,7 @@ class Settings(BaseSettings):
     @field_validator(
         "api_cors_origins",
         "trade_allowlist",
+        "universe_candidate_pool",
         "market_data_provider_priority",
         "news_provider_priority",
         mode="before",
@@ -293,7 +297,7 @@ class Settings(BaseSettings):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
 
-    @field_validator("trade_allowlist", mode="after")
+    @field_validator("trade_allowlist", "universe_candidate_pool", mode="after")
     @classmethod
     def _normalize_symbols(cls, value: list[str]) -> list[str]:
         return [symbol.upper() for symbol in value]

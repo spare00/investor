@@ -155,7 +155,14 @@ class UniverseService:
                 "watchlist": self.settings.universe_watchlist_limit,
                 "focus": self.settings.universe_focus_limit,
             },
+            "candidate_pool": self._candidate_pool(),
+            "allow_candidate_adds": self.settings.universe_allow_candidate_adds,
         }
+
+    def _candidate_pool(self) -> list[str]:
+        from app.universe.candidates import curated_candidate_pool
+
+        return curated_candidate_pool(self.settings)
 
     async def refresh(
         self,
@@ -186,6 +193,7 @@ class UniverseService:
             current_watchlist=[self._row_dict(r) for r in paused],
             holdings=[h.upper() for h in (holdings or [])],
             seed_pool=list(self.settings.trade_allowlist),
+            candidate_pool=self._candidate_pool(),
             market_regime=market_regime,
             themes=themes or [],
             horizon_policies=all_horizon_summaries(),
@@ -250,9 +258,11 @@ class UniverseService:
             sym = prop.symbol.upper().strip()
             if not sym:
                 continue
-            # Prefer seed pool / known symbols — soft guard against hallucination
-            seed = {s.upper() for s in self.settings.trade_allowlist}
-            if sym not in seed and sym not in by_sym and prop.action == "add":
+            # Soft guard: seed ∪ curated candidates ∪ already-known watchlist
+            from app.universe.candidates import addable_universe
+
+            allowed_new = addable_universe(self.settings, known_symbols=set(by_sym))
+            if sym not in allowed_new and prop.action == "add":
                 logger.info("universe_reject_unknown_add", symbol=sym)
                 continue
             try:

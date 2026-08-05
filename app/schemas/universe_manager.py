@@ -25,6 +25,10 @@ class UniverseManagerInput(StrictModel):
     current_watchlist: list[dict] = Field(default_factory=list)
     holdings: list[str] = Field(default_factory=list)
     seed_pool: list[str] = Field(default_factory=list)
+    candidate_pool: list[str] = Field(
+        default_factory=list,
+        description="Bounded liquid names beyond seed the manager may add",
+    )
     market_regime: str | None = None
     themes: list[str] = Field(default_factory=list)
     horizon_policies: list[dict] = Field(default_factory=list)
