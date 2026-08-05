@@ -1,8 +1,8 @@
-"""Daily LLM spend budget — hard-stop unexpected token/call blowups.
+"""LLM spend budget — daily token/call caps + monthly AUD cost cap.
 
-Process-local counters keyed by UTC date. Optional JSON state file survives restarts
-within the same calendar day. When exceeded, real API calls raise LLMBudgetExceeded
-so agents can fall back / skip instead of burning more tokens.
+Counters are process-local with an optional JSON state file. Daily keys reset on
+UTC date change; monthly keys reset on UTC month change. Cost is estimated from
+prompt/completion tokens using configured per-1M USD rates and AUD/USD.
 """
 
 from __future__ import annotations
@@ -21,14 +21,19 @@ logger = get_logger(__name__)
 
 _lock = threading.Lock()
 _state_day: str | None = None
+_state_month: str | None = None
 _prompt_tokens = 0
 _completion_tokens = 0
 _calls = 0
+_month_prompt_tokens = 0
+_month_completion_tokens = 0
+_month_calls = 0
 _warned_soft = False
+_month_warned_soft = False
 
 
 class LLMBudgetExceeded(Exception):
-    """Raised when the daily LLM budget would be exceeded by another call."""
+    """Raised when a daily or monthly LLM budget would be exceeded."""
 
     def __init__(self, reason: str, snapshot: dict[str, Any] | None = None) -> None:
         super().__init__(reason)
@@ -39,6 +44,7 @@ class LLMBudgetExceeded(Exception):
 @dataclass(frozen=True, slots=True)
 class LLMBudgetSnapshot:
     day: str
+    month: str
     enforce: bool
     prompt_tokens: int
     completion_tokens: int
@@ -51,10 +57,29 @@ class LLMBudgetSnapshot:
     calls_remaining: int | None
     blocked: bool
     soft_warned: bool
+    month_prompt_tokens: int
+    month_completion_tokens: int
+    month_total_tokens: int
+    month_calls: int
+    month_usd_estimate: float
+    month_aud_estimate: float
+    month_aud_budget: float
+    month_aud_remaining: float | None
+    month_blocked: bool
+    month_soft_warned: bool
 
     def to_dict(self) -> dict[str, Any]:
+        daily_pct = 0.0
+        if self.token_budget > 0:
+            daily_pct = max(daily_pct, self.total_tokens / self.token_budget)
+        if self.call_budget > 0:
+            daily_pct = max(daily_pct, self.calls / self.call_budget)
+        month_pct = 0.0
+        if self.month_aud_budget > 0:
+            month_pct = self.month_aud_estimate / self.month_aud_budget
         return {
             "day": self.day,
+            "month": self.month,
             "enforce": self.enforce,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
@@ -67,11 +92,52 @@ class LLMBudgetSnapshot:
             "calls_remaining": self.calls_remaining,
             "blocked": self.blocked,
             "soft_warned": self.soft_warned,
+            "month_prompt_tokens": self.month_prompt_tokens,
+            "month_completion_tokens": self.month_completion_tokens,
+            "month_total_tokens": self.month_total_tokens,
+            "month_calls": self.month_calls,
+            "month_usd_estimate": round(self.month_usd_estimate, 4),
+            "month_aud_estimate": round(self.month_aud_estimate, 4),
+            "month_aud_budget": self.month_aud_budget,
+            "month_aud_remaining": (
+                None
+                if self.month_aud_remaining is None
+                else round(self.month_aud_remaining, 4)
+            ),
+            "month_blocked": self.month_blocked,
+            "month_soft_warned": self.month_soft_warned,
+            "daily_pct": round(daily_pct, 4),
+            "month_pct": round(month_pct, 4),
+            "display_pct": round(max(daily_pct, month_pct), 4),
         }
 
 
 def _today() -> str:
     return datetime.now(UTC).date().isoformat()
+
+
+def _month() -> str:
+    return datetime.now(UTC).strftime("%Y-%m")
+
+
+def estimate_usd_cost(
+    prompt_tokens: int,
+    completion_tokens: int,
+    settings: Settings,
+) -> float:
+    inp = max(0, int(prompt_tokens)) / 1_000_000.0 * float(settings.llm_input_usd_per_mtok)
+    out = max(0, int(completion_tokens)) / 1_000_000.0 * float(settings.llm_output_usd_per_mtok)
+    return inp + out
+
+
+def estimate_aud_cost(
+    prompt_tokens: int,
+    completion_tokens: int,
+    settings: Settings,
+) -> float:
+    return estimate_usd_cost(prompt_tokens, completion_tokens, settings) * float(
+        settings.llm_aud_per_usd
+    )
 
 
 def _state_path(settings: Settings) -> Path | None:
@@ -81,8 +147,9 @@ def _state_path(settings: Settings) -> Path | None:
     return Path(raw).expanduser()
 
 
-def _load_from_disk(settings: Settings, day: str) -> None:
+def _load_from_disk(settings: Settings, day: str, month: str) -> None:
     global _prompt_tokens, _completion_tokens, _calls, _warned_soft
+    global _month_prompt_tokens, _month_completion_tokens, _month_calls, _month_warned_soft
     path = _state_path(settings)
     if path is None or not path.exists():
         return
@@ -90,15 +157,19 @@ def _load_from_disk(settings: Settings, day: str) -> None:
         data = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return
-    if str(data.get("day")) != day:
-        return
-    _prompt_tokens = int(data.get("prompt_tokens") or 0)
-    _completion_tokens = int(data.get("completion_tokens") or 0)
-    _calls = int(data.get("calls") or 0)
-    _warned_soft = bool(data.get("soft_warned"))
+    if str(data.get("day")) == day:
+        _prompt_tokens = int(data.get("prompt_tokens") or 0)
+        _completion_tokens = int(data.get("completion_tokens") or 0)
+        _calls = int(data.get("calls") or 0)
+        _warned_soft = bool(data.get("soft_warned"))
+    if str(data.get("month")) == month:
+        _month_prompt_tokens = int(data.get("month_prompt_tokens") or 0)
+        _month_completion_tokens = int(data.get("month_completion_tokens") or 0)
+        _month_calls = int(data.get("month_calls") or 0)
+        _month_warned_soft = bool(data.get("month_soft_warned"))
 
 
-def _save_to_disk(settings: Settings, day: str) -> None:
+def _save_to_disk(settings: Settings, day: str, month: str) -> None:
     path = _state_path(settings)
     if path is None:
         return
@@ -108,10 +179,15 @@ def _save_to_disk(settings: Settings, day: str) -> None:
             json.dumps(
                 {
                     "day": day,
+                    "month": month,
                     "prompt_tokens": _prompt_tokens,
                     "completion_tokens": _completion_tokens,
                     "calls": _calls,
                     "soft_warned": _warned_soft,
+                    "month_prompt_tokens": _month_prompt_tokens,
+                    "month_completion_tokens": _month_completion_tokens,
+                    "month_calls": _month_calls,
+                    "month_soft_warned": _month_warned_soft,
                     "updated_at": datetime.now(UTC).isoformat(),
                 },
                 indent=2,
@@ -121,46 +197,75 @@ def _save_to_disk(settings: Settings, day: str) -> None:
         logger.warning("llm_budget_state_write_failed", error=str(exc))
 
 
-def _roll_day(settings: Settings) -> str:
-    global _state_day, _prompt_tokens, _completion_tokens, _calls, _warned_soft
+def _roll_period(settings: Settings) -> tuple[str, str]:
+    global _state_day, _state_month
+    global _prompt_tokens, _completion_tokens, _calls, _warned_soft
+    global _month_prompt_tokens, _month_completion_tokens, _month_calls, _month_warned_soft
     day = _today()
-    if _state_day != day:
+    month = _month()
+    if _state_day != day or _state_month != month:
+        prev_day, prev_month = _state_day, _state_month
+        if _state_day != day:
+            _prompt_tokens = 0
+            _completion_tokens = 0
+            _calls = 0
+            _warned_soft = False
+        if _state_month != month:
+            _month_prompt_tokens = 0
+            _month_completion_tokens = 0
+            _month_calls = 0
+            _month_warned_soft = False
         _state_day = day
-        _prompt_tokens = 0
-        _completion_tokens = 0
-        _calls = 0
-        _warned_soft = False
-        _load_from_disk(settings, day)
-    return day
+        _state_month = month
+        # Load disk after reset so same-day/month restart restores counters.
+        if prev_day is None or prev_month is None or prev_day != day or prev_month != month:
+            _load_from_disk(settings, day, month)
+    return day, month
 
 
 def reset_llm_budget_for_tests() -> None:
     """Test helper — clear in-memory counters."""
-    global _state_day, _prompt_tokens, _completion_tokens, _calls, _warned_soft
+    global _state_day, _state_month
+    global _prompt_tokens, _completion_tokens, _calls, _warned_soft
+    global _month_prompt_tokens, _month_completion_tokens, _month_calls, _month_warned_soft
     with _lock:
         _state_day = None
+        _state_month = None
         _prompt_tokens = 0
         _completion_tokens = 0
         _calls = 0
         _warned_soft = False
+        _month_prompt_tokens = 0
+        _month_completion_tokens = 0
+        _month_calls = 0
+        _month_warned_soft = False
 
 
 def snapshot_llm_budget(settings: Settings | None = None) -> LLMBudgetSnapshot:
     cfg = settings or get_settings()
     with _lock:
-        day = _roll_day(cfg)
+        day, month = _roll_period(cfg)
         total = _prompt_tokens + _completion_tokens
+        month_total = _month_prompt_tokens + _month_completion_tokens
         token_budget = max(0, int(cfg.llm_daily_token_budget))
         call_budget = max(0, int(cfg.llm_daily_call_budget))
+        month_aud_budget = max(0.0, float(cfg.llm_monthly_aud_budget))
+        month_usd = estimate_usd_cost(_month_prompt_tokens, _month_completion_tokens, cfg)
+        month_aud = month_usd * float(cfg.llm_aud_per_usd)
         enforce = bool(cfg.llm_budget_enforce)
         blocked = False
+        month_blocked = False
         if enforce:
             if token_budget > 0 and total >= token_budget:
                 blocked = True
             if call_budget > 0 and _calls >= call_budget:
                 blocked = True
+            if month_aud_budget > 0 and month_aud >= month_aud_budget:
+                month_blocked = True
+                blocked = True
         return LLMBudgetSnapshot(
             day=day,
+            month=month,
             enforce=enforce,
             prompt_tokens=_prompt_tokens,
             completion_tokens=_completion_tokens,
@@ -173,6 +278,16 @@ def snapshot_llm_budget(settings: Settings | None = None) -> LLMBudgetSnapshot:
             calls_remaining=(call_budget - _calls) if call_budget > 0 else None,
             blocked=blocked,
             soft_warned=_warned_soft,
+            month_prompt_tokens=_month_prompt_tokens,
+            month_completion_tokens=_month_completion_tokens,
+            month_total_tokens=month_total,
+            month_calls=_month_calls,
+            month_usd_estimate=month_usd,
+            month_aud_estimate=month_aud,
+            month_aud_budget=month_aud_budget,
+            month_aud_remaining=(month_aud_budget - month_aud) if month_aud_budget > 0 else None,
+            month_blocked=month_blocked,
+            month_soft_warned=_month_warned_soft,
         )
 
 
@@ -182,6 +297,11 @@ def assert_llm_budget_allows_call(settings: Settings | None = None) -> None:
     if not cfg.llm_budget_enforce:
         return
     snap = snapshot_llm_budget(cfg)
+    if snap.month_aud_budget > 0 and snap.month_aud_estimate >= snap.month_aud_budget:
+        raise LLMBudgetExceeded(
+            f"monthly_aud_budget_exhausted:{snap.month_aud_estimate:.2f}/{snap.month_aud_budget:.2f}",
+            snap.to_dict(),
+        )
     if snap.token_budget > 0 and snap.total_tokens >= snap.token_budget:
         raise LLMBudgetExceeded(
             f"daily_token_budget_exhausted:{snap.total_tokens}/{snap.token_budget}",
@@ -202,16 +322,24 @@ def record_llm_usage(
 ) -> LLMBudgetSnapshot:
     """Record usage from a completed API response and emit soft-limit warnings."""
     global _prompt_tokens, _completion_tokens, _calls, _warned_soft
+    global _month_prompt_tokens, _month_completion_tokens, _month_calls, _month_warned_soft
     cfg = settings or get_settings()
     with _lock:
-        day = _roll_day(cfg)
-        _prompt_tokens += max(0, int(prompt_tokens))
-        _completion_tokens += max(0, int(completion_tokens))
+        day, month = _roll_period(cfg)
+        add_p = max(0, int(prompt_tokens))
+        add_c = max(0, int(completion_tokens))
+        _prompt_tokens += add_p
+        _completion_tokens += add_c
         _calls += 1
+        _month_prompt_tokens += add_p
+        _month_completion_tokens += add_c
+        _month_calls += 1
         total = _prompt_tokens + _completion_tokens
         soft_pct = float(cfg.llm_budget_soft_limit_pct)
         token_budget = max(0, int(cfg.llm_daily_token_budget))
         call_budget = max(0, int(cfg.llm_daily_call_budget))
+        month_aud_budget = max(0.0, float(cfg.llm_monthly_aud_budget))
+        month_aud = estimate_aud_cost(_month_prompt_tokens, _month_completion_tokens, cfg)
         if not _warned_soft and soft_pct > 0:
             token_hit = token_budget > 0 and total >= int(token_budget * soft_pct)
             call_hit = call_budget > 0 and _calls >= int(call_budget * soft_pct)
@@ -226,8 +354,17 @@ def record_llm_usage(
                     call_budget=call_budget,
                     soft_limit_pct=soft_pct,
                 )
-        _save_to_disk(cfg, day)
-        # refresh metrics outside lock ideally; update gauges here for simplicity
+        if not _month_warned_soft and soft_pct > 0 and month_aud_budget > 0:
+            if month_aud >= month_aud_budget * soft_pct:
+                _month_warned_soft = True
+                logger.warning(
+                    "llm_monthly_aud_soft_limit",
+                    month=month,
+                    month_aud_estimate=round(month_aud, 4),
+                    month_aud_budget=month_aud_budget,
+                    soft_limit_pct=soft_pct,
+                )
+        _save_to_disk(cfg, day, month)
     snap = snapshot_llm_budget(cfg)
     try:
         from app.core.metrics import LLM_BUDGET_BLOCKED, LLM_CALLS_TODAY, LLM_TOKENS_TODAY

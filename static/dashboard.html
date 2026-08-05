@@ -542,26 +542,34 @@
       const callBudget = Number(budget.call_budget) || 0;
       const total = Number(budget.total_tokens) || 0;
       const calls = Number(budget.calls) || 0;
-      const tokenPct = tokenBudget > 0 ? total / tokenBudget : 0;
-      const callPct = callBudget > 0 ? calls / callBudget : 0;
-      const pct = Math.max(tokenPct, callPct);
-      const pctShow = Math.min(100, Math.round(pct * 1000) / 10);
+      const monthAud = Number(budget.month_aud_estimate) || 0;
+      const monthBudget = Number(budget.month_aud_budget) || 0;
+      const pct = Number(budget.display_pct);
+      const pctVal = Number.isFinite(pct)
+        ? pct
+        : Math.max(
+            tokenBudget > 0 ? total / tokenBudget : 0,
+            callBudget > 0 ? calls / callBudget : 0,
+            monthBudget > 0 ? monthAud / monthBudget : 0,
+          );
+      const pctShow = Math.min(100, Math.round(pctVal * 1000) / 10);
       let level = "ok";
       if (!budget.enforce) level = "off";
-      else if (budget.blocked || pct >= 0.9) level = "bad";
-      else if (pct >= 0.7) level = "warn";
+      else if (budget.blocked || budget.month_blocked || pctVal >= 0.9) level = "bad";
+      else if (pctVal >= 0.7) level = "warn";
       meter.className = `usage-meter level-${level}`;
       fill.style.width = `${Math.min(100, pctShow)}%`;
       meter.setAttribute("aria-valuenow", String(Math.round(pctShow)));
       const status = !budget.enforce
         ? "monitor only"
         : budget.blocked
-          ? "BLOCKED"
+          ? (budget.month_blocked ? "MONTH BLOCKED" : "BLOCKED")
           : `${pctShow}%`;
       meta.innerHTML =
         `<strong>${status}</strong>` +
-        ` · ${formatTokens(total)} / ${tokenBudget > 0 ? formatTokens(tokenBudget) : "∞"} tok` +
+        ` · day ${formatTokens(total)} / ${tokenBudget > 0 ? formatTokens(tokenBudget) : "∞"} tok` +
         ` · ${calls} / ${callBudget > 0 ? callBudget : "∞"} calls` +
+        ` · month A$${monthAud.toFixed(2)} / ${monthBudget > 0 ? "A$" + monthBudget.toFixed(0) : "∞"}` +
         ` · UTC ${budget.day || "—"}`;
     }
 

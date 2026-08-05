@@ -1,4 +1,4 @@
-"""Daily LLM budget hard-stop tests."""
+"""Daily + monthly LLM budget hard-stop tests."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ def test_budget_blocks_after_call_limit(tmp_path) -> None:
         llm_budget_enforce=True,
         llm_daily_token_budget=1_000_000,
         llm_daily_call_budget=2,
+        llm_monthly_aud_budget=100,
         llm_budget_soft_limit_pct=0.5,
         llm_budget_state_path=str(tmp_path / "budget.json"),
         llm_api_key=SecretStr("sk-test"),
@@ -47,6 +48,7 @@ def test_budget_blocks_after_token_limit(tmp_path) -> None:
         llm_budget_enforce=True,
         llm_daily_token_budget=100,
         llm_daily_call_budget=1000,
+        llm_monthly_aud_budget=100,
         llm_budget_state_path=str(tmp_path / "budget.json"),
         llm_api_key=SecretStr("sk-test"),
     )
@@ -56,11 +58,35 @@ def test_budget_blocks_after_token_limit(tmp_path) -> None:
     assert snap.blocked is True
 
 
+def test_monthly_aud_budget_blocks(tmp_path) -> None:
+    settings = Settings(
+        llm_budget_enforce=True,
+        llm_daily_token_budget=50_000_000,
+        llm_daily_call_budget=50_000,
+        llm_monthly_aud_budget=10.0,
+        llm_aud_per_usd=1.55,
+        llm_input_usd_per_mtok=0.15,
+        llm_output_usd_per_mtok=0.60,
+        llm_budget_state_path=str(tmp_path / "budget.json"),
+        llm_api_key=SecretStr("sk-test"),
+    )
+    # ~A$10.07 at configured rates: mostly completion tokens.
+    # cost = (0*0.15 + 10.85e6/1e6*0.60) * 1.55 ≈ 10.089
+    record_llm_usage(prompt_tokens=0, completion_tokens=10_850_000, settings=settings)
+    snap = snapshot_llm_budget(settings)
+    assert snap.month_aud_estimate >= 10.0
+    assert snap.month_blocked is True
+    assert snap.blocked is True
+    with pytest.raises(Exception, match="monthly_aud_budget"):
+        assert_llm_budget_allows_call(settings)
+
+
 def test_budget_disabled_allows_overage(tmp_path) -> None:
     settings = Settings(
         llm_budget_enforce=False,
         llm_daily_token_budget=1,
         llm_daily_call_budget=1,
+        llm_monthly_aud_budget=0.01,
         llm_budget_state_path=str(tmp_path / "budget.json"),
     )
     record_llm_usage(prompt_tokens=500, completion_tokens=500, settings=settings)
@@ -74,6 +100,7 @@ async def test_client_raises_llm_error_when_budget_exhausted(tmp_path) -> None:
         llm_budget_enforce=True,
         llm_daily_token_budget=10,
         llm_daily_call_budget=100,
+        llm_monthly_aud_budget=100,
         llm_budget_state_path=str(tmp_path / "budget.json"),
         llm_api_key=SecretStr("sk-test"),
     )

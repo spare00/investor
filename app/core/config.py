@@ -75,10 +75,15 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096
     llm_timeout_seconds: int = 60
     llm_max_retries: int = 2
-    # Daily LLM spend guard (UTC day). 0 budget disables that dimension.
+    # LLM spend guard: daily token/call (UTC day) + monthly AUD cost (UTC month).
+    # 0 disables that dimension. OpenAI account limits remain the outer safety net.
     llm_budget_enforce: bool = True
     llm_daily_token_budget: int = 500_000
     llm_daily_call_budget: int = 120
+    llm_monthly_aud_budget: float = 10.0
+    llm_aud_per_usd: float = 1.55
+    llm_input_usd_per_mtok: float = 0.15  # gpt-4o-mini default
+    llm_output_usd_per_mtok: float = 0.60
     llm_budget_soft_limit_pct: float = 0.8
     llm_budget_state_path: str = ".data/llm_budget_state.json"
 
