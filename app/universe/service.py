@@ -137,6 +137,7 @@ class UniverseService:
             item = self._row_dict(r)
             by_horizon.setdefault(r.horizon, []).append(item)
         focus = await self._latest_focus()
+        screened, screen_meta = await self._screened_candidate_pool()
         return {
             "mode": self.settings.universe_mode,
             "watchlist": [self._row_dict(r) for r in rows],
@@ -155,7 +156,8 @@ class UniverseService:
                 "watchlist": self.settings.universe_watchlist_limit,
                 "focus": self.settings.universe_focus_limit,
             },
-            "candidate_pool": self._candidate_pool(),
+            "candidate_pool": screened,
+            "screener": screen_meta,
             "allow_candidate_adds": self.settings.universe_allow_candidate_adds,
             "book_usage": await self._book_usage(),
         }
@@ -196,6 +198,18 @@ class UniverseService:
             self.settings, themes=themes, market_regime=market_regime
         )
 
+    async def _screened_candidate_pool(
+        self,
+        *,
+        themes: list[str] | None = None,
+        market_regime: str | None = None,
+    ) -> tuple[list[str], dict[str, Any]]:
+        ranked = self._candidate_pool(themes=themes, market_regime=market_regime)
+        from app.universe.screener import screen_candidates
+
+        result = await screen_candidates(self.session, self.settings, ranked)
+        return result.passed, result.to_dict()
+
     async def refresh(
         self,
         *,
@@ -220,14 +234,15 @@ class UniverseService:
             .scalars()
             .all()
         )
+        screened, screen_meta = await self._screened_candidate_pool(
+            themes=themes, market_regime=market_regime
+        )
         payload = UniverseManagerInput(
             as_of=utc_now(),
             current_watchlist=[self._row_dict(r) for r in paused],
             holdings=[h.upper() for h in (holdings or [])],
             seed_pool=list(self.settings.trade_allowlist),
-            candidate_pool=self._candidate_pool(
-                themes=themes, market_regime=market_regime
-            ),
+            candidate_pool=screened,
             market_regime=market_regime,
             themes=themes or [],
             horizon_policies=all_horizon_summaries(),
@@ -236,20 +251,25 @@ class UniverseService:
             trace=TraceMetadata(source_data_timestamp=utc_now()),
         )
         out = await self.agent.run(payload)
-        await self._apply_proposals(out)
+        await self._apply_proposals(out, candidate_symbols=set(screened))
         focus_doc = await self._persist_focus(
             symbols=out.focus_symbols,
             holdings=holdings or [],
             rationale=out.focus_rationale,
             session_date=session_date,
             source="universe_manager",
-            extra={"notes": out.notes, "quality": out.data_quality_score},
+            extra={
+                "notes": out.notes,
+                "quality": out.data_quality_score,
+                "screener": screen_meta,
+            },
         )
         return {
             "skipped": False,
             "proposals": len(out.proposals),
             "focus": focus_doc,
             "notes": out.notes,
+            "screener": screen_meta,
         }
 
     async def build_focus_without_llm(
@@ -340,7 +360,12 @@ class UniverseService:
             "focus": focus,
         }
 
-    async def _apply_proposals(self, out: UniverseManagerOutput) -> None:
+    async def _apply_proposals(
+        self,
+        out: UniverseManagerOutput,
+        *,
+        candidate_symbols: set[str] | None = None,
+    ) -> None:
         now = utc_now()
         by_sym = {
             r.symbol.upper(): r
@@ -353,10 +378,14 @@ class UniverseService:
             sym = prop.symbol.upper().strip()
             if not sym:
                 continue
-            # Soft guard: seed ∪ curated candidates ∪ already-known watchlist
+            # Soft guard: seed ∪ screened candidates ∪ already-known watchlist
             from app.universe.candidates import addable_universe
 
-            allowed_new = addable_universe(self.settings, known_symbols=set(by_sym))
+            allowed_new = addable_universe(
+                self.settings,
+                known_symbols=set(by_sym),
+                candidate_symbols=candidate_symbols,
+            )
             if sym not in allowed_new and prop.action == "add":
                 logger.info("universe_reject_unknown_add", symbol=sym)
                 continue

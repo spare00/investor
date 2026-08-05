@@ -125,6 +125,13 @@ class Settings(BaseSettings):
     # Extra symbols AI may add beyond TRADE_ALLOWLIST (empty → built-in curated pool).
     universe_candidate_pool: Annotated[list[str], NoDecode] = Field(default_factory=list)
     universe_allow_candidate_adds: bool = True
+    # Liquidity screen over the curated candidate pool (not full-market).
+    universe_screener_enabled: bool = True
+    universe_screener_min_avg_volume: float = 1_000_000.0
+    universe_screener_max_spread_bps: float = 40.0
+    universe_screener_min_price: float = 5.0
+    # When true, fetch live quotes; otherwise use latest DB market snapshots (+ stub fill).
+    universe_screener_fetch_live: bool = False
 
     trade_allowlist: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [

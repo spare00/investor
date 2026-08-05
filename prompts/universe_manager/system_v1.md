@@ -26,7 +26,7 @@ Replace a static human ticker list with expert, horizon-aware selection so the f
 - Current watchlist (symbol, horizon, priority, thesis)
 - Holdings (always kept reviewable even if off-watchlist)
 - Seed pool (bootstrap candidates — prefer these)
-- Candidate pool (bounded liquid expansion beyond seed — may add from here)
+- Candidate pool (bounded liquid expansion beyond seed — may add from here; already liquidity-screened when enabled)
 - Optional regime / themes
 - Horizon policy summaries and capacity limits
 

@@ -925,6 +925,14 @@
         pill(`candidates ${cand}`, ""),
         pill(u.allow_candidate_adds ? "candidate adds on" : "candidate adds off", u.allow_candidate_adds ? "good" : "warn"),
       ].join(" ");
+      const scr = u.screener;
+      if (scr) {
+        meta.innerHTML += " " + [
+          pill(`screen ${scr.passed_count ?? 0} ok`, ""),
+          pill(`rej ${scr.rejected_count ?? 0}`, scr.rejected_count ? "warn" : ""),
+          pill(scr.source || "screen", ""),
+        ].join(" ");
+      }
       if (bookEl) {
         const usage = u.book_usage || {};
         const order = ["scalp", "day", "short", "medium"];

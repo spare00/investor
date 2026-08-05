@@ -134,10 +134,19 @@ def ranked_candidate_pool(
     return boosted
 
 
-def addable_universe(settings: Settings, *, known_symbols: set[str] | None = None) -> set[str]:
+def addable_universe(
+    settings: Settings,
+    *,
+    known_symbols: set[str] | None = None,
+    candidate_symbols: set[str] | list[str] | None = None,
+) -> set[str]:
     """Symbols the Universe Manager may newly add (seed ∪ candidates ∪ known)."""
     seed = {s.upper() for s in settings.trade_allowlist}
     known = {s.upper() for s in (known_symbols or set())}
     if not settings.universe_allow_candidate_adds:
         return seed | known
-    return seed | known | set(curated_candidate_pool(settings))
+    if candidate_symbols is not None:
+        cand = {s.upper() for s in candidate_symbols}
+    else:
+        cand = set(curated_candidate_pool(settings))
+    return seed | known | cand
