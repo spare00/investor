@@ -54,6 +54,24 @@ def test_curated_pool_expands_beyond_seed() -> None:
     assert "ZZZZ" not in allowed
 
 
+def test_theme_ranking_boosts_matching_names() -> None:
+    from app.universe.candidates import ranked_candidate_pool
+
+    settings = Settings(trade_allowlist=["SPY"], universe_candidate_pool=[])
+    ranked = ranked_candidate_pool(settings, themes=["semiconductor"])
+    assert ranked[0] in {"SMH", "SOXX", "MU", "INTC", "AMD", "AVGO"}
+    # Non-theme names still present later
+    assert "WMT" in ranked
+    assert ranked.index("SMH") < ranked.index("WMT")
+
+
+def test_regime_maps_to_themes() -> None:
+    from app.universe.candidates import themes_for_regime
+
+    assert "tech" in themes_for_regime("risk_on")
+    assert themes_for_regime(None) == []
+
+
 def test_candidate_adds_can_be_disabled() -> None:
     settings = Settings(
         trade_allowlist=["SPY"],
@@ -105,7 +123,11 @@ async def test_apply_allows_candidate_add(session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_closing_forces_scalp_even_if_overnight_flag(session: AsyncSession) -> None:
-    settings = Settings(intraday_operation_mode="MANUAL_APPROVAL", default_closing_policy="CLOSE_INTRADAY_ONLY")
+    settings = Settings(
+        intraday_operation_mode="MANUAL_APPROVAL",
+        default_closing_policy="CLOSE_INTRADAY_ONLY",
+        auto_execute_force_close=False,
+    )
     session.add(
         WatchlistSymbol(symbol="QQQ", horizon="scalp", status="active", priority=80, thesis="t")
     )
@@ -126,6 +148,42 @@ async def test_closing_forces_scalp_even_if_overnight_flag(session: AsyncSession
     plan = next(p for p in closing["plans"] if p["symbol"] == "QQQ")
     assert plan["action"] == "close"
     assert plan["is_intraday_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_closing_creates_order_intent(session: AsyncSession) -> None:
+    from sqlalchemy import select
+
+    from app.models import OrderIntent
+
+    settings = Settings(
+        intraday_operation_mode="MANUAL_APPROVAL",
+        default_closing_policy="CLOSE_INTRADAY_ONLY",
+        auto_execute_force_close=False,
+    )
+    session.add(
+        WatchlistSymbol(symbol="QQQ", horizon="day", status="active", priority=80, thesis="t")
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="QQQ",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=400,
+            current_price=400,
+            overnight_allowed=False,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+    closing = await ClosingService(session, settings=settings).run_closing()
+    assert closing["intent_ids"]
+    assert closing["broker_orders_submitted"] is False
+    rows = list((await session.execute(select(OrderIntent))).scalars().all())
+    assert len(rows) >= 1
+    assert rows[0].symbol == "QQQ"
+    assert "force_close_intents_pending_submit" in closing["notes"]
 
 
 NOW = datetime(2026, 8, 3, 14, 0, tzinfo=UTC)

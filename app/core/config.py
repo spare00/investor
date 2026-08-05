@@ -212,6 +212,8 @@ class Settings(BaseSettings):
     broker_polling_fallback_enabled: bool = True
     broker_polling_interval_seconds: int = 30
     auto_execute_hard_stops: bool = False
+    # When true and paper automation flags allow, closing window submits market exits.
+    auto_execute_force_close: bool = False
     allow_stop_widening: bool = False
     allow_stop_tightening: bool = True
     allow_new_positions_in_closing_window: bool = False

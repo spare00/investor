@@ -76,22 +76,50 @@ class ClosingService:
             if self.settings.cancel_entry_orders_at_closing_window:
                 notes.append("entry_orders_should_cancel")
 
-        # Produce exit intent drafts (not broker submits) when mode allows
+        # Materialize exit intents (and optionally paper-submit force closes).
         intent_drafts: list[dict[str, Any]] = []
+        intent_ids: list[str] = []
         for plan in decision.plans:
-            if plan.action in {"close", "reduce"} and caps.can_create_intent:
-                intent_drafts.append(
-                    {
-                        "symbol": plan.symbol,
-                        "action": plan.action,
-                        "quantity": plan.quantity if plan.action == "close" else plan.quantity * 0.5,
-                        "rationale": plan.rationale,
-                        "draft_only": caps.intents_are_draft_only or not caps.can_submit,
-                    }
-                )
-                for lc in lifecycles:
-                    if lc.symbol == plan.symbol and plan.action == "close":
-                        lc.status = "PENDING_CLOSE"
+            if plan.action not in {"close", "reduce"} or not caps.can_create_intent:
+                continue
+            qty = plan.quantity if plan.action == "close" else plan.quantity * 0.5
+            draft = {
+                "symbol": plan.symbol,
+                "action": plan.action,
+                "quantity": qty,
+                "rationale": plan.rationale,
+                "draft_only": caps.intents_are_draft_only or not caps.can_submit,
+            }
+            intent_drafts.append(draft)
+            lc = next((x for x in lifecycles if x.symbol.upper() == plan.symbol.upper()), None)
+            if lc is None:
+                continue
+            if plan.action == "close":
+                lc.status = "PENDING_CLOSE"
+            elif plan.action == "reduce":
+                lc.status = "REDUCING"
+            if caps.intents_are_draft_only:
+                meta = dict(lc.metadata_json or {})
+                meta["exit_draft"] = {
+                    "reason": f"closing:{plan.rationale}",
+                    "qty": qty,
+                    "at": datetime.now(UTC).isoformat(),
+                }
+                lc.metadata_json = meta
+                continue
+            intent = await self._create_exit_intent(
+                lc, action=plan.action, qty=qty, rationale=plan.rationale
+            )
+            if intent is not None:
+                intent_ids.append(str(intent.id))
+                draft["intent_id"] = str(intent.id)
+
+        submitted = 0
+        if intent_ids and self._should_auto_submit_force_close(caps):
+            submitted = await self._submit_close_intents(lifecycles, decision.plans)
+            notes.append(f"force_close_orders_submitted={submitted}")
+        elif intent_ids:
+            notes.append("force_close_intents_pending_submit")
 
         review = ClosingReview(
             id=uuid4(),
@@ -107,9 +135,103 @@ class ClosingService:
             "policy": policy.value,
             "plans": decision.to_dict()["plans"],
             "intent_drafts": intent_drafts,
-            "broker_orders_submitted": False,
+            "intent_ids": intent_ids,
+            "broker_orders_submitted": submitted > 0,
+            "orders_submitted": submitted,
             "notes": notes,
         }
+
+    def _should_auto_submit_force_close(self, caps: ModeCapabilities) -> bool:
+        from app.execution.firm_execution import paper_auto_submit_allowed
+
+        if not self.settings.auto_execute_force_close:
+            return False
+        if not caps.can_submit:
+            return False
+        return paper_auto_submit_allowed(self.settings)
+
+    async def _create_exit_intent(
+        self,
+        lc: PositionLifecycle,
+        *,
+        action: str,
+        qty: float,
+        rationale: str,
+    ) -> Any:
+        from app.brokers.models import IntentStatus, IntentType
+        from app.models import OrderIntent
+
+        if qty <= 0:
+            return None
+        intent_type = (
+            IntentType.CLOSE_LONG.value if action == "close" else IntentType.REDUCE_LONG.value
+        )
+        intent = OrderIntent(
+            id=uuid4(),
+            decision_id=lc.decision_id,
+            symbol=lc.symbol,
+            intent_type=intent_type,
+            side="sell" if float(lc.quantity or 0) >= 0 else "buy",
+            quantity=abs(float(qty)),
+            entry_price=lc.current_price,
+            stop_price=lc.stop_price,
+            status=IntentStatus.CREATED.value,
+            thesis=f"closing:{rationale}",
+            exit_policy=dict(lc.exit_policy or {}),
+            metadata_json={
+                "source": "closing_service",
+                "reason": rationale,
+                "lifecycle_id": str(lc.id),
+                "action": action,
+            },
+        )
+        self.session.add(intent)
+        await self.session.flush()
+        return intent
+
+    async def _submit_close_intents(
+        self, lifecycles: list[PositionLifecycle], plans: list[Any]
+    ) -> int:
+        """Submit market exits for close/reduce plans (paper path only)."""
+        from app.execution.order_manager import OrderManager
+        from app.execution.safety_controls import trading_controls
+        from app.execution.validation import ExecutionValidationResult, ValidatedOrderIntent
+
+        if not trading_controls.is_new_order_allowed():
+            return 0
+        by_sym = {p.symbol.upper(): p for p in lifecycles}
+        intents: list[ValidatedOrderIntent] = []
+        for plan in plans:
+            if plan.action not in {"close", "reduce"}:
+                continue
+            lc = by_sym.get(plan.symbol.upper())
+            if lc is None:
+                continue
+            qty = abs(float(plan.quantity if plan.action == "close" else plan.quantity * 0.5))
+            if qty <= 0:
+                continue
+            side = "sell" if float(lc.quantity or 0) >= 0 else "buy"
+            key = f"force-close:{lc.id}:{plan.action}:{datetime.now(UTC).date().isoformat()}"
+            intents.append(
+                ValidatedOrderIntent(
+                    symbol=lc.symbol.upper(),
+                    side=side,
+                    quantity=qty,
+                    order_type="market",
+                    limit_price=None,
+                    stop_price=lc.stop_price,
+                    idempotency_key=key,
+                    decision_id=str(lc.decision_id) if lc.decision_id else str(uuid4()),
+                    thesis=f"force_close:{plan.rationale}",
+                )
+            )
+        if not intents:
+            return 0
+        validation = ExecutionValidationResult(approved=True, intents=intents)
+        orders = await OrderManager(self.session, settings=self.settings).submit_validated_intents(
+            validation
+        )
+        return len(orders)
 
     async def _watchlist_horizons(self, symbols: list[str]) -> dict[str, str]:
         from app.models import WatchlistSymbol

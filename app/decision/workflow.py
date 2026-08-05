@@ -407,6 +407,10 @@ class WorkflowService:
                 )
                 closes = [p for p in closing.get("plans", []) if p.get("action") == "close"]
                 result.notes.append(f"force_close_plans={len(closes)}")
+                if closing.get("intent_ids"):
+                    result.notes.append(f"force_close_intents={len(closing['intent_ids'])}")
+                if closing.get("orders_submitted"):
+                    result.notes.append(f"force_close_orders={closing['orders_submitted']}")
                 result.notes.extend(closing.get("notes") or [])
             except Exception as exc:  # noqa: BLE001
                 result.notes.append(f"force_close_failed:{exc}")
