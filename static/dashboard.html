@@ -360,6 +360,11 @@
   <main>
     <div id="panel-overview" class="tab-panel active">
       <section>
+        <h2>LLM Budget</h2>
+        <div id="llmBudgetMeta" class="muted">Loading…</div>
+        <div id="llmBudgetDetail" style="margin-top:0.5rem"></div>
+      </section>
+      <section>
         <h2>US Market Session</h2>
         <div id="usSessionState" class="stat" style="font-size:1.25rem">—</div>
         <div id="usSessionMeta" class="muted"></div>
@@ -848,6 +853,36 @@
       }).join("");
     }
 
+    function renderLlmBudgetPanel(budget) {
+      const meta = document.getElementById("llmBudgetMeta");
+      const detail = document.getElementById("llmBudgetDetail");
+      if (!meta || !detail) return;
+      if (!budget) {
+        meta.textContent = "Budget unavailable";
+        detail.innerHTML = "";
+        return;
+      }
+      const blocked = budget.blocked || budget.month_blocked;
+      const enforce = budget.enforce;
+      meta.innerHTML = [
+        pill(enforce ? "enforce on" : "monitor only", enforce ? "good" : "warn"),
+        pill(blocked ? "BLOCKED" : "ok", blocked ? "bad" : "good"),
+        budget.soft_warned || budget.month_soft_warned ? pill("soft warn", "warn") : "",
+        pill(`UTC ${budget.day || "—"}`, ""),
+      ].filter(Boolean).join(" ");
+      const tokRem = budget.tokens_remaining;
+      const callRem = budget.calls_remaining;
+      const audRem = budget.month_aud_remaining;
+      detail.innerHTML = [
+        pill(`day ${formatTokens(budget.total_tokens)} / ${budget.token_budget > 0 ? formatTokens(budget.token_budget) : "∞"} tok`, ""),
+        pill(`${budget.calls ?? 0} / ${budget.call_budget > 0 ? budget.call_budget : "∞"} calls`, ""),
+        tokRem != null ? pill(`tok left ${formatTokens(tokRem)}`, tokRem < (budget.token_budget || 0) * 0.2 ? "warn" : "") : "",
+        callRem != null ? pill(`calls left ${callRem}`, callRem < 10 ? "warn" : "") : "",
+        pill(`month A$${(Number(budget.month_aud_estimate) || 0).toFixed(2)} / ${budget.month_aud_budget > 0 ? "A$" + Number(budget.month_aud_budget).toFixed(0) : "∞"}`, ""),
+        audRem != null ? pill(`A$ left ${Number(audRem).toFixed(2)}`, audRem < 1 ? "warn" : "") : "",
+      ].filter(Boolean).join(" ");
+    }
+
     function renderLlmUsage(budget) {
       const meter = document.getElementById("llmUsageMeter");
       const fill = document.getElementById("llmUsageFill");
@@ -1218,6 +1253,9 @@
         wf.last_monitor && wf.last_monitor.actionable != null
           ? pill(`mon ${wf.last_monitor.actionable}`, wf.last_monitor.actionable ? "warn" : "")
           : "",
+        wf.last_news_ingest && wf.last_news_ingest.published != null
+          ? pill(`news ${wf.last_news_ingest.published}`, wf.last_news_ingest.published ? "warn" : "")
+          : "",
         wf.last_intraday_result ? pill(String(wf.last_intraday_result), "") : "",
         wf.last_intraday_eval_at ? pill(`last ${fmtWhen(wf.last_intraday_eval_at)}`, "") : "",
       ].filter(Boolean).join(" ");
@@ -1248,6 +1286,7 @@
       document.getElementById("asOf").textContent =
         `UTC ${data.as_of.utc} · ET ${data.as_of.us_eastern} · BNE ${data.as_of.brisbane}`;
       renderLlmUsage(data.llm_budget);
+      renderLlmBudgetPanel(data.llm_budget);
       renderAgentLamps(data.agent_lamps, data.agents);
       renderUsSession(data.market_status);
       const ts = data.market_status.trading_state;

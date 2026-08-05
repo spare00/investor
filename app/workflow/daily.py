@@ -534,11 +534,29 @@ class DailyWorkflowService:
         agent_result: dict[str, Any] | None = None
         force_close_result: dict[str, Any] | None = None
         monitor_summary: dict[str, Any] | None = None
+        news_summary: dict[str, Any] | None = None
         trigger_event_ids: list[str] = []
         effective_trigger = trigger
         meta = dict(run.metadata_json or {})
 
+        # Ingest high-importance news onto the bus (works even if monitoring is off).
+        try:
+            from app.intraday.news_bridge import ingest_high_importance_news
+
+            news_summary = await ingest_high_importance_news(
+                self.session, settings=self.settings, now=now
+            )
+            meta["last_news_ingest"] = {
+                "published": news_summary.get("published"),
+                "scanned": news_summary.get("scanned"),
+            }
+        except Exception as exc:  # noqa: BLE001
+            news_summary = {"error": str(exc)[:200]}
+            meta["last_news_ingest_error"] = str(exc)[:200]
+
         # Safety: position monitor ticks on every unattended eval (before cooldown gate).
+        pending: list[Any] = []
+        actionable: list[dict[str, Any]] = []
         if self.settings.enable_intraday_monitoring:
             try:
                 from app.intraday.monitor import (
@@ -580,12 +598,34 @@ class DailyWorkflowService:
                         if not r.get("skipped")
                     ],
                 }
-                if actionable or pending:
-                    effective_trigger = "risk_change"
-                    meta["last_monitor"] = monitor_summary
+                meta["last_monitor"] = monitor_summary
             except Exception as exc:  # noqa: BLE001
                 monitor_summary = {"error": str(exc)[:200]}
                 meta["last_monitor_error"] = str(exc)[:200]
+        else:
+            # Still drain actionable bus events (e.g. news) when monitoring is off.
+            try:
+                from app.intraday.events import IntradayEventBus
+
+                pending = await IntradayEventBus(
+                    self.session, settings=self.settings
+                ).list_pending_actionable(limit=40)
+                trigger_event_ids = [str(e.id) for e in pending]
+            except Exception as exc:  # noqa: BLE001
+                meta["last_event_drain_error"] = str(exc)[:200]
+
+        if actionable:
+            effective_trigger = "risk_change"
+        elif pending:
+            news_types = {"HIGH_IMPORTANCE_NEWS", "EARNINGS_RELEASE", "SEC_MATERIAL_FILING"}
+            if pending and all(getattr(e, "event_type", "") in news_types for e in pending):
+                effective_trigger = "news_high_importance"
+            else:
+                effective_trigger = "risk_change"
+        elif (news_summary or {}).get("published"):
+            # Published but already deduped as pending elsewhere — still escalate.
+            effective_trigger = "news_high_importance"
+            trigger_event_ids = list((news_summary or {}).get("event_ids") or [])
 
         last = meta.get("last_intraday_eval_at")
         if last:
@@ -734,6 +774,7 @@ class DailyWorkflowService:
                 "agent": agent_result,
                 "force_close": force_close_result,
                 "monitor": monitor_summary,
+                "news": news_summary,
             },
         }
 

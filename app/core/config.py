@@ -212,6 +212,7 @@ class Settings(BaseSettings):
     intraday_operation_mode: str = "OBSERVE_ONLY"
     enable_intraday_monitoring: bool = True
     enable_intraday_agent_reanalysis: bool = True
+    intraday_news_lookback_minutes: int = 90
     min_global_reanalysis_gap_minutes: int = 10
     min_symbol_reanalysis_gap_minutes: int = 10
     max_symbol_reanalyses_per_day: int = 6

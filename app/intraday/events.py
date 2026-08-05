@@ -24,6 +24,8 @@ PRIORITY: dict[str, int] = {
     "ORDER_REJECTED": 75,
     "TAKE_PROFIT_TRIGGERED": 70,
     "HIGH_IMPORTANCE_NEWS": 65,
+    "EARNINGS_RELEASE": 62,
+    "SEC_MATERIAL_FILING": 68,
     "CLOSING_WINDOW_ENTERED": 60,
     "RISK_LIMIT_WARNING": 55,
     "POSITION_CHANGED": 50,
@@ -79,14 +81,17 @@ class IntradayEventBus:
             )
         ).scalar_one_or_none()
         if existing is not None:
-            existing.status = "DEDUPLICATED"
+            # Keep NEW/QUEUED actionable for downstream drains; only bump revision.
             existing.revision = int(existing.revision or 1) + 1
+            payload = dict(existing.payload or {})
+            payload["dedupe_hits"] = int(payload.get("dedupe_hits") or 0) + 1
+            existing.payload = payload
             await self.session.flush()
             return EventPublishResult(
                 event_id=str(existing.id),
                 status="DEDUPLICATED",
                 priority=PRIORITY.get(event_type, 10),
-                requires_analysis=False,
+                requires_analysis=bool(existing.requires_analysis),
             )
 
         ev = IntradayEvent(

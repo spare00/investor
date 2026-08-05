@@ -9,7 +9,7 @@
 
 | Tab | Data sources | UI |
 |-----|----------------|-----|
-| Overview | `/dashboard/summary` | US session, universe, force-close, settlement/recon, position monitor, reeval cadence, session jobs, agent lamps |
+| Overview | `/dashboard/summary` | US session, LLM budget panel, universe, force-close, settlement/recon, monitor, reeval cadence, session jobs, agent lamps |
 | Performance | `/performance/*` | Metric KPIs, holdings / drawdown tables, Raw JSON toggle |
 | Agents | `/performance/agents`, `/calibration`, `/decisions` | Accuracy KPIs, calibration bars, eval table |
 | Operations | `/operations/metrics`, `/alerts`, `/readiness`, `/simulations` | Ops KPIs, readiness checklist, sim table |

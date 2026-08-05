@@ -82,6 +82,13 @@ async def test_event_bus_dedup_and_priority(session: AsyncSession) -> None:
     assert a.status == "NEW"
     assert b.status == "DEDUPLICATED"
     assert a.priority >= 60
+    # Original row stays NEW so pending drains still see it.
+    from app.models import IntradayEvent
+    from sqlalchemy import select
+
+    row = (await session.execute(select(IntradayEvent))).scalar_one()
+    assert row.status == "NEW"
+    assert int(row.revision or 1) >= 2
 
 
 def test_reanalysis_cooldown() -> None:

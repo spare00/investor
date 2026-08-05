@@ -299,6 +299,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 "last_intraday_result": meta.get("last_intraday_result"),
                 "last_force_close": meta.get("last_force_close"),
                 "last_monitor": meta.get("last_monitor"),
+                "last_news_ingest": meta.get("last_news_ingest"),
                 "postmarket_review": meta.get("postmarket_review"),
             }
             jrows = list(
