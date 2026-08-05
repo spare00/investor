@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.core.metrics import metrics_payload
 from app.core.scheduler import upcoming_jobs
@@ -20,6 +21,7 @@ from app.agents.activity import (
     classify_agent_lamp,
     snapshot_agent_activity,
 )
+from app.market.calendar import MarketCalendarService
 from app.services.llm_budget import snapshot_llm_budget
 from app.models import (
     AgentReport,
@@ -31,6 +33,7 @@ from app.models import (
     Position,
     SystemEvent,
 )
+from app.workflow.daily import DailyWorkflowService
 from fastapi.responses import Response
 
 router = APIRouter(tags=["dashboard"])
@@ -270,12 +273,28 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
         .all()
     )
 
+    settings = get_settings()
+    us_session = MarketCalendarService(settings).get_market_status(now).to_dict()
+    workflow_summary: dict[str, Any] | None = None
+    try:
+        run = await DailyWorkflowService(session, settings=settings).get_current()
+        if run is not None:
+            workflow_summary = {
+                "session_date": run.session_date,
+                "state": run.current_state,
+                "status": run.status,
+            }
+    except Exception:  # noqa: BLE001 — dashboard should still render
+        workflow_summary = None
+
     return {
         "as_of": dual_timezone_labels(now),
         "market_status": {
             "trading_state": controls.state.value,
             "new_orders_allowed": trading_controls.is_new_order_allowed(),
             "reason": controls.reason,
+            "us_session": us_session,
+            "workflow": workflow_summary,
         },
         "portfolio": None
         if snap is None

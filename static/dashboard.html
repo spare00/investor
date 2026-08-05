@@ -210,6 +210,28 @@
     }
     .agent-lamp.lamp-failed { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
     .agent-lamp.lamp-silent .dot { background: #3a4654; }
+    .session-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #121820;
+      font-size: 0.75rem;
+      font-family: "IBM Plex Mono", monospace;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .session-chip .phase { color: var(--text); font-weight: 600; }
+    .session-chip.phase-regular { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+    .session-chip.phase-regular .phase { color: var(--good); }
+    .session-chip.phase-active { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+    .session-chip.phase-active .phase { color: var(--accent); }
+    .session-chip.phase-warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+    .session-chip.phase-warn .phase { color: var(--warn); }
+    .session-chip.phase-closed { border-color: var(--line); }
     @keyframes lamp-pulse {
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.45; transform: scale(0.85); }
@@ -316,6 +338,10 @@
       <span id="llmUsageFill"></span>
     </div>
     <div class="usage-meta mono" id="llmUsageMeta">Loading…</div>
+    <div class="session-chip phase-closed" id="usSessionChip" title="US equity session (NYSE)">
+      <span class="phase" id="usSessionPhase">US —</span>
+      <span id="usSessionDetail"></span>
+    </div>
     <div class="agent-lamps" id="agentLamps" aria-label="Six agent status"></div>
   </div>
   <nav class="tabs" id="tabs">
@@ -328,8 +354,10 @@
   <main>
     <div id="panel-overview" class="tab-panel active">
       <section>
-        <h2>Market / Trading State</h2>
-        <div id="tradingState" class="stat">—</div>
+        <h2>US Market Session</h2>
+        <div id="usSessionState" class="stat" style="font-size:1.25rem">—</div>
+        <div id="usSessionMeta" class="muted"></div>
+        <div id="tradingState" style="margin-top:0.65rem"></div>
         <div id="tradingMeta" class="muted"></div>
       </section>
       <section>
@@ -670,6 +698,98 @@
       }).join("") + `<div class="muted" style="margin-top:0.35rem">Bars: confidence (blue) · accuracy (green)</div>`;
     }
 
+    function fmtMins(m) {
+      if (m == null || !Number.isFinite(Number(m))) return null;
+      const n = Math.max(0, Math.round(Number(m)));
+      if (n < 60) return `${n}m`;
+      const h = Math.floor(n / 60);
+      const mm = n % 60;
+      return mm ? `${h}h ${mm}m` : `${h}h`;
+    }
+
+    function usPhaseLabel(phase) {
+      const map = {
+        REGULAR: "Regular open",
+        PREMARKET: "Premarket",
+        POSTMARKET: "Postmarket",
+        AFTER_HOURS: "After hours",
+        BEFORE_PREMARKET: "Before premarket",
+        CLOSING_WINDOW: "Closing window",
+        FORCE_CLOSE_WINDOW: "Force-close window",
+        NON_TRADING_DAY: "Closed / holiday",
+      };
+      return map[phase] || phase || "—";
+    }
+
+    function usPhaseTone(phase) {
+      if (phase === "REGULAR") return { chip: "phase-regular", pill: "good" };
+      if (phase === "PREMARKET" || phase === "POSTMARKET" || phase === "CLOSING_WINDOW") {
+        return { chip: "phase-active", pill: "warn" };
+      }
+      if (phase === "FORCE_CLOSE_WINDOW") return { chip: "phase-warn", pill: "bad" };
+      return { chip: "phase-closed", pill: "" };
+    }
+
+    function sessionClock(iso) {
+      if (!iso) return "—";
+      // Prefer HH:MM from ISO; keep timezone abbrev if present
+      const m = String(iso).match(/T(\d{2}:\d{2})/);
+      return m ? m[1] : fmtWhen(iso);
+    }
+
+    function renderUsSession(ms) {
+      const us = (ms && ms.us_session) || {};
+      const phase = us.phase || "—";
+      const tone = usPhaseTone(phase);
+      const label = usPhaseLabel(phase);
+      const sess = us.session || {};
+      const toOpen = fmtMins(us.minutes_to_open ?? us.minutes_to_next_open);
+      const toClose = fmtMins(us.minutes_to_close);
+      let countdown = "";
+      if (phase === "REGULAR" || phase === "CLOSING_WINDOW" || phase === "FORCE_CLOSE_WINDOW") {
+        countdown = toClose ? `closes in ${toClose}` : "";
+      } else if (toOpen) {
+        countdown = `opens in ${toOpen}`;
+      } else if (!us.is_trading_day) {
+        countdown = "not a trading day";
+      }
+
+      const chip = document.getElementById("usSessionChip");
+      const phaseEl = document.getElementById("usSessionPhase");
+      const detailEl = document.getElementById("usSessionDetail");
+      if (chip && phaseEl && detailEl) {
+        chip.className = `session-chip ${tone.chip}`;
+        phaseEl.textContent = `US ${label}`;
+        detailEl.textContent = countdown ? `· ${countdown}` : "";
+        const open = sessionClock(sess.regular_open);
+        const close = sessionClock(sess.regular_close);
+        chip.title = [
+          `Phase: ${phase}`,
+          us.is_trading_day ? `Session ${open}–${close} ET` : "Non-trading day",
+          us.as_of_us_eastern ? `ET ${fmtWhen(us.as_of_us_eastern)}` : "",
+        ].filter(Boolean).join(" · ");
+      }
+
+      const stateEl = document.getElementById("usSessionState");
+      const metaEl = document.getElementById("usSessionMeta");
+      if (stateEl) {
+        stateEl.innerHTML = `${pill(label, tone.pill)} ${
+          us.is_trading_day ? pill("trading day", "good") : pill("holiday / weekend", "warn")
+        }`;
+      }
+      if (metaEl) {
+        const bits = [];
+        if (sess.regular_open || sess.regular_close) {
+          bits.push(`RTH ${sessionClock(sess.regular_open)}–${sessionClock(sess.regular_close)} ET`);
+        }
+        if (countdown) bits.push(countdown);
+        if (sess.is_early_close) bits.push("early close");
+        const wf = ms && ms.workflow;
+        if (wf && wf.state) bits.push(`workflow ${wf.state}`);
+        metaEl.textContent = bits.join(" · ") || "No session detail";
+      }
+    }
+
     function renderAgentLamps(lamps, agents) {
       const host = document.getElementById("agentLamps");
       if (!host) return;
@@ -745,9 +865,15 @@
         `UTC ${data.as_of.utc} · ET ${data.as_of.us_eastern} · BNE ${data.as_of.brisbane}`;
       renderLlmUsage(data.llm_budget);
       renderAgentLamps(data.agent_lamps, data.agents);
+      renderUsSession(data.market_status);
       const ts = data.market_status.trading_state;
       const cls = ts === "active" ? "good" : ts === "paused" ? "warn" : "bad";
-      document.getElementById("tradingState").innerHTML = pill(ts, cls);
+      document.getElementById("tradingState").innerHTML =
+        `${pill(`controls ${ts}`, cls)} ` +
+        pill(
+          data.market_status.new_orders_allowed ? "new orders ok" : "new orders blocked",
+          data.market_status.new_orders_allowed ? "good" : "bad",
+        );
       document.getElementById("tradingMeta").textContent =
         data.market_status.reason || (data.market_status.new_orders_allowed ? "New orders allowed" : "New orders blocked");
       syncTradingControls(ts);

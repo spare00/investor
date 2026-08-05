@@ -59,6 +59,8 @@ class MarketStatusSnapshot:
     session: MarketSessionInfo
     minutes_to_open: float | None
     minutes_to_close: float | None
+    minutes_to_next_open: float | None
+    next_open: datetime | None
     in_closing_window: bool
     in_force_close_window: bool
 
@@ -72,6 +74,8 @@ class MarketStatusSnapshot:
             "session": self.session.to_dict(),
             "minutes_to_open": self.minutes_to_open,
             "minutes_to_close": self.minutes_to_close,
+            "minutes_to_next_open": self.minutes_to_next_open,
+            "next_open": self.next_open.isoformat() if self.next_open else None,
             "in_closing_window": self.in_closing_window,
             "in_force_close_window": self.in_force_close_window,
         }
@@ -227,6 +231,12 @@ class MarketCalendarService:
                 minutes_to_open = None
             if minutes_to_close is not None and minutes_to_close < 0:
                 minutes_to_close = None
+        next_open = self.get_next_market_open(now_utc)
+        minutes_to_next_open = None
+        if next_open is not None:
+            minutes_to_next_open = (next_open - now_et).total_seconds() / 60.0
+            if minutes_to_next_open < 0:
+                minutes_to_next_open = None
         return MarketStatusSnapshot(
             as_of=now_utc,
             as_of_us_eastern=now_et.isoformat(),
@@ -236,6 +246,8 @@ class MarketCalendarService:
             session=session,
             minutes_to_open=minutes_to_open,
             minutes_to_close=minutes_to_close,
+            minutes_to_next_open=minutes_to_next_open,
+            next_open=next_open,
             in_closing_window=in_closing,
             in_force_close_window=in_force,
         )

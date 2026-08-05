@@ -107,6 +107,18 @@ def test_naive_datetime_normalized() -> None:
     assert status.as_of.tzinfo is not None
 
 
+def test_after_hours_reports_next_open() -> None:
+    cal = MarketCalendarService(get_settings())
+    # Tuesday evening ET after regular close
+    now = datetime(2026, 8, 4, 20, 0, tzinfo=ET)
+    status = cal.get_market_status(now)
+    assert status.phase == "AFTER_HOURS"
+    assert status.next_open is not None
+    assert status.minutes_to_next_open is not None
+    assert status.minutes_to_next_open > 0
+    assert status.next_open.astimezone(ET).hour == 9
+
+
 def test_schedule_range_includes_weekend() -> None:
     cal = MarketCalendarService(get_settings())
     rows = cal.get_schedule(date(2026, 7, 31), date(2026, 8, 3))
