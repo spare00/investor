@@ -120,6 +120,8 @@ class Settings(BaseSettings):
     universe_focus_limit: int = 12
     universe_watchlist_limit: int = 40
     universe_manager_enabled: bool = True
+    # Periodic Universe Manager refresh when ENABLE_SCHEDULER=true (seconds).
+    universe_refresh_seconds: int = 900
 
     trade_allowlist: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [

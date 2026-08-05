@@ -1,4 +1,4 @@
-"""APScheduler wiring — session bootstrap + DailyWorkflowService dispatch (no direct LLM/broker)."""
+"""APScheduler wiring — session bootstrap + DailyWorkflowService dispatch + universe refresh."""
 
 from __future__ import annotations
 
@@ -42,6 +42,15 @@ def upcoming_jobs() -> list[dict[str, Any]]:
 def _scheduler_enabled(cfg: Settings) -> bool:
     # Phase 3 primary flag; legacy scheduler_enabled alone must not enable jobs.
     return bool(cfg.enable_scheduler)
+
+
+def _universe_refresh_enabled(cfg: Settings) -> bool:
+    """Periodic Universe Manager runs only under the main scheduler gate."""
+    return (
+        _scheduler_enabled(cfg)
+        and bool(cfg.universe_manager_enabled)
+        and (cfg.universe_mode or "dynamic").lower() == "dynamic"
+    )
 
 
 def _coalesce_due_jobs(due: list[Any]) -> list[Any]:
@@ -216,6 +225,60 @@ async def _run_job_action(svc: Any, job_key: str, session_date: str) -> None:
         logger.warning("unknown_scheduled_job", job_key=job_key)
 
 
+async def _refresh_universe() -> None:
+    """Periodic watchlist/focus refresh (leased; skips when emergency-stopped)."""
+    from sqlalchemy import select
+
+    from app.core.database import get_session_factory
+    from app.models import Position
+    from app.universe.service import UniverseService
+
+    if trading_controls.snapshot().state.value == "emergency_stop":
+        logger.info("universe_refresh_skip_emergency_stop")
+        return
+
+    settings = get_settings()
+    if not _universe_refresh_enabled(settings):
+        return
+
+    factory = get_session_factory()
+    async with factory() as session:
+        leases = LeaseService(session, settings)
+        try:
+            await leases.acquire("scheduler:universe_refresh", "scheduler")
+        except LeaseError:
+            logger.info("universe_refresh_lease_held")
+            return
+        try:
+            holdings = [
+                p.symbol for p in (await session.execute(select(Position))).scalars().all()
+            ]
+            svc = UniverseService(session, settings=settings)
+            try:
+                result = await svc.refresh(holdings=holdings)
+                await session.commit()
+                entry = {
+                    "job": "universe_refresh",
+                    "status": "completed" if not result.get("skipped") else "skipped",
+                    "at": datetime.now(UTC).isoformat(),
+                    "proposals": result.get("proposals"),
+                    "reason": result.get("reason"),
+                }
+                _job_log.append(entry)
+                if len(_job_log) > 100:
+                    del _job_log[:-100]
+                logger.info("universe_refresh_done", **{k: v for k, v in entry.items() if v is not None})
+            except Exception:  # noqa: BLE001
+                await session.rollback()
+                logger.exception("universe_refresh_failed")
+        finally:
+            try:
+                await leases.release("scheduler:universe_refresh", "scheduler")
+                await session.commit()
+            except LeaseError:
+                await session.commit()
+
+
 def start_scheduler(settings: Settings | None = None) -> AsyncIOScheduler | None:
     global _scheduler
     cfg = settings or get_settings()
@@ -234,6 +297,15 @@ def start_scheduler(settings: Settings | None = None) -> AsyncIOScheduler | None
         replace_existing=True,
         name="daily_workflow_dispatch",
     )
+    if _universe_refresh_enabled(cfg):
+        interval = max(120, int(cfg.universe_refresh_seconds))
+        sched.add_job(
+            _refresh_universe,
+            IntervalTrigger(seconds=interval),
+            id="universe_refresh",
+            replace_existing=True,
+            name="universe_refresh",
+        )
     sched.start()
     _scheduler = sched
     logger.info(
@@ -241,6 +313,7 @@ def start_scheduler(settings: Settings | None = None) -> AsyncIOScheduler | None
         enable_scheduler=cfg.enable_scheduler,
         enable_broker_orders=cfg.enable_broker_orders,
         enable_automated_execution=cfg.enable_automated_execution,
+        universe_refresh=_universe_refresh_enabled(cfg),
         jobs=[j["id"] for j in upcoming_jobs()],
     )
     return sched

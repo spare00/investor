@@ -297,6 +297,49 @@ async def test_scheduler_disabled_by_default() -> None:
     assert start_scheduler(get_settings()) is None
 
 
+@pytest.mark.asyncio
+async def test_scheduler_registers_universe_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.scheduler as sched
+
+    await sched.stop_scheduler()
+    settings = get_settings().model_copy(
+        update={
+            "enable_scheduler": True,
+            "universe_manager_enabled": True,
+            "universe_mode": "dynamic",
+            "universe_refresh_seconds": 600,
+        }
+    )
+    monkeypatch.setattr(sched, "get_settings", lambda: settings)
+    try:
+        assert sched._universe_refresh_enabled(settings) is True
+        started = start_scheduler(settings)
+        assert started is not None
+        ids = {j["id"] for j in sched.upcoming_jobs()}
+        assert "daily_workflow_dispatch" in ids
+        assert "universe_refresh" in ids
+    finally:
+        await sched.stop_scheduler()
+
+
+@pytest.mark.asyncio
+async def test_universe_refresh_skipped_when_static(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.scheduler as sched
+
+    settings = get_settings().model_copy(
+        update={"enable_scheduler": True, "universe_mode": "static"}
+    )
+    assert sched._universe_refresh_enabled(settings) is False
+    await sched.stop_scheduler()
+    try:
+        started = start_scheduler(settings)
+        assert started is not None
+        ids = {j["id"] for j in sched.upcoming_jobs()}
+        assert "universe_refresh" not in ids
+    finally:
+        await sched.stop_scheduler()
+
+
 def test_coalesce_keeps_latest_intraday_only() -> None:
     from app.core.scheduler import _coalesce_due_jobs
 

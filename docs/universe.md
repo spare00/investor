@@ -28,6 +28,12 @@ Policies live in `app/universe/horizons.py` (capacity, re-eval cadence, liquidit
 - `POST /universe/refresh` — run Universe Manager agent
 - `GET /universe/horizons` — policy summaries
 
+Dashboard Overview renders the same snapshot under **Universe** (mode, focus chips, active names by horizon).
+
+## Scheduler
+
+When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler also runs `universe_refresh` every `UNIVERSE_REFRESH_SECONDS` (default 900). Premarket workflow still refreshes once per session.
+
 ## Persistence
 
 - `watchlist_symbols`

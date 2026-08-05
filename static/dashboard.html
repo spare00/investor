@@ -371,6 +371,12 @@
         <div class="stat mono" id="equity">—</div>
         <div class="muted" id="portfolioMeta"></div>
       </section>
+      <section class="wide">
+        <h2>Universe</h2>
+        <div id="universeMeta" class="muted">Loading…</div>
+        <div id="universeFocus" style="margin-top:0.5rem"></div>
+        <div id="universeByHorizon" style="margin-top:0.75rem"></div>
+      </section>
       <section>
         <h2>Risk</h2>
         <div id="riskPills"></div>
@@ -888,6 +894,64 @@
       }
     }
 
+    function renderUniverse(u) {
+      const meta = document.getElementById("universeMeta");
+      const focusEl = document.getElementById("universeFocus");
+      const byEl = document.getElementById("universeByHorizon");
+      if (!meta || !focusEl || !byEl) return;
+      if (!u) {
+        meta.textContent = "Universe unavailable";
+        focusEl.innerHTML = "";
+        byEl.innerHTML = "";
+        return;
+      }
+      const mode = u.mode || "—";
+      const limits = u.limits || {};
+      const wl = (u.watchlist || []).filter((r) => (r.status || "active") === "active");
+      meta.innerHTML = [
+        pill(`mode ${mode}`, mode === "dynamic" ? "good" : "warn"),
+        pill(`watch ${wl.length}/${limits.watchlist ?? "—"}`, ""),
+        pill(`focus ≤${limits.focus ?? "—"}`, ""),
+      ].join(" ");
+      const focus = u.focus;
+      if (focus && (focus.symbols || []).length) {
+        focusEl.innerHTML =
+          `<div class="muted" style="margin-bottom:0.35rem">Focus` +
+          (focus.as_of ? ` · ${esc(fmtWhen(focus.as_of))}` : "") +
+          (focus.rationale ? ` — ${esc(focus.rationale)}` : "") +
+          `</div>` +
+          focus.symbols.map((s) => pill(s, "")).join(" ");
+      } else {
+        focusEl.innerHTML = `<div class="muted">No focus set yet</div>`;
+      }
+      const policies = Object.fromEntries(
+        (u.horizon_policies || []).map((p) => [p.horizon, p]),
+      );
+      const order = ["scalp", "day", "short", "medium"];
+      const by = u.by_horizon || {};
+      byEl.innerHTML = order.map((h) => {
+        const pol = policies[h] || {};
+        const label = pol.label_ko
+          ? `${pol.label_ko} (${h})`
+          : h;
+        const rows = (by[h] || []).filter((r) => (r.status || "active") === "active");
+        const body = rows.length
+          ? rows.map((r) => `<tr>
+              <td class="mono">${esc(r.symbol)}</td>
+              <td>${esc(r.priority ?? "—")}</td>
+              <td class="muted">${esc(r.thesis || r.notes || "")}</td>
+            </tr>`).join("")
+          : "";
+        return `<div style="margin-bottom:0.85rem">
+          <div style="margin-bottom:0.35rem">${pill(label, "")}
+            ${pill(`max ${pol.max_positions ?? "—"}`, "")}
+            ${pill(`${rows.length} active`, rows.length ? "good" : "")}
+          </div>
+          ${dataTable(["Symbol", "Pri", "Thesis"], body, 3)}
+        </div>`;
+      }).join("");
+    }
+
     async function refreshOverview() {
       const data = await fetchJson("/dashboard/summary");
       document.getElementById("asOf").textContent =
@@ -918,6 +982,7 @@
         ].join(" ");
         document.getElementById("riskMeta").textContent = `Daily PnL $${Number(p.daily_pnl).toFixed(2)}`;
       }
+      renderUniverse(data.universe);
       const cio = data.cio;
       if (cio) {
         const actions = cio.payload?.symbol_actions || [];
