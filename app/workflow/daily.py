@@ -7,11 +7,11 @@ ops brake, not the firm identity.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.pipeline import AgentPipeline
@@ -839,24 +839,7 @@ class DailyWorkflowService:
         ]
         # Intraday interval jobs — denser when watchlist includes scalp/day books,
         # but floored by LLM reanalysis budget (≈ 2 × max_intraday_reanalyses ticks).
-        end = close_t - timedelta(minutes=cfg.closing_window_minutes_before_close)
-        session_mins = max(0.0, (end - open_t).total_seconds() / 60.0)
-        try:
-            from app.universe.reeval import planned_intraday_interval_minutes
-            from app.universe.service import UniverseService
-
-            hz_map = await UniverseService(self.session, settings=cfg).horizon_by_symbol()
-            interval_min = planned_intraday_interval_minutes(
-                list(hz_map.values()), cfg, session_minutes=session_mins
-            )
-        except Exception:  # noqa: BLE001
-            interval_min = max(1, int(cfg.intraday_reevaluation_interval_minutes))
-        cursor = open_t + timedelta(minutes=interval_min)
-        idx = 0
-        while cursor < end:
-            plans.append((f"intraday_eval_{idx}", cursor))
-            cursor += timedelta(minutes=interval_min)
-            idx += 1
+        await self._plan_intraday_jobs(run, session)
 
         for key, planned in plans:
             existing = (
@@ -869,9 +852,6 @@ class DailyWorkflowService:
             ).scalar_one_or_none()
             if existing:
                 continue
-            meta: dict[str, Any] = {}
-            if str(key).startswith("intraday_eval"):
-                meta["interval_minutes"] = interval_min
             self.session.add(
                 ScheduledJobRecord(
                     id=uuid4(),
@@ -880,10 +860,126 @@ class DailyWorkflowService:
                     planned_at=planned.astimezone(UTC),
                     status="planned",
                     workflow_run_id=run.id,
-                    metadata_json=meta,
+                    metadata_json={},
                 )
             )
         await self.session.flush()
+
+    async def _plan_intraday_jobs(
+        self,
+        run: DailyWorkflowRun,
+        session: Any,
+        *,
+        not_before: datetime | None = None,
+    ) -> int:
+        """Plan ``intraday_eval_*`` rows; returns count created."""
+        if not session.is_trading_day or not session.regular_open or not session.regular_close:
+            return 0
+        open_t = session.regular_open
+        close_t = session.regular_close
+        cfg = self.settings
+        end = close_t - timedelta(minutes=cfg.closing_window_minutes_before_close)
+        session_mins = max(0.0, (end - open_t).total_seconds() / 60.0)
+        try:
+            from app.universe.reeval import planned_intraday_interval_minutes
+            from app.universe.service import UniverseService
+
+            hz_map = await UniverseService(self.session, settings=cfg).horizon_by_symbol()
+            interval_min = planned_intraday_interval_minutes(
+                list(hz_map.values()), cfg, session_minutes=session_mins
+            )
+        except Exception:  # noqa: BLE001
+            interval_min = max(1, int(cfg.intraday_reevaluation_interval_minutes))
+
+        existing = list(
+            (
+                await self.session.execute(
+                    select(ScheduledJobRecord).where(
+                        ScheduledJobRecord.session_date == run.session_date,
+                        ScheduledJobRecord.job_key.like("intraday_eval_%"),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        max_idx = -1
+        for row in existing:
+            try:
+                max_idx = max(max_idx, int(str(row.job_key).rsplit("_", 1)[-1]))
+            except ValueError:
+                continue
+
+        cursor = open_t + timedelta(minutes=interval_min)
+        if not_before is not None:
+            nb = not_before if not_before.tzinfo else not_before.replace(tzinfo=UTC)
+            while cursor < nb:
+                cursor += timedelta(minutes=interval_min)
+
+        idx = max_idx + 1
+        created = 0
+        while cursor < end:
+            key = f"intraday_eval_{idx}"
+            collision = next((r for r in existing if r.job_key == key), None)
+            if collision is None:
+                self.session.add(
+                    ScheduledJobRecord(
+                        id=uuid4(),
+                        job_key=key,
+                        session_date=run.session_date,
+                        planned_at=cursor.astimezone(UTC),
+                        status="planned",
+                        workflow_run_id=run.id,
+                        metadata_json={"interval_minutes": interval_min, "replanned": bool(not_before)},
+                    )
+                )
+                created += 1
+            idx += 1
+            cursor += timedelta(minutes=interval_min)
+        await self.session.flush()
+        return created
+
+    async def replan_intraday_jobs(
+        self,
+        session_date: str | None = None,
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Drop pending intraday_eval rows and replan from current horizon cadence."""
+        now = now or datetime.now(UTC)
+        run = await self.get_current(session_date)
+        if run is None:
+            return {"skipped": True, "reason": "no_run"}
+        session_info = self.calendar.get_session(date.fromisoformat(run.session_date))
+        if not session_info.is_trading_day or not session_info.regular_open:
+            return {"skipped": True, "reason": "non_trading_day", "session_date": run.session_date}
+
+        purged = (
+            await self.session.execute(
+                delete(ScheduledJobRecord).where(
+                    ScheduledJobRecord.session_date == run.session_date,
+                    ScheduledJobRecord.job_key.like("intraday_eval_%"),
+                    ScheduledJobRecord.status.in_(["planned", "skipped"]),
+                )
+            )
+        ).rowcount or 0
+
+        created = await self._plan_intraday_jobs(run, session_info, not_before=now)
+        meta = dict(run.metadata_json or {})
+        meta["last_intraday_replan"] = {
+            "at": now.isoformat(),
+            "purged": int(purged),
+            "created": int(created),
+        }
+        run.metadata_json = meta
+        await self.session.flush()
+        return {
+            "skipped": False,
+            "session_date": run.session_date,
+            "purged": int(purged),
+            "created": int(created),
+            "interval_hint": (meta.get("last_intraday_replan") or {}),
+        }
 
     async def _require_run(self, session_date: str | None) -> DailyWorkflowRun:
         run = await self.get_current(session_date)

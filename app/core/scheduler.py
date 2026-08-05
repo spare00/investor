@@ -256,6 +256,16 @@ async def _refresh_universe() -> None:
             svc = UniverseService(session, settings=settings)
             try:
                 result = await svc.refresh(holdings=holdings)
+                replan: dict[str, Any] = {}
+                try:
+                    from app.workflow.daily import DailyWorkflowService
+
+                    replan = await DailyWorkflowService(
+                        session, settings=settings, owner="scheduler"
+                    ).replan_intraday_jobs()
+                except Exception:  # noqa: BLE001
+                    logger.exception("universe_refresh_replan_failed")
+                    replan = {"skipped": True, "reason": "replan_failed"}
                 await session.commit()
                 entry = {
                     "job": "universe_refresh",
@@ -263,6 +273,8 @@ async def _refresh_universe() -> None:
                     "at": datetime.now(UTC).isoformat(),
                     "proposals": result.get("proposals"),
                     "reason": result.get("reason"),
+                    "replan_purged": replan.get("purged"),
+                    "replan_created": replan.get("created"),
                 }
                 _job_log.append(entry)
                 if len(_job_log) > 100:

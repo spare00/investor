@@ -121,6 +121,39 @@ async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSess
 
 
 @pytest.mark.asyncio
+async def test_replan_intraday_jobs_after_horizon_change(session: AsyncSession) -> None:
+    from app.models import WatchlistSymbol
+    from sqlalchemy import select
+
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-03")
+    before = await svc.planned_jobs("2026-08-03")
+    before_intra = [j for j in before if j["job_key"].startswith("intraday_eval_")]
+    assert before_intra
+
+    # Collapse active books to medium-only → coarser plan on replan.
+    rows = list((await session.execute(select(WatchlistSymbol))).scalars().all())
+    for r in rows:
+        r.horizon = "medium"
+        r.status = "active"
+    await session.flush()
+
+    mid_session = datetime(2026, 8, 3, 17, 0, tzinfo=UTC)  # ~13:00 ET
+    out = await svc.replan_intraday_jobs(session_date="2026-08-03", now=mid_session)
+    assert out["skipped"] is False
+    assert out["purged"] >= 1
+    after = await svc.planned_jobs("2026-08-03")
+    after_planned = [
+        j
+        for j in after
+        if j["job_key"].startswith("intraday_eval_") and j["status"] == "planned"
+    ]
+    assert after_planned
+    # Medium + budget → fewer remaining ticks than original full-day scalp plan
+    assert len(after_planned) < len(before_intra)
+
+
+@pytest.mark.asyncio
 async def test_early_close_job_uses_session_close(session: AsyncSession) -> None:
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-11-27")

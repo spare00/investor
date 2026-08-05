@@ -43,8 +43,15 @@ async def universe_refresh(
         market_regime=req.market_regime,
         themes=req.themes,
     )
+    replan: dict[str, Any] = {"skipped": True, "reason": "not_attempted"}
+    try:
+        from app.workflow.daily import DailyWorkflowService
+
+        replan = await DailyWorkflowService(session, settings=settings).replan_intraday_jobs()
+    except Exception as exc:  # noqa: BLE001
+        replan = {"skipped": True, "reason": f"replan_failed:{exc}"}
     await session.commit()
-    return result
+    return {**result, "intraday_replan": replan}
 
 
 @router.get("/horizons")

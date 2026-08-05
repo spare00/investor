@@ -12,7 +12,7 @@
   2. Interval job `universe_refresh` (when `UNIVERSE_MODE=dynamic` and `UNIVERSE_MANAGER_ENABLED=true`) that refreshes watchlist/focus via Universe Manager under lease `scheduler:universe_refresh`. Cadence: `UNIVERSE_REFRESH_SECONDS` (default 900).
 - Workflow dispatch **does not** call LLM, Risk, or Broker directly; universe refresh may call the Universe Manager agent.
 
-Job plans are created in `DailyWorkflowService.prepare` from Calendar Service session times. `intraday_eval_*` spacing follows the tightest active-watchlist horizon (scalp ≈ 2m, day ≈ 5m, …), floored so planned ticks stay near `2 × MAX_INTRADAY_REANALYSES` for the session; overdue intraday jobs are coalesced to the latest. Runtime gates (`min_gap`, agent cooldowns, `MAX_INTRADAY_REANALYSES`) still skip or cap early / excess runs.
+Job plans are created in `DailyWorkflowService.prepare` from Calendar Service session times. `intraday_eval_*` spacing follows the tightest active-watchlist horizon (scalp ≈ 2m, day ≈ 5m, …), floored so planned ticks stay near `2 × MAX_INTRADAY_REANALYSES` for the session; overdue intraday jobs are coalesced to the latest. Universe refresh (scheduler or `POST /universe/refresh`) **replans** pending `intraday_eval_*` rows so cadence tracks horizon changes. Runtime gates (`min_gap`, agent cooldowns, `MAX_INTRADAY_REANALYSES`) still skip or cap early / excess runs.
 
 ## Leases
 
