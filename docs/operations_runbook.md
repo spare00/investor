@@ -9,8 +9,9 @@ Fail-closed defaults keep orders off. To run the 6-agent paper loop:
 1. `.env`: `TRADING_MODE=paper`, `BROKER_ENVIRONMENT=paper`, `INTRADAY_OPERATION_MODE=PAPER_AUTOMATED`
 2. Unlock paper submits: `ENABLE_BROKER_ORDERS=true`, `ENABLE_AUTOMATED_EXECUTION=true`, `REQUIRE_MANUAL_ORDER_APPROVAL=false`
 3. Scheduler: `ENABLE_SCHEDULER=true` (plans `intraday_eval_*`, `closing_window`, optional `universe_refresh`)
-4. Force flatten near close (optional): `AUTO_EXECUTE_FORCE_CLOSE=true` — otherwise closing creates intents only
-5. Universe: `UNIVERSE_MODE=dynamic`, `UNIVERSE_MANAGER_ENABLED=true`
+4. Monitoring: `ENABLE_INTRADAY_MONITORING=true` (stop/TP ticks escalate to CIO on each eval)
+5. Force flatten near close (optional): `AUTO_EXECUTE_FORCE_CLOSE=true` — otherwise closing creates intents only
+6. Universe: `UNIVERSE_MODE=dynamic`, `UNIVERSE_MANAGER_ENABLED=true`
 
 Verify:
 

@@ -105,6 +105,7 @@ class PositionMonitor:
                     symbols=[lifecycle.symbol],
                     deduplication_key=f"stop:{lifecycle.id}:{now.strftime('%Y%m%d%H%M')}",
                     position_id=lifecycle.id,
+                    requires_analysis=True,
                     requires_execution_review=True,
                     bypass_cooldown=True,
                     importance="critical",
@@ -127,6 +128,7 @@ class PositionMonitor:
                 symbols=[lifecycle.symbol],
                 deduplication_key=f"tp:{lifecycle.id}:{now.strftime('%Y%m%d%H%M')}",
                 position_id=lifecycle.id,
+                requires_analysis=True,
                 requires_execution_review=True,
                 importance="high",
                 payload={"take_profit": tp, "price": price},
@@ -147,6 +149,7 @@ class PositionMonitor:
                     symbols=[lifecycle.symbol],
                     deduplication_key=f"hold:{lifecycle.id}",
                     position_id=lifecycle.id,
+                    requires_analysis=True,
                     requires_risk_review=True,
                     importance="high",
                 )

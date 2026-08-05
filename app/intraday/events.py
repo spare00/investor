@@ -174,6 +174,22 @@ class IntradayEventBus:
             .all()
         )
 
+    async def list_pending_actionable(self, *, limit: int = 40) -> list[IntradayEvent]:
+        """NEW events that should escalate to risk review / CIO reanalysis."""
+        rows = await self.list_events(limit=limit)
+        out: list[IntradayEvent] = []
+        for ev in rows:
+            if ev.status != "NEW":
+                continue
+            if (
+                ev.requires_analysis
+                or ev.requires_execution_review
+                or ev.requires_risk_review
+                or (ev.importance or "").lower() in {"high", "critical"}
+            ):
+                out.append(ev)
+        return out
+
     async def mark(self, event_id: UUID, status: str) -> IntradayEvent | None:
         row = await self.session.get(IntradayEvent, event_id)
         if row is None:

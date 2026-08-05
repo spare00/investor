@@ -533,7 +533,60 @@ class DailyWorkflowService:
         reason = "ok"
         agent_result: dict[str, Any] | None = None
         force_close_result: dict[str, Any] | None = None
+        monitor_summary: dict[str, Any] | None = None
+        trigger_event_ids: list[str] = []
+        effective_trigger = trigger
         meta = dict(run.metadata_json or {})
+
+        # Safety: position monitor ticks on every unattended eval (before cooldown gate).
+        if self.settings.enable_intraday_monitoring:
+            try:
+                from app.intraday.monitor import (
+                    ANALYSIS_REQUIRED,
+                    EMERGENCY_ACTION_REQUIRED,
+                    EXIT_INTENT_REQUIRED,
+                    RISK_REVIEW_REQUIRED,
+                )
+                from app.intraday.service import IntradayService
+
+                intra = IntradayService(
+                    self.session, settings=self.settings, controls=self.controls
+                )
+                mon_rows = await intra.monitor_all(prices=None)
+                escalate_verdicts = {
+                    EXIT_INTENT_REQUIRED,
+                    ANALYSIS_REQUIRED,
+                    EMERGENCY_ACTION_REQUIRED,
+                    RISK_REVIEW_REQUIRED,
+                }
+                actionable = [
+                    r
+                    for r in mon_rows
+                    if not r.get("skipped")
+                    and (
+                        (r.get("monitor") or {}).get("verdict") in escalate_verdicts
+                        or (r.get("stop") or {}).get("triggered")
+                    )
+                ]
+                pending = await intra.bus.list_pending_actionable(limit=40)
+                trigger_event_ids = [str(e.id) for e in pending]
+                monitor_summary = {
+                    "checked": len([r for r in mon_rows if not r.get("skipped")]),
+                    "actionable": len(actionable),
+                    "pending_events": len(pending),
+                    "verdicts": [
+                        (r.get("monitor") or {}).get("verdict")
+                        for r in mon_rows
+                        if not r.get("skipped")
+                    ],
+                }
+                if actionable or pending:
+                    effective_trigger = "risk_change"
+                    meta["last_monitor"] = monitor_summary
+            except Exception as exc:  # noqa: BLE001
+                monitor_summary = {"error": str(exc)[:200]}
+                meta["last_monitor_error"] = str(exc)[:200]
+
         last = meta.get("last_intraday_eval_at")
         if last:
             try:
@@ -566,7 +619,11 @@ class DailyWorkflowService:
                 except Exception:  # noqa: BLE001
                     horizons = {}
                 need_gap = global_reeval_gap_minutes(open_syms, horizons, self.settings)
-                if gap < need_gap and trigger == "interval" and not status.in_force_close_window:
+                if (
+                    gap < need_gap
+                    and effective_trigger == "interval"
+                    and not status.in_force_close_window
+                ):
                     return {
                         **self._run_dict(run),
                         "intraday": {
@@ -575,6 +632,7 @@ class DailyWorkflowService:
                             "skipped": True,
                             "need_gap_minutes": need_gap,
                             "gap_minutes": gap,
+                            "monitor": monitor_summary,
                         },
                     }
             except ValueError:
@@ -584,28 +642,36 @@ class DailyWorkflowService:
             result = IntradayEvalResult.NO_CHANGE
             reason = "closing_window_limit_new_analysis"
         elif run.intraday_reanalysis_count >= self.settings.max_intraday_reanalyses:
-            result = IntradayEvalResult.PAUSE_TRADING
-            reason = "max_intraday_reanalyses"
-        elif trigger in {"volatility", "news_high_importance", "risk_change"}:
+            # Risk escalations still reanalyze even at the soft cap.
+            if effective_trigger == "risk_change":
+                result = IntradayEvalResult.REANALYZE
+                reason = "event:risk_change_over_cap"
+            else:
+                result = IntradayEvalResult.PAUSE_TRADING
+                reason = "max_intraday_reanalyses"
+        elif effective_trigger in {"volatility", "news_high_importance", "risk_change"}:
             result = IntradayEvalResult.REANALYZE
-            reason = f"event:{trigger}"
-        elif trigger == "stale_data":
+            reason = f"event:{effective_trigger}"
+        elif effective_trigger == "stale_data":
             result = IntradayEvalResult.RISK_REVIEW_REQUIRED
             reason = "stale_data"
-        elif trigger == "interval" and self.settings.enable_intraday_agent_reanalysis:
+        elif effective_trigger == "interval" and self.settings.enable_intraday_agent_reanalysis:
             # Unattended paper path: interval jobs drive CIO reanalysis (cooldown inside agents).
             result = IntradayEvalResult.REANALYZE
             reason = "interval_agent_reeval"
 
         if result == IntradayEvalResult.REANALYZE and self.settings.enable_intraday_agent_reanalysis:
             from app.intraday.agents import IntradayAgentService
+            from app.intraday.events import IntradayEventBus
+            from uuid import UUID as _UUID
 
             agent_result = await IntradayAgentService(
                 self.session, settings=self.settings, controls=self.controls
             ).evaluate(
                 fake_llm=fake_llm,
                 parent_decision_id=run.latest_decision_id,
-                bypass_cooldown=trigger != "interval",
+                trigger_event_ids=trigger_event_ids or None,
+                bypass_cooldown=effective_trigger != "interval",
             )
             if agent_result.get("skipped"):
                 result = IntradayEvalResult.NO_CHANGE
@@ -617,7 +683,15 @@ class DailyWorkflowService:
                     "intent_count": agent_result.get("intent_count", 0),
                     "broker_orders_submitted": bool(agent_result.get("broker_orders_submitted")),
                     "mode": agent_result.get("mode"),
+                    "trigger": effective_trigger,
+                    "trigger_event_ids": trigger_event_ids,
                 }
+                bus = IntradayEventBus(self.session, settings=self.settings)
+                for eid in trigger_event_ids:
+                    try:
+                        await bus.mark(_UUID(eid), "PROCESSED")
+                    except Exception:  # noqa: BLE001
+                        continue
 
         # Force-close window: materialize exits even when analysis is paused.
         if status.in_force_close_window:
@@ -639,6 +713,8 @@ class DailyWorkflowService:
 
         meta["last_intraday_eval_at"] = now.isoformat()
         meta["last_intraday_result"] = result.value
+        if monitor_summary is not None:
+            meta["last_monitor"] = monitor_summary
         run.metadata_json = meta
         if run.current_state == DailyWorkflowState.MARKET_OPEN.value:
             await self._set_state(
@@ -650,12 +726,14 @@ class DailyWorkflowService:
             "intraday": {
                 "result": result.value,
                 "reason": reason,
+                "trigger": effective_trigger,
                 "broker_orders": bool(
                     (agent_result or {}).get("broker_orders_submitted")
                     or (force_close_result or {}).get("broker_orders_submitted")
                 ),
                 "agent": agent_result,
                 "force_close": force_close_result,
+                "monitor": monitor_summary,
             },
         }
 
@@ -746,7 +824,7 @@ class DailyWorkflowService:
             .scalars()
             .all()
         )
-        review = {
+        review: dict[str, Any] = {
             "session_date": run.session_date,
             "states": [t.to_state for t in transitions],
             "revalidation_count": run.revalidation_count,
@@ -756,6 +834,76 @@ class DailyWorkflowService:
             "broker_orders_submitted": False,
             "reviewed_at": now.isoformat(),
         }
+
+        # Settlement + light performance eval (fail-soft; never block session complete).
+        try:
+            from app.intraday.settlement import SettlementService
+
+            settlement = await SettlementService(
+                self.session, settings=self.settings
+            ).settle(session_date=run.session_date)
+            review["settlement"] = {
+                "id": settlement.get("settlement_id"),
+                "overnight_positions": settlement.get("overnight_positions") or [],
+                "pnl_summary": settlement.get("pnl") or [],
+                "reconciliation": (settlement.get("reconciliation") or {}).get("result")
+                if isinstance(settlement.get("reconciliation"), dict)
+                else settlement.get("reconciliation"),
+            }
+        except Exception as exc:  # noqa: BLE001
+            review["settlement_error"] = str(exc)[:240]
+
+        try:
+            from app.intraday.posttrade import PostTradeReviewService
+            from app.models import PositionLifecycle
+            from sqlalchemy import select as sa_select
+
+            closed = list(
+                (
+                    await self.session.execute(
+                        sa_select(PositionLifecycle).where(
+                            PositionLifecycle.status.in_(["CLOSED", "PENDING_CLOSE"])
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            ptr = PostTradeReviewService(self.session)
+            review_ids: list[str] = []
+            for lc in closed[:20]:
+                out = await ptr.create_review(
+                    position_lifecycle_id=lc.id,
+                    decision_id=lc.decision_id,
+                    symbol=lc.symbol,
+                    outcome="closed" if lc.status == "CLOSED" else "pending_close",
+                    exit_reason="postmarket_review",
+                    pnl=float(lc.realized_pl or lc.unrealized_pl or 0),
+                )
+                if out.get("review_id"):
+                    review_ids.append(str(out["review_id"]))
+            review["posttrade_review_ids"] = review_ids
+        except Exception as exc:  # noqa: BLE001
+            review["posttrade_error"] = str(exc)[:240]
+
+        try:
+            from datetime import date as date_cls
+
+            from app.performance.service import PerformanceService
+
+            day = date_cls.fromisoformat(run.session_date)
+            start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+            end = start + timedelta(days=1)
+            perf = PerformanceService(self.session, settings=self.settings)
+            perf_run = await perf.recalculate(start, end)
+            decisions = await perf.evaluate_decisions_batch(start, end, persist=True)
+            review["performance"] = {
+                "run_id": perf_run.get("run_id"),
+                "decision_evaluations": decisions.get("count", 0),
+            }
+        except Exception as exc:  # noqa: BLE001
+            review["performance_error"] = str(exc)[:240]
+
         meta = dict(run.metadata_json or {})
         meta["postmarket_review"] = review
         run.metadata_json = meta

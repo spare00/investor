@@ -17,10 +17,10 @@ NON_TRADING_DAY → COMPLETED
 PREMARKET_PREPARATION
   → PREMARKET_ANALYSIS          (6-Agent → CIO → Order Intents → optional paper submit)
   → PREOPEN_REVALIDATION
-  → MARKET_OPEN → INTRADAY      (intraday reanalysis may create more intents)
-  → CLOSING_WINDOW
+  → MARKET_OPEN → INTRADAY      (monitor ticks + interval/risk CIO reanalysis)
+  → CLOSING_WINDOW              (ClosingService force-flatten intents)
   → MARKET_CLOSED
-  → POSTMARKET_REVIEW
+  → POSTMARKET_REVIEW           (settlement + posttrade + performance eval)
   → COMPLETED
 ```
 
