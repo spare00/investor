@@ -111,10 +111,16 @@ async def clear_emergency(reason: str = "emergency_cleared") -> dict[str, Any]:
     from app.core.database import get_session_factory
 
     snap = trading_controls.clear_emergency(reason=reason)
+    resolved = 0
     try:
         factory = get_session_factory()
         async with factory() as session:
             await persist_trading_controls(session, trading_controls, changed_by="api")
+            from app.alerts.ops import resolve_alerts_by_code
+
+            resolved = await resolve_alerts_by_code(
+                session, get_settings(), code="trading.emergency_stop"
+            )
             await session.commit()
     except Exception:  # noqa: BLE001
         pass
@@ -122,6 +128,7 @@ async def clear_emergency(reason: str = "emergency_cleared") -> dict[str, Any]:
         "state": snap.state.value,
         "reason": snap.reason,
         "changed_at": snap.changed_at.isoformat(),
+        "alerts_resolved": resolved,
         "next": "POST /trading/resume to re-enable new orders",
     }
 
@@ -142,6 +149,14 @@ async def restart_trading(reason: str = "dashboard_restart") -> dict[str, Any]:
         factory = get_session_factory()
         async with factory() as session:
             await persist_trading_controls(session, trading_controls, changed_by="api")
+            if before == "emergency_stop":
+                from app.alerts.ops import resolve_alerts_by_code
+
+                n = await resolve_alerts_by_code(
+                    session, get_settings(), code="trading.emergency_stop"
+                )
+                if n:
+                    steps.append(f"alerts_resolved:{n}")
             await session.commit()
     except Exception:  # noqa: BLE001
         pass

@@ -155,6 +155,18 @@ class MarketCalendarService:
             return self._cal.next_session(ts).date()
         return self._cal.date_to_session(ts, direction="next").date()
 
+    def next_session_has_holiday_gap(self, day: date) -> bool:
+        """True when a weekday holiday sits between ``day`` and the next session."""
+        if not self.is_trading_day(day):
+            day = self.get_previous_trading_day(day)
+        nxt = self.get_next_trading_day(day)
+        cur = day + timedelta(days=1)
+        while cur < nxt:
+            if cur.weekday() < 5 and not self.is_trading_day(cur):
+                return True
+            cur = cur + timedelta(days=1)
+        return False
+
     def get_previous_trading_day(self, day: date) -> date:
         ts = self._ts(day)
         if self.is_trading_day(day):

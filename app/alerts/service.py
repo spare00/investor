@@ -161,14 +161,25 @@ class AlertService:
     async def acknowledge(self, alert_id: UUID, *, by: str = "operator") -> EmitResult:
         try:
             alert = self._alerts.get(alert_id)
-            if alert is None:
+            now = datetime.now(UTC)
+            if alert is not None:
+                if alert.status == AlertStatus.RESOLVED:
+                    return EmitResult(emitted=False, reason="already_resolved", alert_id=alert_id)
+                alert.status = AlertStatus.ACKNOWLEDGED
+                alert.acknowledged_at = now
+                alert.acknowledged_by = by
+                await self._update_db_status(alert_id, status="acknowledged", acknowledged_at=now)
+                return EmitResult(emitted=True, alert_id=alert_id, alert=alert)
+
+            row = await self._load_db_alert(alert_id)
+            if row is None:
                 return EmitResult(emitted=False, reason="not_found")
-            if alert.status == AlertStatus.RESOLVED:
+            if row.status == "resolved":
                 return EmitResult(emitted=False, reason="already_resolved", alert_id=alert_id)
-            alert.status = AlertStatus.ACKNOWLEDGED
-            alert.acknowledged_at = datetime.now(UTC)
-            alert.acknowledged_by = by
-            return EmitResult(emitted=True, alert_id=alert_id, alert=alert)
+            row.status = "acknowledged"
+            row.acknowledged_at = now
+            await self.session.flush()  # type: ignore[union-attr]
+            return EmitResult(emitted=True, alert_id=alert_id)
         except Exception:
             logger.exception("alert_acknowledge_failed", alert_id=str(alert_id))
             return EmitResult(emitted=False, reason="error")
@@ -176,14 +187,87 @@ class AlertService:
     async def resolve(self, alert_id: UUID) -> EmitResult:
         try:
             alert = self._alerts.get(alert_id)
-            if alert is None:
+            now = datetime.now(UTC)
+            if alert is not None:
+                alert.status = AlertStatus.RESOLVED
+                alert.resolved_at = now
+                await self._update_db_status(alert_id, status="resolved", resolved_at=now)
+                return EmitResult(emitted=True, alert_id=alert_id, alert=alert)
+
+            row = await self._load_db_alert(alert_id)
+            if row is None:
                 return EmitResult(emitted=False, reason="not_found")
-            alert.status = AlertStatus.RESOLVED
-            alert.resolved_at = datetime.now(UTC)
-            return EmitResult(emitted=True, alert_id=alert_id, alert=alert)
+            if row.status == "resolved":
+                return EmitResult(emitted=False, reason="already_resolved", alert_id=alert_id)
+            row.status = "resolved"
+            row.resolved_at = now
+            await self.session.flush()  # type: ignore[union-attr]
+            return EmitResult(emitted=True, alert_id=alert_id)
         except Exception:
             logger.exception("alert_resolve_failed", alert_id=str(alert_id))
             return EmitResult(emitted=False, reason="error")
+
+    async def resolve_by_code(self, code: str) -> int:
+        """Resolve all active in-memory + DB alerts with the given code."""
+        now = datetime.now(UTC)
+        count = 0
+        for alert in list(self._alerts.values()):
+            if alert.code == code and alert.status in {AlertStatus.ACTIVE, AlertStatus.ACKNOWLEDGED}:
+                alert.status = AlertStatus.RESOLVED
+                alert.resolved_at = now
+                count += 1
+        if self.session is not None and AlertRecordModel is not None:
+            try:
+                from sqlalchemy import select
+
+                rows = list(
+                    (
+                        await self.session.execute(
+                            select(AlertRecordModel).where(
+                                AlertRecordModel.alert_type == code,
+                                AlertRecordModel.status.in_(["active", "acknowledged"]),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for row in rows:
+                    row.status = "resolved"
+                    row.resolved_at = now
+                    count += 1
+                if rows:
+                    await self.session.flush()
+            except Exception:
+                logger.exception("alert_resolve_by_code_db_failed", code=code)
+        return count
+
+    async def _load_db_alert(self, alert_id: UUID) -> Any:
+        if self.session is None or AlertRecordModel is None:
+            return None
+        try:
+            return await self.session.get(AlertRecordModel, alert_id)
+        except Exception:
+            logger.exception("alert_db_load_failed", alert_id=str(alert_id))
+            return None
+
+    async def _update_db_status(
+        self,
+        alert_id: UUID,
+        *,
+        status: str,
+        acknowledged_at: datetime | None = None,
+        resolved_at: datetime | None = None,
+    ) -> None:
+        row = await self._load_db_alert(alert_id)
+        if row is None:
+            return
+        row.status = status
+        if acknowledged_at is not None:
+            row.acknowledged_at = acknowledged_at
+        if resolved_at is not None:
+            row.resolved_at = resolved_at
+        await self.session.flush()  # type: ignore[union-attr]
 
     async def list_alerts(
         self,

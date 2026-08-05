@@ -198,8 +198,13 @@ async def operations_emergency_clear(
 ) -> dict[str, Any]:
     snap = trading_controls.clear_emergency()
     await persist_trading_controls(session, trading_controls, changed_by="operations")
+    from app.alerts.ops import resolve_alerts_by_code
+
+    resolved = await resolve_alerts_by_code(
+        session, get_settings(), code="trading.emergency_stop"
+    )
     await session.commit()
-    return {"state": snap.state.value}
+    return {"state": snap.state.value, "alerts_resolved": resolved}
 
 
 @router.post("/operations/recovery")

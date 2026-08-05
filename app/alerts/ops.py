@@ -159,3 +159,51 @@ async def emit_monitor_emergency_alert(
     except Exception:  # noqa: BLE001
         logger.exception("ops_alert_monitor_emergency_failed", symbol=sym)
         return None
+
+
+async def emit_overnight_review_alert(
+    session: AsyncSession | None,
+    settings: Settings | None = None,
+    *,
+    reviews: list[dict[str, Any]],
+    session_date: str = "",
+) -> EmitResult | None:
+    """WARNING when overnight review flags leftovers or manual review."""
+    flagged = [
+        r
+        for r in reviews
+        if str(r.get("status") or "")
+        in {"MANUAL_REVIEW_REQUIRED", "CLOSE_BEFORE_MARKET_CLOSE", "OVERNIGHT_APPROVED_WITH_REDUCTION"}
+    ]
+    if not flagged:
+        return None
+    cfg = settings or get_settings()
+    critical = any(r.get("status") == "MANUAL_REVIEW_REQUIRED" for r in flagged)
+    try:
+        return await AlertService(session, settings=cfg).emit(
+            code="trading.overnight_review",
+            message=f"Overnight review: {len(flagged)} position(s) need attention"
+            + (f" ({session_date})" if session_date else ""),
+            severity=AlertSeverity.CRITICAL if critical else AlertSeverity.WARNING,
+            source="overnight_review",
+            context={"session_date": session_date, "flagged": flagged[:20]},
+            dedupe_key=f"overnight_review:{session_date or 'today'}",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("ops_alert_overnight_failed")
+        return None
+
+
+async def resolve_alerts_by_code(
+    session: AsyncSession | None,
+    settings: Settings | None = None,
+    *,
+    code: str,
+) -> int:
+    """Resolve active alerts matching ``code`` (in-memory + DB)."""
+    cfg = settings or get_settings()
+    try:
+        return await AlertService(session, settings=cfg).resolve_by_code(code)
+    except Exception:  # noqa: BLE001
+        logger.exception("ops_alert_resolve_by_code_failed", code=code)
+        return 0

@@ -9,7 +9,7 @@
 
 | Tab | Data sources | UI |
 |-----|----------------|-----|
-| Overview | `/dashboard/summary` | US session, LLM budget panel, universe, force-close, settlement/recon, startup recovery, active alerts, monitor, reeval cadence, session jobs, agent lamps |
+| Overview | `/dashboard/summary` | US session, LLM budget panel, universe, force-close, settlement/recon/overnight, startup recovery, active alerts (ack/resolve), monitor, reeval cadence, session jobs, agent lamps |
 | Performance | `/performance/*` | Metric KPIs, holdings / drawdown tables, Raw JSON toggle |
 | Agents | `/performance/agents`, `/calibration`, `/decisions` | Accuracy KPIs, calibration bars, eval table |
 | Operations | `/operations/metrics`, `/alerts`, `/readiness`, `/simulations` | Ops KPIs, readiness checklist, sim table |
@@ -29,5 +29,4 @@ Each non-Overview panel keeps a collapsed **Raw JSON** details block for debuggi
 ## Not supported
 
 - Authentication / RBAC
-- Write actions for alerts acknowledge from UI (use API/CLI)
 - Embedded Prometheus graphs (use `/metrics` scrape target)

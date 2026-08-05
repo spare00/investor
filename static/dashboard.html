@@ -396,6 +396,7 @@
         <div id="settlementMeta" class="muted">Loading…</div>
         <div id="settlementDetail" style="margin-top:0.65rem"></div>
         <div id="reconDetail" style="margin-top:0.65rem"></div>
+        <div id="overnightDetail" style="margin-top:0.65rem"></div>
       </section>
       <section class="wide">
         <h2>Startup / Intraday Recovery</h2>
@@ -1075,11 +1076,16 @@
       const meta = document.getElementById("settlementMeta");
       const setEl = document.getElementById("settlementDetail");
       const reconEl = document.getElementById("reconDetail");
+      const overnightEl = document.getElementById("overnightDetail");
       if (!meta || !setEl || !reconEl) return;
       const settle = data.latest_settlement;
       const recon = data.latest_reconciliation;
+      const overnight = data.overnight_reviews || [];
       const wf = (data.market_status && data.market_status.workflow) || {};
       const pm = wf.postmarket_review || {};
+      const flagged = overnight.filter((o) =>
+        /MANUAL_REVIEW|CLOSE_BEFORE|WITH_REDUCTION/i.test(o.status || "")
+      );
       meta.innerHTML = [
         settle
           ? pill(`settle ${settle.session_date}`, "")
@@ -1089,12 +1095,15 @@
           : "",
         recon ? pill(`recon ${recon.result}`, /DRIFT|UNAVAILABLE/i.test(recon.result || "") ? "bad" : "good") : pill("no recon yet", "warn"),
         recon ? pill(recon.sync_type || "—", "") : "",
+        overnight.length
+          ? pill(`overnight ${overnight.length}`, flagged.length ? "warn" : "good")
+          : pill("no overnight review", "warn"),
         pm.performance ? pill(`perf evals ${pm.performance.decision_evaluations ?? 0}`, "good") : "",
         pm.settlement_error ? pill("settle err", "bad") : "",
       ].filter(Boolean).join(" ");
 
       if (settle) {
-        const overnight = (settle.overnight_positions || []).map((s) => pill(s, "warn")).join(" ") || `<span class="muted">none</span>`;
+        const overnightPos = (settle.overnight_positions || []).map((s) => pill(s, "warn")).join(" ") || `<span class="muted">none</span>`;
         const pnl = settle.pnl_summary || [];
         const prows = pnl.length
           ? pnl.map((p) => `<tr>
@@ -1106,7 +1115,7 @@
           : "";
         setEl.innerHTML =
           `<div class="muted" style="margin-bottom:0.35rem">Settlement · ${esc(fmtWhen(settle.created_at))} · orders ${esc(settle.order_count)} · fills ${esc(settle.execution_count)}</div>` +
-          `<div style="margin-bottom:0.5rem"><span class="muted">Overnight </span>${overnight}</div>` +
+          `<div style="margin-bottom:0.5rem"><span class="muted">Overnight </span>${overnightPos}</div>` +
           dataTable(["Symbol", "Realized", "Unrealized", "Flag"], prows, 4);
       } else {
         setEl.innerHTML = `<div class="muted">No postmarket settlement row yet</div>`;
@@ -1126,6 +1135,25 @@
           dataTable(["Type", "Broker id", "Detail"], irows, 3);
       } else {
         reconEl.innerHTML = `<div class="muted">No reconciliation run yet</div>`;
+      }
+
+      if (overnightEl) {
+        if (!overnight.length) {
+          overnightEl.innerHTML = `<div class="muted">No overnight reviews yet</div>`;
+        } else {
+          const orows = overnight.map((o) => {
+            const bad = /MANUAL_REVIEW|CLOSE_BEFORE/i.test(o.status || "");
+            return `<tr>
+              <td class="mono">${esc(o.symbol)}</td>
+              <td>${pill(o.status || "—", bad ? "bad" : /REDUCTION/i.test(o.status || "") ? "warn" : "good")}</td>
+              <td class="muted">${esc((o.reasons || []).join(", "))}</td>
+              <td class="muted">${esc(o.valid_for_session_date || "")}</td>
+            </tr>`;
+          }).join("");
+          overnightEl.innerHTML =
+            `<div class="muted" style="margin-bottom:0.35rem">Overnight reviews</div>` +
+            dataTable(["Symbol", "Status", "Reasons", "Valid for"], orows, 4);
+        }
       }
     }
 
@@ -1178,8 +1206,38 @@
           <td class="mono">${esc(a.code || "")}</td>
           <td>${esc(a.message || "")}</td>
           <td class="muted">${esc(fmtWhen(a.detected_at))}</td>
+          <td>
+            <button type="button" style="font-size:0.75rem;padding:0.15rem 0.4rem;margin-right:0.25rem"
+              onclick="ackAlert('${esc(a.id)}')">Ack</button>
+            <button type="button" style="font-size:0.75rem;padding:0.15rem 0.4rem"
+              onclick="resolveAlert('${esc(a.id)}')">Resolve</button>
+          </td>
         </tr>`).join("");
-      detail.innerHTML = dataTable(["Sev", "Code", "Message", "When"], rows, 4);
+      detail.innerHTML = dataTable(["Sev", "Code", "Message", "When", ""], rows, 5);
+    }
+
+    async function ackAlert(id) {
+      try {
+        const res = await fetch(`/operations/alerts/${id}/acknowledge`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ by: "overview" }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await refreshOverview();
+      } catch (e) {
+        console.warn("ackAlert", e);
+      }
+    }
+
+    async function resolveAlert(id) {
+      try {
+        const res = await fetch(`/operations/alerts/${id}/resolve`, { method: "POST" });
+        if (!res.ok) throw new Error(await res.text());
+        await refreshOverview();
+      } catch (e) {
+        console.warn("resolveAlert", e);
+      }
     }
 
     function renderMonitor(data) {

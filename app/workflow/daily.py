@@ -807,6 +807,29 @@ class DailyWorkflowService:
         closing_svc = await ClosingService(self.session, settings=self.settings).run_closing(
             in_closing_window=True
         )
+        overnight_payload: dict[str, Any] = {"reviews": []}
+        try:
+            from datetime import date as date_cls
+
+            from app.alerts.ops import emit_overnight_review_alert
+            from app.market.calendar import MarketCalendarService
+
+            session_day = date_cls.fromisoformat(run.session_date)
+            cal = MarketCalendarService(self.settings)
+            holiday_gap = cal.next_session_has_holiday_gap(session_day)
+            overnight_payload = await ClosingService(
+                self.session, settings=self.settings
+            ).overnight_review(next_session_holiday=holiday_gap)
+            overnight_payload["next_session_holiday"] = holiday_gap
+            await emit_overnight_review_alert(
+                self.session,
+                self.settings,
+                reviews=list(overnight_payload.get("reviews") or []),
+                session_date=run.session_date,
+            )
+        except Exception as exc:  # noqa: BLE001
+            overnight_payload = {"error": str(exc)[:240], "reviews": []}
+
         # Legacy policy shape for callers that only pass explicit positions.
         legacy = self.closing.decide(
             as_of=now,
@@ -824,6 +847,7 @@ class DailyWorkflowService:
             "broker_orders_submitted": bool(closing_svc.get("broker_orders_submitted")),
             "orders_submitted": int(closing_svc.get("orders_submitted") or 0),
             "review_id": closing_svc.get("review_id"),
+            "overnight_review": overnight_payload,
             "broker_orders_allowed": False,
         }
         meta = dict(run.metadata_json or {})
@@ -877,6 +901,30 @@ class DailyWorkflowService:
         }
 
         # Settlement + light performance eval (fail-soft; never block session complete).
+        try:
+            from app.alerts.ops import emit_overnight_review_alert
+            from app.intraday.closing import ClosingService
+            from app.market.calendar import MarketCalendarService
+            from datetime import date as date_cls
+
+            session_day = date_cls.fromisoformat(run.session_date)
+            holiday_gap = MarketCalendarService(self.settings).next_session_has_holiday_gap(
+                session_day
+            )
+            overnight = await ClosingService(self.session, settings=self.settings).overnight_review(
+                next_session_holiday=holiday_gap
+            )
+            overnight["next_session_holiday"] = holiday_gap
+            review["overnight_review"] = overnight
+            await emit_overnight_review_alert(
+                self.session,
+                self.settings,
+                reviews=list(overnight.get("reviews") or []),
+                session_date=run.session_date,
+            )
+        except Exception as exc:  # noqa: BLE001
+            review["overnight_review_error"] = str(exc)[:240]
+
         try:
             from app.intraday.settlement import SettlementService
 

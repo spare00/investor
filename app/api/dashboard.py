@@ -35,6 +35,7 @@ from app.models import (
     NewsItem,
     Order,
     OrderIntent,
+    OvernightReview,
     PortfolioSnapshot,
     Position,
     PositionLifecycle,
@@ -534,6 +535,33 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     except Exception:  # noqa: BLE001
         active_alerts = []
 
+    overnight_reviews: list[dict[str, Any]] = []
+    try:
+        orows = list(
+            (
+                await session.execute(
+                    select(OvernightReview)
+                    .order_by(desc(OvernightReview.created_at))
+                    .limit(12)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for o in orows:
+            overnight_reviews.append(
+                {
+                    "id": str(o.id),
+                    "symbol": o.symbol,
+                    "status": o.status,
+                    "reasons": o.reasons or [],
+                    "valid_for_session_date": o.valid_for_session_date,
+                    "created_at": o.created_at.isoformat() if o.created_at else None,
+                }
+            )
+    except Exception:  # noqa: BLE001
+        overnight_reviews = []
+
     closing_intents: list[dict[str, Any]] = []
     try:
         irows = list(
@@ -614,6 +642,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
         "latest_reconciliation": latest_reconciliation,
         "latest_recovery": latest_recovery,
         "active_alerts": active_alerts,
+        "overnight_reviews": overnight_reviews,
         "closing_intents": closing_intents,
         "portfolio": None
         if snap is None

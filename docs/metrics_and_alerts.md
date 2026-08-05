@@ -28,9 +28,12 @@ Providers: `log` (default), `fake`, `email`, `webhook`.
 | `trading.emergency_stop` | Emergency stop API / ops / intraday recovery restore |
 | `trading.hard_stop` | Hard stop exit intent created (dedupe per symbol/day) |
 | `trading.monitor_emergency` | Monitor verdict `EMERGENCY_ACTION_REQUIRED` |
+| `trading.overnight_review` | Overnight review flags leftovers / manual review |
 | `recon.material_drift` / `recon.broker_unavailable` / `recon.local_state_invalid` | Scheduled recon, recovery recon |
 | `llm.budget_exhausted` | Billable LLM call blocked by budget |
 | `llm.budget_soft_limit` | Soft % of daily/monthly budget hit |
+
+Clearing emergency stop auto-resolves open `trading.emergency_stop` alerts. Overview Ack/Resolve updates `operational_alerts` via `/operations/alerts/{id}/acknowledge|resolve`.
 
 Helpers live in `app/alerts/ops.py` (dedupe + cooldown via `AlertService`).
 

@@ -136,12 +136,15 @@ def test_dashboard_routes_exist() -> None:
     assert "latest_reconciliation" in body
     assert "latest_recovery" in body
     assert "active_alerts" in body
+    assert "overnight_reviews" in body
     assert "session_jobs" in body
     assert "universe" in body
     assert b"renderMonitor" in dash.content
     assert b"renderSettlement" in dash.content
     assert b"renderRecovery" in dash.content
     assert b"renderActiveAlerts" in dash.content
+    assert b"ackAlert" in dash.content
+    assert b"overnightDetail" in dash.content
     assert b"renderLlmBudgetPanel" in dash.content
     assert b"Startup / Intraday Recovery" in dash.content
     assert b"Active Alerts" in dash.content
