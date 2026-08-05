@@ -9,6 +9,7 @@ from app.intraday.events import IntradayEventBus
 from app.universe.reeval import (
     global_reeval_gap_minutes,
     min_reeval_seconds_for_symbols,
+    planned_intraday_interval_minutes,
     reeval_seconds_for_horizon,
     symbol_reeval_gap_minutes,
 )
@@ -19,6 +20,16 @@ def test_scalp_reeval_faster_than_medium() -> None:
     assert reeval_seconds_for_horizon("scalp", settings) == 120
     assert reeval_seconds_for_horizon("medium", settings) == 3600
     assert reeval_seconds_for_horizon(None, settings) == 300
+
+
+def test_planned_interval_follows_tightest_watchlist_horizon() -> None:
+    settings = Settings(intraday_reevaluation_interval_minutes=20)
+    assert planned_intraday_interval_minutes([], settings) == 20
+    assert planned_intraday_interval_minutes(None, settings) == 20
+    assert planned_intraday_interval_minutes(["medium"], settings) == 60
+    assert planned_intraday_interval_minutes(["short"], settings) == 15
+    assert planned_intraday_interval_minutes(["day"], settings) == 5
+    assert planned_intraday_interval_minutes(["scalp", "medium"], settings) == 2
 
 
 def test_min_among_open_books_picks_tightest() -> None:

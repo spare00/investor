@@ -100,6 +100,25 @@ async def test_prepare_trading_day_plans_jobs(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSession) -> None:
+    """Seeded allowlist includes scalp (SPY/QQQ) → ~2m intraday_eval spacing."""
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-03")
+    jobs = await svc.planned_jobs("2026-08-03")
+    intra = [j for j in jobs if j["job_key"].startswith("intraday_eval_")]
+    assert len(intra) >= 2
+    t0 = datetime.fromisoformat(intra[0]["planned_at"])
+    t1 = datetime.fromisoformat(intra[1]["planned_at"])
+    if t0.tzinfo is None:
+        t0 = t0.replace(tzinfo=UTC)
+    if t1.tzinfo is None:
+        t1 = t1.replace(tzinfo=UTC)
+    assert (t1 - t0) == timedelta(minutes=2)
+    # Coarser than legacy 20m fixed spacing
+    assert len(intra) > 15
+
+
+@pytest.mark.asyncio
 async def test_early_close_job_uses_session_close(session: AsyncSession) -> None:
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-11-27")

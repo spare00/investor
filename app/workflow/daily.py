@@ -791,13 +791,21 @@ class DailyWorkflowService:
                 close_t + timedelta(minutes=cfg.postmarket_review_minutes_after_close),
             ),
         ]
-        # Intraday interval jobs
-        cursor = open_t + timedelta(minutes=cfg.intraday_reevaluation_interval_minutes)
+        # Intraday interval jobs — denser when watchlist includes scalp/day books.
+        try:
+            from app.universe.reeval import planned_intraday_interval_minutes
+            from app.universe.service import UniverseService
+
+            hz_map = await UniverseService(self.session, settings=cfg).horizon_by_symbol()
+            interval_min = planned_intraday_interval_minutes(list(hz_map.values()), cfg)
+        except Exception:  # noqa: BLE001
+            interval_min = max(1, int(cfg.intraday_reevaluation_interval_minutes))
+        cursor = open_t + timedelta(minutes=interval_min)
         end = close_t - timedelta(minutes=cfg.closing_window_minutes_before_close)
         idx = 0
         while cursor < end:
             plans.append((f"intraday_eval_{idx}", cursor))
-            cursor += timedelta(minutes=cfg.intraday_reevaluation_interval_minutes)
+            cursor += timedelta(minutes=interval_min)
             idx += 1
 
         for key, planned in plans:
@@ -811,6 +819,9 @@ class DailyWorkflowService:
             ).scalar_one_or_none()
             if existing:
                 continue
+            meta: dict[str, Any] = {}
+            if str(key).startswith("intraday_eval"):
+                meta["interval_minutes"] = interval_min
             self.session.add(
                 ScheduledJobRecord(
                     id=uuid4(),
@@ -819,7 +830,7 @@ class DailyWorkflowService:
                     planned_at=planned.astimezone(UTC),
                     status="planned",
                     workflow_run_id=run.id,
-                    metadata_json={},
+                    metadata_json=meta,
                 )
             )
         await self.session.flush()

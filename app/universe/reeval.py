@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from app.core.config import Settings
 from app.universe.horizons import policy_for
 
@@ -47,3 +49,21 @@ def global_reeval_gap_minutes(
 ) -> float:
     """Global cooldown = tightest book among symbols under review."""
     return max(1.0, min_reeval_seconds_for_symbols(symbols, horizon_by_symbol, settings) / 60.0)
+
+
+def planned_intraday_interval_minutes(
+    horizons: list[str] | None,
+    settings: Settings,
+) -> int:
+    """Minutes between planned ``intraday_eval_*`` scheduler jobs.
+
+    Uses the tightest active-watchlist horizon so scalp/day books get denser
+    ticks; falls back to ``intraday_reevaluation_interval_minutes`` when empty.
+    Runtime cooldowns still skip early runs when open books are slower.
+    """
+    fallback = max(1, int(settings.intraday_reevaluation_interval_minutes))
+    cleaned = [h for h in (horizons or []) if h]
+    if not cleaned:
+        return fallback
+    secs = min(reeval_seconds_for_horizon(h, settings) for h in cleaned)
+    return max(1, int(math.ceil(secs / 60.0)))
