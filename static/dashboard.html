@@ -231,13 +231,56 @@
     .agent-card { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem; background: #121820; min-height: 110px; }
     .agent-card h3 { margin: 0 0 0.4rem; font-size: 0.85rem; }
     .muted { color: var(--muted); font-size: 0.8rem; }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 0.65rem;
+    }
+    .kpi {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.55rem 0.65rem;
+      background: #121820;
+      min-height: 64px;
+    }
+    .kpi .k { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .kpi .v { font-family: "IBM Plex Mono", monospace; font-size: 1.15rem; margin-top: 0.2rem; }
+    .kpi .s { font-size: 0.68rem; color: var(--muted); margin-top: 0.15rem; }
+    .kpi.good .v { color: var(--good); }
+    .kpi.warn .v { color: var(--warn); }
+    .kpi.bad .v { color: var(--bad); }
+    .check-list { list-style: none; padding: 0; margin: 0; }
+    .check-list li {
+      display: flex; gap: 0.5rem; align-items: flex-start;
+      padding: 0.35rem 0; border-bottom: 1px solid var(--line); font-size: 0.85rem;
+    }
+    .check-list li:last-child { border-bottom: none; }
+    .flag {
+      flex: 0 0 auto; width: 1.1rem; text-align: center;
+      font-family: "IBM Plex Mono", monospace; font-weight: 600;
+    }
+    .flag.ok { color: var(--good); }
+    .flag.no { color: var(--bad); }
+    .bar-row { display: flex; align-items: center; gap: 0.5rem; margin: 0.35rem 0; font-size: 0.8rem; }
+    .bar-row .lab { width: 4.5rem; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+    .bar-track {
+      flex: 1; height: 8px; border-radius: 999px; background: #121820; border: 1px solid var(--line); overflow: hidden;
+    }
+    .bar-track > i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+    .bar-track > i.acc { background: var(--good); }
+    .raw-toggle { margin-top: 0.65rem; }
+    .raw-toggle summary {
+      cursor: pointer; color: var(--muted); font-size: 0.72rem;
+      text-transform: uppercase; letter-spacing: 0.06em; user-select: none;
+    }
+    .raw-toggle[open] summary { margin-bottom: 0.35rem; }
     pre {
       white-space: pre-wrap;
       word-break: break-word;
       font-family: "IBM Plex Mono", monospace;
       font-size: 0.72rem;
       color: var(--muted);
-      max-height: 200px;
+      max-height: 220px;
       overflow: auto;
       margin: 0.4rem 0 0;
     }
@@ -338,49 +381,49 @@
     <div id="panel-performance" class="tab-panel">
       <section class="wide">
         <h2>Portfolio Performance</h2>
-        <pre id="perfPortfolio">Loading…</pre>
+        <div id="perfPortfolio" class="muted">Loading…</div>
       </section>
       <section>
         <h2>Returns</h2>
-        <pre id="perfReturns">Loading…</pre>
+        <div id="perfReturns" class="muted">Loading…</div>
       </section>
       <section>
         <h2>Risk Metrics</h2>
-        <pre id="perfRisk">Loading…</pre>
+        <div id="perfRisk" class="muted">Loading…</div>
       </section>
       <section class="wide">
         <h2>Drawdowns</h2>
-        <pre id="perfDrawdowns">Loading…</pre>
+        <div id="perfDrawdowns" class="muted">Loading…</div>
       </section>
       <section>
         <h2>Trade Metrics</h2>
-        <pre id="perfTrades">Loading…</pre>
+        <div id="perfTrades" class="muted">Loading…</div>
       </section>
       <section>
         <h2>Execution Quality</h2>
-        <pre id="perfExecution">Loading…</pre>
+        <div id="perfExecution" class="muted">Loading…</div>
       </section>
     </div>
 
     <div id="panel-agents" class="tab-panel">
       <section class="wide">
         <h2>Agent Attribution</h2>
-        <pre id="agentPerf">Loading…</pre>
+        <div id="agentPerf" class="muted">Loading…</div>
       </section>
       <section>
         <h2>Calibration</h2>
-        <pre id="agentCalibration">Loading…</pre>
+        <div id="agentCalibration" class="muted">Loading…</div>
       </section>
       <section class="wide">
         <h2>Decision Evaluations</h2>
-        <pre id="decisionEval">Loading…</pre>
+        <div id="decisionEval" class="muted">Loading…</div>
       </section>
     </div>
 
     <div id="panel-operations" class="tab-panel">
       <section class="wide">
         <h2>Operational KPIs</h2>
-        <pre id="opsMetrics">Loading…</pre>
+        <div id="opsMetrics" class="muted">Loading…</div>
       </section>
       <section>
         <h2>Alerts</h2>
@@ -388,26 +431,26 @@
       </section>
       <section>
         <h2>Readiness Gate</h2>
-        <pre id="opsReadiness">Loading…</pre>
+        <div id="opsReadiness" class="muted">Loading…</div>
       </section>
       <section class="wide">
         <h2>Simulations</h2>
-        <pre id="opsSimulations">Loading…</pre>
+        <div id="opsSimulations" class="muted">Loading…</div>
       </section>
     </div>
 
     <div id="panel-audit" class="tab-panel">
       <section class="wide">
         <h2>System Status</h2>
-        <pre id="auditStatus">Loading…</pre>
+        <div id="auditStatus" class="muted">Loading…</div>
       </section>
       <section>
         <h2>Health</h2>
-        <pre id="auditHealth">Loading…</pre>
+        <div id="auditHealth" class="muted">Loading…</div>
       </section>
       <section class="wide">
         <h2>Recent Decisions (audit trail)</h2>
-        <pre id="auditDecisions">Loading…</pre>
+        <div id="auditDecisions" class="muted">Loading…</div>
       </section>
     </div>
   </main>
@@ -502,6 +545,129 @@
       if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
       if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k`;
       return String(v);
+    }
+
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"']/g, (c) => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+      ));
+    }
+
+    function metricVal(m) {
+      if (m == null) return null;
+      if (typeof m === "number") return Number.isFinite(m) ? m : null;
+      if (typeof m === "object" && "value" in m) {
+        const v = m.value;
+        return v == null || !Number.isFinite(Number(v)) ? null : Number(v);
+      }
+      return null;
+    }
+
+    function metricStatus(m) {
+      if (m == null) return "UNAVAILABLE";
+      if (typeof m === "object" && m.status) return String(m.status);
+      return "AVAILABLE";
+    }
+
+    function fmtNum(v, digits = 2) {
+      if (v == null || !Number.isFinite(Number(v))) return "—";
+      return Number(v).toLocaleString(undefined, {
+        maximumFractionDigits: digits,
+        minimumFractionDigits: 0,
+      });
+    }
+
+    function fmtMoney(v, digits = 2) {
+      if (v == null || !Number.isFinite(Number(v))) return "—";
+      return `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: digits })}`;
+    }
+
+    /** Ratios (≤ ~1.5 abs) → percent; already-large values left as-is. */
+    function fmtPct(v, digits = 2) {
+      if (v == null || !Number.isFinite(Number(v))) return "—";
+      const n = Number(v);
+      const pct = Math.abs(n) <= 1.5 ? n * 100 : n;
+      return `${pct.toFixed(digits)}%`;
+    }
+
+    function fmtWhen(iso) {
+      if (!iso) return "—";
+      const s = String(iso);
+      return s.length > 19 ? s.slice(0, 19).replace("T", " ") : s.replace("T", " ");
+    }
+
+    function kpiTone(status, value, { higherGood } = {}) {
+      if (status && status !== "AVAILABLE") return "";
+      if (value == null) return "";
+      if (higherGood === true) return value >= 0 ? "good" : "bad";
+      if (higherGood === false) return value <= 0 ? "good" : "bad";
+      return "";
+    }
+
+    function kpiCard(label, display, { tone = "", sub = "" } = {}) {
+      return `<div class="kpi ${tone}">
+        <div class="k">${esc(label)}</div>
+        <div class="v">${esc(display)}</div>
+        ${sub ? `<div class="s">${esc(sub)}</div>` : ""}
+      </div>`;
+    }
+
+    function kpiFromMetric(label, m, { format = "num", digits = 2, higherGood } = {}) {
+      const v = metricVal(m);
+      const st = metricStatus(m);
+      let display = "—";
+      if (v != null && st === "AVAILABLE") {
+        if (format === "pct") display = fmtPct(v, digits);
+        else if (format === "money") display = fmtMoney(v, digits);
+        else display = fmtNum(v, digits);
+      } else if (st && st !== "AVAILABLE") {
+        display = "—";
+      }
+      const sub = st && st !== "AVAILABLE" ? st.toLowerCase().replaceAll("_", " ") : "";
+      return kpiCard(label, display, { tone: kpiTone(st, v, { higherGood }), sub });
+    }
+
+    function kpiGrid(cards) {
+      return `<div class="kpi-grid">${cards.join("")}</div>`;
+    }
+
+    function dataTable(headers, rowsHtml, emptyCols) {
+      if (!rowsHtml) {
+        return `<table><thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+          <tbody><tr><td colspan="${emptyCols || headers.length}" class="muted">None</td></tr></tbody></table>`;
+      }
+      return `<table><thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+        <tbody>${rowsHtml}</tbody></table>`;
+    }
+
+    function rawBlock(obj) {
+      return `<details class="raw-toggle"><summary>Raw JSON</summary>
+        <pre>${esc(JSON.stringify(obj, null, 2))}</pre></details>`;
+    }
+
+    function renderMount(id, html) {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    }
+
+    function calibBars(buckets) {
+      if (!buckets || !buckets.length) return `<div class="muted">No calibration buckets</div>`;
+      return buckets.map((b) => {
+        const acc = b.accuracy != null ? Number(b.accuracy) : null;
+        const conf = b.avg_confidence != null ? Number(b.avg_confidence) : null;
+        const wAcc = acc != null ? Math.max(0, Math.min(100, acc * 100)) : 0;
+        const wConf = conf != null ? Math.max(0, Math.min(100, conf * 100)) : 0;
+        return `<div class="bar-row">
+          <div class="lab">${esc(b.range || "?")}</div>
+          <div class="bar-track" title="confidence ${conf != null ? fmtPct(conf) : "—"}">
+            <i style="width:${wConf}%"></i>
+          </div>
+          <div class="bar-track" title="accuracy ${acc != null ? fmtPct(acc) : "—"}">
+            <i class="acc" style="width:${wAcc}%"></i>
+          </div>
+          <div class="muted mono" style="min-width:4rem">${b.count ?? 0}</div>
+        </div>`;
+      }).join("") + `<div class="muted" style="margin-top:0.35rem">Bars: confidence (blue) · accuracy (green)</div>`;
     }
 
     function renderAgentLamps(lamps, agents) {
@@ -599,11 +765,23 @@
       }
       const cio = data.cio;
       if (cio) {
+        const actions = cio.payload?.symbol_actions || [];
+        const actionRows = actions.length
+          ? actions.map((a) => {
+              const sym = a.symbol || a.ticker || "—";
+              const act = a.action || a.side || a.recommendation || "—";
+              const qty = a.quantity ?? a.qty ?? a.target_weight ?? "—";
+              const note = a.rationale || a.reason || a.notes || "";
+              return `<tr><td>${esc(sym)}</td><td>${esc(act)}</td><td>${esc(qty)}</td><td class="muted">${esc(note)}</td></tr>`;
+            }).join("")
+          : "";
         document.getElementById("cio").innerHTML = `
-          <div class="stat" style="font-size:1.2rem">${cio.portfolio_action}</div>
+          <div class="stat" style="font-size:1.2rem">${esc(cio.portfolio_action)}</div>
           <div>${pill(cio.market_regime, "")} ${pill(cio.risk_approval ? "risk approved" : "risk blocked", cio.risk_approval ? "good" : "bad")}</div>
-          <div class="muted" style="margin-top:0.4rem">${cio.timestamp}</div>
-          <pre>${JSON.stringify(cio.payload?.symbol_actions || [], null, 2)}</pre>`;
+          <div class="muted" style="margin-top:0.4rem">${esc(cio.timestamp)}</div>
+          ${actions.length
+            ? dataTable(["Symbol", "Action", "Qty / Wt", "Note"], actionRows)
+            : `<div class="muted" style="margin-top:0.4rem">No symbol actions</div>`}`;
       }
       document.getElementById("jobs").innerHTML = (data.next_jobs || []).length
         ? data.next_jobs.map(j => `<li class="mono">${j.id}: ${j.next_run_time || "n/a"}</li>`).join("")
@@ -646,12 +824,95 @@
         fetchJson("/performance/trades"),
         fetchJson("/performance/execution"),
       ]);
-      document.getElementById("perfPortfolio").textContent = JSON.stringify(portfolio, null, 2);
-      document.getElementById("perfReturns").textContent = JSON.stringify(returns, null, 2);
-      document.getElementById("perfRisk").textContent = JSON.stringify(risk, null, 2);
-      document.getElementById("perfDrawdowns").textContent = JSON.stringify(drawdowns, null, 2);
-      document.getElementById("perfTrades").textContent = JSON.stringify(trades, null, 2);
-      document.getElementById("perfExecution").textContent = JSON.stringify(execution, null, 2);
+
+      const val = portfolio.valuation || {};
+      const positions = val.positions || [];
+      const posRows = positions.length
+        ? positions.slice(0, 20).map((p) => `<tr>
+            <td>${esc(p.symbol)}</td><td>${esc(p.side || "—")}</td>
+            <td>${esc(fmtNum(p.quantity, 4))}</td><td>${esc(fmtMoney(p.market_value))}</td>
+            <td>${esc(fmtMoney(p.cost_basis))}</td></tr>`).join("")
+        : "";
+      renderMount("perfPortfolio", `
+        ${kpiGrid([
+          kpiCard("Equity", fmtMoney(val.equity)),
+          kpiCard("Cash", fmtMoney(val.cash)),
+          kpiCard("Gross exp.", fmtMoney(val.gross_exposure)),
+          kpiCard("Net exp.", fmtMoney(val.net_exposure)),
+          kpiFromMetric("Abs. return", portfolio.absolute_return, { format: "pct", higherGood: true }),
+          kpiCard("Equity pts", fmtNum(portfolio.equity_points, 0)),
+        ])}
+        <div class="muted" style="margin:0.65rem 0 0.35rem">As of ${esc(fmtWhen(val.as_of))}</div>
+        ${dataTable(["Symbol", "Side", "Qty", "Mkt value", "Cost"], posRows)}
+        ${rawBlock(portfolio)}`);
+
+      renderMount("perfReturns", `
+        ${kpiGrid([
+          kpiFromMetric("TWR", returns.time_weighted_return, { format: "pct", higherGood: true }),
+          kpiFromMetric("Excess", returns.excess_return, { format: "pct", higherGood: true }),
+          kpiFromMetric("Active", returns.active_return, { format: "pct", higherGood: true }),
+          kpiCard("Observations", fmtNum(returns.observation_count, 0)),
+        ])}
+        ${rawBlock(returns)}`);
+
+      renderMount("perfRisk", `
+        ${kpiGrid([
+          kpiFromMetric("Sharpe", risk.sharpe, { digits: 2, higherGood: true }),
+          kpiFromMetric("Sortino", risk.sortino, { digits: 2, higherGood: true }),
+          kpiFromMetric("Volatility", risk.volatility, { format: "pct" }),
+          kpiFromMetric("Max DD", risk.max_drawdown, { format: "pct", higherGood: false }),
+          kpiFromMetric("CAGR", risk.cagr, { format: "pct", higherGood: true }),
+          kpiFromMetric("Beta", risk.beta, { digits: 2 }),
+          kpiFromMetric("Alpha", risk.alpha, { format: "pct", higherGood: true }),
+          kpiFromMetric("Info ratio", risk.information_ratio, { digits: 2, higherGood: true }),
+        ])}
+        ${rawBlock(risk)}`);
+
+      const ddPeriods = drawdowns.periods || [];
+      const ddRows = ddPeriods.length
+        ? ddPeriods.slice(0, 12).map((p) => `<tr>
+            <td>${esc(fmtWhen(p.peak_at))}</td><td>${esc(fmtWhen(p.trough_at))}</td>
+            <td>${esc(fmtPct(p.drawdown_pct))}</td>
+            <td>${esc(fmtNum(p.duration_days, 0))}</td>
+            <td>${esc(p.recovery_days != null ? fmtNum(p.recovery_days, 0) : "—")}</td>
+            <td>${pill(p.status || "—", p.status === "RECOVERED" ? "good" : "warn")}</td>
+          </tr>`).join("")
+        : "";
+      renderMount("perfDrawdowns", `
+        ${kpiGrid([
+          kpiFromMetric("Current DD", drawdowns.current_drawdown, { format: "pct", higherGood: false }),
+          kpiFromMetric("Max DD", drawdowns.max_drawdown, { format: "pct", higherGood: false }),
+          kpiCard("Periods", fmtNum(ddPeriods.length, 0)),
+        ])}
+        <div style="margin-top:0.75rem">${dataTable(
+          ["Peak", "Trough", "DD", "Days", "Recovery", "Status"], ddRows)}</div>
+        ${rawBlock(drawdowns)}`);
+
+      renderMount("perfTrades", `
+        ${kpiGrid([
+          kpiCard("Trades", fmtNum(trades.trade_count, 0)),
+          kpiFromMetric("Win rate", trades.win_rate, { format: "pct", higherGood: true }),
+          kpiFromMetric("Expectancy", trades.expectancy, { format: "money", higherGood: true }),
+          kpiFromMetric("Profit factor", trades.profit_factor, { digits: 2, higherGood: true }),
+          kpiFromMetric("Avg R", trades.avg_r_multiple, { digits: 2, higherGood: true }),
+          kpiFromMetric("Payoff", trades.payoff_ratio, { digits: 2, higherGood: true }),
+          kpiFromMetric("Avg win", trades.avg_win, { format: "money", higherGood: true }),
+          kpiFromMetric("Avg loss", trades.avg_loss, { format: "money", higherGood: false }),
+        ])}
+        ${rawBlock(trades)}`);
+
+      renderMount("perfExecution", `
+        ${kpiGrid([
+          kpiFromMetric("Fill rate", execution.fill_rate, { format: "pct", higherGood: true }),
+          kpiFromMetric("Partial", execution.partial_rate, { format: "pct" }),
+          kpiFromMetric("Cancel", execution.cancel_rate, { format: "pct", higherGood: false }),
+          kpiFromMetric("Reject", execution.reject_rate, { format: "pct", higherGood: false }),
+          kpiFromMetric("Slippage bps", execution.slippage_bps, { digits: 1 }),
+          kpiFromMetric("Impl. shortfall", execution.implementation_shortfall, { format: "pct" }),
+          kpiFromMetric("Avg latency", execution.avg_latency_ms, { digits: 0 }),
+          kpiFromMetric("P95 latency", execution.p95_latency_ms, { digits: 0 }),
+        ])}
+        ${rawBlock(execution)}`);
     }
 
     async function refreshAgentsTab() {
@@ -660,9 +921,47 @@
         fetchJson("/performance/calibration"),
         fetchJson("/performance/decisions"),
       ]);
-      document.getElementById("agentPerf").textContent = JSON.stringify(agents, null, 2);
-      document.getElementById("agentCalibration").textContent = JSON.stringify(calibration, null, 2);
-      document.getElementById("decisionEval").textContent = JSON.stringify(decisions, null, 2);
+      const buckets = agents.calibration?.buckets || [];
+      renderMount("agentPerf", `
+        ${kpiGrid([
+          kpiFromMetric("Dir. accuracy", agents.directional_accuracy, { format: "pct", higherGood: true }),
+          kpiFromMetric("Brier", agents.brier_score, { digits: 3, higherGood: false }),
+          kpiFromMetric("Abstention", agents.abstention_rate, { format: "pct" }),
+          kpiCard("Abstentions", fmtNum(agents.abstention_count, 0)),
+          kpiFromMetric("Calib. gap", agents.calibration?.calibration_gap, { digits: 3 }),
+          kpiFromMetric("ECE", agents.calibration?.ece, { digits: 3, higherGood: false }),
+        ])}
+        <div style="margin-top:0.75rem">${calibBars(buckets)}</div>
+        ${rawBlock(agents)}`);
+
+      renderMount("agentCalibration", `
+        ${kpiGrid([
+          kpiFromMetric("Calib. gap", calibration.calibration_gap, { digits: 3 }),
+          kpiFromMetric("ECE", calibration.ece, { digits: 3, higherGood: false }),
+        ])}
+        <div class="muted" style="margin-top:0.5rem">Gap &gt; 0 → overconfident · ECE lower is better</div>
+        ${rawBlock(calibration)}`);
+
+      const evals = decisions.evaluations || [];
+      const evalRows = evals.length
+        ? evals.slice(0, 25).map((e) => {
+            const m = e.metrics || {};
+            const ok = m.directional_correct;
+            const okPill = ok === true ? pill("✓", "good") : ok === false ? pill("✗", "bad") : pill("—", "");
+            return `<tr>
+              <td class="mono">${esc(fmtWhen(e.evaluated_at))}</td>
+              <td>${esc(e.action || m.action || "—")}</td>
+              <td>${okPill}</td>
+              <td>${esc(fmtPct(m.realized_return))}</td>
+              <td>${esc(fmtPct(m.vs_benchmark))}</td>
+              <td>${esc(fmtNum(m.quality_score, 2))}</td>
+            </tr>`;
+          }).join("")
+        : "";
+      renderMount("decisionEval", `
+        <div class="muted" style="margin-bottom:0.5rem">${esc(fmtNum(decisions.count ?? evals.length, 0))} evaluations</div>
+        ${dataTable(["When", "Action", "Dir.", "Return", "vs Bench", "Quality"], evalRows)}
+        ${rawBlock(decisions)}`);
     }
 
     async function refreshOperations() {
@@ -672,12 +971,64 @@
         fetchJson("/operations/readiness"),
         fetchJson("/simulations"),
       ]);
-      document.getElementById("opsMetrics").textContent = JSON.stringify(metrics, null, 2);
+      const kpis = metrics.kpis || {};
+      const counters = metrics.counters || {};
+      renderMount("opsMetrics", `
+        ${kpiGrid([
+          kpiFromMetric("Job success", kpis.job_success_rate, { format: "pct", higherGood: true }),
+          kpiFromMetric("Job failure", kpis.job_failure_rate, { format: "pct", higherGood: false }),
+          kpiFromMetric("Workflow done", kpis.workflow_completion_rate, { format: "pct", higherGood: true }),
+          kpiFromMetric("Uptime", kpis.uptime_pct, { format: "pct", higherGood: true }),
+          kpiFromMetric("Alerts / hr", kpis.alert_rate_per_hour, { digits: 2 }),
+          kpiFromMetric("Manual rate", kpis.manual_intervention_rate, { format: "pct" }),
+        ])}
+        ${counters.note ? `<div class="muted" style="margin-top:0.55rem">${esc(counters.note)}</div>` : ""}
+        ${rawBlock(metrics)}`);
+
       document.getElementById("opsAlerts").innerHTML = (alerts.alerts || []).length
-        ? alerts.alerts.map(a => `<li>${pill(a.severity, a.severity === "critical" ? "bad" : "warn")} ${a.code}: ${a.message}</li>`).join("")
+        ? alerts.alerts.map((a) => `<li>
+            ${pill(a.severity, a.severity === "critical" ? "bad" : "warn")}
+            ${pill(a.status || "", "")}
+            <strong>${esc(a.code)}</strong>: ${esc(a.message)}
+            <div class="muted">${esc(fmtWhen(a.created_at))}</div>
+          </li>`).join("")
         : `<li class="muted">No active alerts</li>`;
-      document.getElementById("opsReadiness").textContent = JSON.stringify(readiness, null, 2);
-      document.getElementById("opsSimulations").textContent = JSON.stringify(sims, null, 2);
+
+      const checks = readiness.checks || [];
+      const gateOk = !!readiness.all_required_passed;
+      const checkLis = checks.length
+        ? checks.map((c) => `<li>
+            <span class="flag ${c.passed ? "ok" : "no"}">${c.passed ? "✓" : "✗"}</span>
+            <div>
+              <div>${esc(c.name)}${c.required_for ? ` ${pill(c.required_for, "")}` : ""}</div>
+              <div class="muted">${esc(c.detail || "")}</div>
+            </div>
+          </li>`).join("")
+        : `<li class="muted">No checks</li>`;
+      renderMount("opsReadiness", `
+        <div style="margin-bottom:0.55rem">
+          ${pill(readiness.current_gate || "—", gateOk ? "good" : "warn")}
+          ${pill(gateOk ? "required checks passed" : "checks incomplete", gateOk ? "good" : "bad")}
+          ${readiness.next_gate ? pill(`next ${readiness.next_gate}`, "") : ""}
+        </div>
+        <div class="muted" style="margin-bottom:0.55rem">${esc(readiness.live_blocked_reason || "")}</div>
+        <ul class="check-list">${checkLis}</ul>
+        ${rawBlock(readiness)}`);
+
+      const simList = sims.simulations || [];
+      const simRows = simList.length
+        ? simList.map((s) => `<tr>
+            <td>${esc(s.scenario)}</td>
+            <td>${esc(fmtNum(s.trading_days, 0))}</td>
+            <td>${esc(s.return_pct != null ? `${fmtNum(s.return_pct, 2)}%` : "—")}</td>
+            <td>${esc(s.max_drawdown != null ? `${fmtNum(s.max_drawdown, 2)}%` : "—")}</td>
+            <td>${pill(s.status || "—", s.status === "completed" || s.status === "COMPLETED" ? "good" : "")}</td>
+            <td class="muted">${esc(fmtWhen(s.created_at))}</td>
+          </tr>`).join("")
+        : "";
+      renderMount("opsSimulations", `
+        ${dataTable(["Scenario", "Days", "Return", "Max DD", "Status", "Created"], simRows)}
+        ${rawBlock(sims)}`);
     }
 
     async function refreshAudit() {
@@ -686,9 +1037,66 @@
         fetchJson("/health"),
         fetchJson("/decisions?limit=10"),
       ]);
-      document.getElementById("auditStatus").textContent = JSON.stringify(status, null, 2);
-      document.getElementById("auditHealth").textContent = JSON.stringify(health, null, 2);
-      document.getElementById("auditDecisions").textContent = JSON.stringify(decisions, null, 2);
+      const ts = status.trading_state;
+      const tsCls = ts === "active" ? "good" : ts === "paused" ? "warn" : "bad";
+      const risk = status.risk || {};
+      const jobs = status.next_jobs || [];
+      const budget = status.llm_budget || {};
+      renderMount("auditStatus", `
+        <div style="margin-bottom:0.55rem">
+          ${pill(ts || "—", tsCls)}
+          ${pill(status.trading_mode || "—", "")}
+          ${pill(status.new_orders_allowed ? "new orders ok" : "new orders blocked", status.new_orders_allowed ? "good" : "bad")}
+          ${pill(status.enable_scheduler ? "scheduler on" : "scheduler off", status.enable_scheduler ? "good" : "warn")}
+          ${pill(status.enable_broker_orders ? "broker orders on" : "broker orders off", status.enable_broker_orders ? "good" : "")}
+        </div>
+        ${kpiGrid([
+          kpiCard("Max position", risk.max_position_pct != null ? `${fmtNum(risk.max_position_pct, 1)}%` : "—"),
+          kpiCard("Min cash", risk.min_cash_pct != null ? `${fmtNum(risk.min_cash_pct, 1)}%` : "—"),
+          kpiCard("Daily max loss", risk.daily_max_loss_pct != null ? `${fmtNum(risk.daily_max_loss_pct, 1)}%` : "—"),
+          kpiCard("Max DD", risk.max_drawdown_pct != null ? `${fmtNum(risk.max_drawdown_pct, 1)}%` : "—"),
+        ])}
+        <div class="muted" style="margin:0.65rem 0 0.35rem">LLM · day ${esc(formatTokens(budget.total_tokens))} tok · ${esc(budget.calls ?? 0)} calls · month A$${esc(fmtNum(budget.month_aud_estimate, 2))}</div>
+        <div class="muted">Allowlist: ${esc((status.allowlist || []).join(", ") || "—")}</div>
+        <ul style="margin-top:0.55rem">${jobs.length
+          ? jobs.map((j) => `<li class="mono">${esc(j.id || j.name)}: ${esc(j.next_run_time || "n/a")}</li>`).join("")
+          : `<li class="muted">No scheduled jobs</li>`}</ul>
+        ${rawBlock(status)}`);
+
+      const ok = health.status === "ok";
+      renderMount("auditHealth", `
+        <div style="margin-bottom:0.55rem">
+          ${pill(health.status || "—", ok ? "good" : "bad")}
+          ${pill(`v${health.version || "?"}`, "")}
+          ${pill(health.env || "—", "")}
+          ${pill(health.phase != null ? `phase ${health.phase}` : "—", "")}
+        </div>
+        ${kpiGrid([
+          kpiCard("Mode", health.intraday_operation_mode || health.trading_mode || "—"),
+          kpiCard("Alpaca", health.alpaca_configured ? "configured" : "missing", { tone: health.alpaca_configured ? "good" : "warn" }),
+          kpiCard("Scheduler", health.enable_scheduler ? "on" : "off", { tone: health.enable_scheduler ? "good" : "" }),
+          kpiCard("Broker", health.broker_provider || "—"),
+          kpiCard("External data", health.enable_external_data ? "on" : "off"),
+          kpiCard("Live allowed", health.live_trading_allowed ? "yes" : "no", { tone: health.live_trading_allowed ? "warn" : "good" }),
+        ])}
+        ${rawBlock(health)}`);
+
+      const rows = decisions.decisions || [];
+      const decRows = rows.length
+        ? rows.map((d) => {
+            const when = d.display?.brisbane || d.display?.us_eastern || fmtWhen(d.timestamp);
+            return `<tr>
+              <td class="mono">${esc(when)}</td>
+              <td>${esc(d.market_regime || "—")}</td>
+              <td>${esc(d.portfolio_action || "—")}</td>
+              <td>${pill(d.risk_approval ? "approved" : "blocked", d.risk_approval ? "good" : "bad")}</td>
+              <td class="muted">${esc(d.reason_not_to_trade || "")}</td>
+            </tr>`;
+          }).join("")
+        : "";
+      renderMount("auditDecisions", `
+        ${dataTable(["When", "Regime", "Action", "Risk", "Reason"], decRows)}
+        ${rawBlock(decisions)}`);
     }
 
     async function refreshAll() {

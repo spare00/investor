@@ -115,6 +115,9 @@ def test_dashboard_routes_exist() -> None:
     dash = client.get("/dashboard")
     assert dash.status_code == 200
     assert b"Investor Ops" in dash.content
+    assert b"kpi-grid" in dash.content
+    assert b"function kpiFromMetric" in dash.content
+    assert b"Raw JSON" in dash.content
     metrics = client.get("/metrics")
     assert metrics.status_code == 200
     assert b"investor_" in metrics.content or b"python_" in metrics.content

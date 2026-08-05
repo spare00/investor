@@ -7,13 +7,15 @@
 
 ## Tabs
 
-| Tab | Data sources |
-|-----|----------------|
-| Overview | `/dashboard/summary` |
-| Performance | `/performance/*` |
-| Agents | `/performance/agents`, `/calibration`, `/decisions` |
-| Operations | `/operations/metrics`, `/alerts`, `/readiness`, `/simulations` |
-| Audit | `/status`, `/health`, `/decisions` |
+| Tab | Data sources | UI |
+|-----|----------------|-----|
+| Overview | `/dashboard/summary` | KPI cards, agent lamps, tables |
+| Performance | `/performance/*` | Metric KPIs, holdings / drawdown tables, Raw JSON toggle |
+| Agents | `/performance/agents`, `/calibration`, `/decisions` | Accuracy KPIs, calibration bars, eval table |
+| Operations | `/operations/metrics`, `/alerts`, `/readiness`, `/simulations` | Ops KPIs, readiness checklist, sim table |
+| Audit | `/status`, `/health`, `/decisions` | Status pills, risk caps, decision audit table |
+
+Each non-Overview panel keeps a collapsed **Raw JSON** details block for debugging.
 
 ## Safety
 

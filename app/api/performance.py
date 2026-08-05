@@ -123,10 +123,15 @@ async def performance_trades(
 async def performance_execution(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     rows = list((await session.execute(select(Order))).scalars().all())
     filled = [o for o in rows if o.status in {"filled", "partially_filled"}]
+    partial = [o for o in rows if o.status == "partially_filled"]
+    cancelled = [o for o in rows if o.status in {"canceled", "cancelled"}]
+    rejected = [o for o in rows if o.status == "rejected"]
     stats = {
-        "orders_total": len(rows),
-        "orders_filled": len(filled),
-        "fill_rate": len(filled) / len(rows) if rows else None,
+        "total_orders": len(rows),
+        "filled": len(filled),
+        "partial": len(partial),
+        "cancelled": len(cancelled),
+        "rejected": len(rejected),
     }
     return _svc(session).execution(stats)
 
