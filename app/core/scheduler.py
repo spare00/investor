@@ -1,4 +1,4 @@
-"""APScheduler wiring — session bootstrap + DailyWorkflowService dispatch + universe refresh."""
+"""APScheduler wiring — session bootstrap + DailyWorkflowService dispatch + universe refresh + broker recon."""
 
 from __future__ import annotations
 
@@ -50,6 +50,13 @@ def _universe_refresh_enabled(cfg: Settings) -> bool:
         _scheduler_enabled(cfg)
         and bool(cfg.universe_manager_enabled)
         and (cfg.universe_mode or "dynamic").lower() == "dynamic"
+    )
+
+
+def _broker_recon_enabled(cfg: Settings) -> bool:
+    """Periodic broker reconciliation when scheduler + broker connection/orders are on."""
+    return _scheduler_enabled(cfg) and (
+        bool(cfg.enable_broker_connection) or bool(cfg.enable_broker_orders)
     )
 
 
@@ -291,6 +298,64 @@ async def _refresh_universe() -> None:
                 await session.commit()
 
 
+async def _reconcile_broker() -> None:
+    """Periodic broker ↔ local reconciliation (+ soft position sync)."""
+    from app.core.database import get_session_factory
+    from app.execution.position_manager import PositionManager
+    from app.execution.reconciliation import ReconciliationService
+
+    if trading_controls.snapshot().state.value == "emergency_stop":
+        logger.info("broker_recon_skip_emergency_stop")
+        return
+
+    settings = get_settings()
+    if not _broker_recon_enabled(settings):
+        return
+
+    factory = get_session_factory()
+    async with factory() as session:
+        leases = LeaseService(session, settings)
+        try:
+            await leases.acquire("scheduler:broker_recon", "scheduler")
+        except LeaseError:
+            logger.info("broker_recon_lease_held")
+            return
+        try:
+            try:
+                recon = await ReconciliationService(session, settings=settings).run("SCHEDULED")
+                sync: dict[str, Any] = {}
+                try:
+                    sync = await PositionManager(session, settings=settings).sync_from_broker()
+                except Exception as exc:  # noqa: BLE001
+                    sync = {"error": str(exc)[:200]}
+                await session.commit()
+                entry = {
+                    "job": "broker_reconciliation",
+                    "status": "completed",
+                    "at": datetime.now(UTC).isoformat(),
+                    "result": recon.get("result"),
+                    "issues": len(recon.get("issues") or []),
+                    "blocks_new_orders": recon.get("blocks_new_orders"),
+                    "sync_error": sync.get("error"),
+                }
+                _job_log.append(entry)
+                if len(_job_log) > 100:
+                    del _job_log[:-100]
+                logger.info(
+                    "broker_recon_done",
+                    **{k: v for k, v in entry.items() if v is not None},
+                )
+            except Exception:  # noqa: BLE001
+                await session.rollback()
+                logger.exception("broker_recon_failed")
+        finally:
+            try:
+                await leases.release("scheduler:broker_recon", "scheduler")
+                await session.commit()
+            except LeaseError:
+                await session.commit()
+
+
 def start_scheduler(settings: Settings | None = None) -> AsyncIOScheduler | None:
     global _scheduler
     cfg = settings or get_settings()
@@ -318,6 +383,15 @@ def start_scheduler(settings: Settings | None = None) -> AsyncIOScheduler | None
             replace_existing=True,
             name="universe_refresh",
         )
+    if _broker_recon_enabled(cfg):
+        recon_interval = max(30, int(cfg.broker_reconciliation_interval_seconds))
+        sched.add_job(
+            _reconcile_broker,
+            IntervalTrigger(seconds=recon_interval),
+            id="broker_reconciliation",
+            replace_existing=True,
+            name="broker_reconciliation",
+        )
     sched.start()
     _scheduler = sched
     logger.info(
@@ -326,6 +400,7 @@ def start_scheduler(settings: Settings | None = None) -> AsyncIOScheduler | None
         enable_broker_orders=cfg.enable_broker_orders,
         enable_automated_execution=cfg.enable_automated_execution,
         universe_refresh=_universe_refresh_enabled(cfg),
+        broker_reconciliation=_broker_recon_enabled(cfg),
         jobs=[j["id"] for j in upcoming_jobs()],
     )
     return sched

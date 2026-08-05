@@ -26,6 +26,7 @@ from app.services.llm_budget import snapshot_llm_budget
 from app.models import (
     AgentReport,
     AgentRun,
+    BrokerReconciliationRun,
     CIODecisionRecord,
     ClosingReview,
     IntradayEvent,
@@ -35,6 +36,7 @@ from app.models import (
     PortfolioSnapshot,
     Position,
     PositionLifecycle,
+    PostmarketSettlement,
     ScheduledJobRecord,
     SystemEvent,
 )
@@ -297,6 +299,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 "last_intraday_result": meta.get("last_intraday_result"),
                 "last_force_close": meta.get("last_force_close"),
                 "last_monitor": meta.get("last_monitor"),
+                "postmarket_review": meta.get("postmarket_review"),
             }
             jrows = list(
                 (
@@ -430,6 +433,48 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     except Exception:  # noqa: BLE001
         latest_closing = None
 
+    latest_settlement: dict[str, Any] | None = None
+    try:
+        srow = (
+            await session.execute(
+                select(PostmarketSettlement).order_by(desc(PostmarketSettlement.created_at)).limit(1)
+            )
+        ).scalar_one_or_none()
+        if srow is not None:
+            latest_settlement = {
+                "id": str(srow.id),
+                "session_date": srow.session_date,
+                "reconciliation_result": srow.reconciliation_result,
+                "order_count": srow.order_count,
+                "execution_count": srow.execution_count,
+                "overnight_positions": srow.overnight_positions or [],
+                "pnl_summary": srow.pnl_summary or [],
+                "created_at": srow.created_at.isoformat() if srow.created_at else None,
+            }
+    except Exception:  # noqa: BLE001
+        latest_settlement = None
+
+    latest_reconciliation: dict[str, Any] | None = None
+    try:
+        rrow = (
+            await session.execute(
+                select(BrokerReconciliationRun)
+                .order_by(desc(BrokerReconciliationRun.created_at))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if rrow is not None:
+            latest_reconciliation = {
+                "id": str(rrow.id),
+                "sync_type": rrow.sync_type,
+                "result": rrow.result,
+                "issues": rrow.issues or [],
+                "payload": rrow.payload or {},
+                "created_at": rrow.created_at.isoformat() if rrow.created_at else None,
+            }
+    except Exception:  # noqa: BLE001
+        latest_reconciliation = None
+
     closing_intents: list[dict[str, Any]] = []
     try:
         irows = list(
@@ -506,6 +551,8 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
         "pending_events": pending_events,
         "hard_stop_intents": hard_stop_intents,
         "latest_closing": latest_closing,
+        "latest_settlement": latest_settlement,
+        "latest_reconciliation": latest_reconciliation,
         "closing_intents": closing_intents,
         "portfolio": None
         if snap is None

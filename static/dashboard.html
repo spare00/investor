@@ -387,6 +387,12 @@
         <div id="forceCloseIntents" style="margin-top:0.65rem"></div>
       </section>
       <section class="wide">
+        <h2>Settlement / Reconciliation</h2>
+        <div id="settlementMeta" class="muted">Loading…</div>
+        <div id="settlementDetail" style="margin-top:0.65rem"></div>
+        <div id="reconDetail" style="margin-top:0.65rem"></div>
+      </section>
+      <section class="wide">
         <h2>Position Monitor / Hard Stops</h2>
         <div id="monitorMeta" class="muted">Loading…</div>
         <div id="monitorPositions" style="margin-top:0.65rem"></div>
@@ -1020,6 +1026,64 @@
       }).join("");
     }
 
+    function renderSettlement(data) {
+      const meta = document.getElementById("settlementMeta");
+      const setEl = document.getElementById("settlementDetail");
+      const reconEl = document.getElementById("reconDetail");
+      if (!meta || !setEl || !reconEl) return;
+      const settle = data.latest_settlement;
+      const recon = data.latest_reconciliation;
+      const wf = (data.market_status && data.market_status.workflow) || {};
+      const pm = wf.postmarket_review || {};
+      meta.innerHTML = [
+        settle
+          ? pill(`settle ${settle.session_date}`, "")
+          : pill("no settlement yet", "warn"),
+        settle && settle.reconciliation_result
+          ? pill(settle.reconciliation_result, /DRIFT|UNAVAILABLE/i.test(settle.reconciliation_result) ? "bad" : "good")
+          : "",
+        recon ? pill(`recon ${recon.result}`, /DRIFT|UNAVAILABLE/i.test(recon.result || "") ? "bad" : "good") : pill("no recon yet", "warn"),
+        recon ? pill(recon.sync_type || "—", "") : "",
+        pm.performance ? pill(`perf evals ${pm.performance.decision_evaluations ?? 0}`, "good") : "",
+        pm.settlement_error ? pill("settle err", "bad") : "",
+      ].filter(Boolean).join(" ");
+
+      if (settle) {
+        const overnight = (settle.overnight_positions || []).map((s) => pill(s, "warn")).join(" ") || `<span class="muted">none</span>`;
+        const pnl = settle.pnl_summary || [];
+        const prows = pnl.length
+          ? pnl.map((p) => `<tr>
+              <td class="mono">${esc(p.symbol)}</td>
+              <td>${esc(p.net_realized_pl ?? p.realized ?? "—")}</td>
+              <td>${esc(p.unrealized_pl ?? "—")}</td>
+              <td>${p.conflict ? pill("conflict", "bad") : "—"}</td>
+            </tr>`).join("")
+          : "";
+        setEl.innerHTML =
+          `<div class="muted" style="margin-bottom:0.35rem">Settlement · ${esc(fmtWhen(settle.created_at))} · orders ${esc(settle.order_count)} · fills ${esc(settle.execution_count)}</div>` +
+          `<div style="margin-bottom:0.5rem"><span class="muted">Overnight </span>${overnight}</div>` +
+          dataTable(["Symbol", "Realized", "Unrealized", "Flag"], prows, 4);
+      } else {
+        setEl.innerHTML = `<div class="muted">No postmarket settlement row yet</div>`;
+      }
+
+      if (recon) {
+        const issues = recon.issues || [];
+        const irows = issues.length
+          ? issues.slice(0, 8).map((i) => `<tr>
+              <td>${esc(i.type || i.error || "issue")}</td>
+              <td class="mono">${esc(i.broker_order_id || "")}</td>
+              <td class="muted">${esc(JSON.stringify(i).slice(0, 120))}</td>
+            </tr>`).join("")
+          : "";
+        reconEl.innerHTML =
+          `<div class="muted" style="margin-bottom:0.35rem">Latest recon · ${esc(fmtWhen(recon.created_at))} · ${esc(recon.sync_type)} · ${esc(recon.result)}</div>` +
+          dataTable(["Type", "Broker id", "Detail"], irows, 3);
+      } else {
+        reconEl.innerHTML = `<div class="muted">No reconciliation run yet</div>`;
+      }
+    }
+
     function renderMonitor(data) {
       const meta = document.getElementById("monitorMeta");
       const posEl = document.getElementById("monitorPositions");
@@ -1211,6 +1275,7 @@
       }
       renderUniverse(data.universe);
       renderForceClose(data);
+      renderSettlement(data);
       renderMonitor(data);
       renderIntradayCadence(data.market_status && data.market_status.workflow, data.session_jobs);
       renderSessionJobs(data.session_jobs);

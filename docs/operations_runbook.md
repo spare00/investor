@@ -21,7 +21,7 @@ python -m app.cli daily-workflow prepare
 python -m app.cli scheduler list
 python -m app.cli universe show
 python -m app.cli closing run   # or wait for closing_window job
-curl -s localhost:8000/dashboard/summary | jq '{workflow:.market_status.workflow,force_close,session_jobs:(.session_jobs|length)}'
+curl -s localhost:8000/dashboard/summary | jq '{workflow:.market_status.workflow,force_close,hard_stop,settlement:.latest_settlement,recon:.latest_reconciliation,session_jobs:(.session_jobs|length)}'
 ```
 
 Overview shows reeval budget (`reeval used/max`), planned interval, session job plan, paused hygiene names, and force-close arming.

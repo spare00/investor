@@ -377,6 +377,53 @@ async def test_scheduler_registers_universe_refresh(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
+async def test_scheduler_registers_broker_reconciliation(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.scheduler as sched
+
+    await sched.stop_scheduler()
+    settings = get_settings().model_copy(
+        update={
+            "enable_scheduler": True,
+            "enable_broker_connection": True,
+            "broker_reconciliation_interval_seconds": 45,
+            "universe_mode": "static",
+        }
+    )
+    monkeypatch.setattr(sched, "get_settings", lambda: settings)
+    try:
+        assert sched._broker_recon_enabled(settings) is True
+        started = start_scheduler(settings)
+        assert started is not None
+        ids = {j["id"] for j in sched.upcoming_jobs()}
+        assert "daily_workflow_dispatch" in ids
+        assert "broker_reconciliation" in ids
+    finally:
+        await sched.stop_scheduler()
+
+
+@pytest.mark.asyncio
+async def test_broker_recon_skipped_without_broker_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.scheduler as sched
+
+    settings = get_settings().model_copy(
+        update={
+            "enable_scheduler": True,
+            "enable_broker_connection": False,
+            "enable_broker_orders": False,
+        }
+    )
+    assert sched._broker_recon_enabled(settings) is False
+    await sched.stop_scheduler()
+    try:
+        started = start_scheduler(settings)
+        assert started is not None
+        ids = {j["id"] for j in sched.upcoming_jobs()}
+        assert "broker_reconciliation" not in ids
+    finally:
+        await sched.stop_scheduler()
+
+
+@pytest.mark.asyncio
 async def test_universe_refresh_skipped_when_static(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.core.scheduler as sched
 

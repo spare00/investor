@@ -131,9 +131,12 @@ def test_dashboard_routes_exist() -> None:
     assert "hard_stop" in body
     assert "monitor_positions" in body
     assert "pending_events" in body
+    assert "latest_settlement" in body
+    assert "latest_reconciliation" in body
     assert "session_jobs" in body
     assert "universe" in body
     assert b"renderMonitor" in dash.content
+    assert b"renderSettlement" in dash.content
     metrics = client.get("/metrics")
     assert metrics.status_code == 200
     assert b"investor_" in metrics.content or b"python_" in metrics.content
