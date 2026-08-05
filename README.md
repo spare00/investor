@@ -196,6 +196,11 @@ DATABASE_URL="sqlite+aiosqlite:///./investor_local.db" \
   LOG_FORMAT=console \
   uvicorn app.main:app --reload --port 8000
 
+# Or use the secure local start/stop helpers (loopback bind, pidfile, live-trading guard):
+#   ./scripts/start.sh
+#   ./scripts/stop.sh
+# Optional: INVESTOR_RELOAD=1 ./scripts/start.sh
+
 # Dashboard: http://127.0.0.1:8000/dashboard
 ```
 
