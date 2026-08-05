@@ -94,3 +94,68 @@ async def emit_llm_budget_alert(
     except Exception:  # noqa: BLE001
         logger.exception("ops_alert_llm_budget_failed", code=code)
         return None
+
+
+async def emit_hard_stop_alert(
+    session: AsyncSession | None,
+    settings: Settings | None = None,
+    *,
+    symbol: str,
+    price: float | None = None,
+    stop_price: float | None = None,
+    submitted: bool = False,
+    intent_id: str | None = None,
+) -> EmitResult | None:
+    """CRITICAL when a hard stop fires for a symbol (deduped per symbol/day)."""
+    from datetime import UTC, datetime
+
+    cfg = settings or get_settings()
+    day = datetime.now(UTC).date().isoformat()
+    sym = symbol.upper()
+    try:
+        return await AlertService(session, settings=cfg).emit(
+            code="trading.hard_stop",
+            message=f"Hard stop triggered on {sym}"
+            + (" (orders submitted)" if submitted else " (intent pending)"),
+            severity=AlertSeverity.CRITICAL,
+            source="position_monitor",
+            context={
+                "symbol": sym,
+                "price": price,
+                "stop_price": stop_price,
+                "submitted": submitted,
+                "intent_id": intent_id,
+            },
+            dedupe_key=f"hard_stop:{sym}:{day}",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("ops_alert_hard_stop_failed", symbol=sym)
+        return None
+
+
+async def emit_monitor_emergency_alert(
+    session: AsyncSession | None,
+    settings: Settings | None = None,
+    *,
+    symbol: str,
+    reasons: list[str] | None = None,
+) -> EmitResult | None:
+    """CRITICAL when monitor verdict is EMERGENCY_ACTION_REQUIRED."""
+    from datetime import UTC, datetime
+
+    cfg = settings or get_settings()
+    day = datetime.now(UTC).date().isoformat()
+    sym = symbol.upper()
+    why = ", ".join(reasons or []) or "emergency"
+    try:
+        return await AlertService(session, settings=cfg).emit(
+            code="trading.monitor_emergency",
+            message=f"Monitor emergency on {sym}: {why}",
+            severity=AlertSeverity.CRITICAL,
+            source="position_monitor",
+            context={"symbol": sym, "reasons": reasons or []},
+            dedupe_key=f"monitor_emergency:{sym}:{day}",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("ops_alert_monitor_emergency_failed", symbol=sym)
+        return None

@@ -26,6 +26,8 @@ Providers: `log` (default), `fake`, `email`, `webhook`.
 | Code | When |
 |------|------|
 | `trading.emergency_stop` | Emergency stop API / ops / intraday recovery restore |
+| `trading.hard_stop` | Hard stop exit intent created (dedupe per symbol/day) |
+| `trading.monitor_emergency` | Monitor verdict `EMERGENCY_ACTION_REQUIRED` |
 | `recon.material_drift` / `recon.broker_unavailable` / `recon.local_state_invalid` | Scheduled recon, recovery recon |
 | `llm.budget_exhausted` | Billable LLM call blocked by budget |
 | `llm.budget_soft_limit` | Soft % of daily/monthly budget hit |

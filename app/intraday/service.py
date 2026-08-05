@@ -126,6 +126,7 @@ class IntradayService:
                     )
                     if intent is not None:
                         entry["exit_intent_id"] = str(intent.id)
+                        submitted = 0
                         if self._should_auto_submit_hard_stops(caps):
                             submitted = await self._submit_hard_stop(lc)
                             entry["orders_submitted"] = submitted
@@ -133,6 +134,33 @@ class IntradayService:
                                 entry["notes"] = ["hard_stop_orders_submitted"]
                         else:
                             entry["notes"] = ["hard_stop_intent_pending_submit"]
+                        try:
+                            from app.alerts.ops import emit_hard_stop_alert
+
+                            await emit_hard_stop_alert(
+                                self.session,
+                                self.settings,
+                                symbol=lc.symbol,
+                                price=float(prices.get(lc.symbol) or lc.current_price or 0) or None,
+                                stop_price=float(lc.stop_price) if lc.stop_price is not None else None,
+                                submitted=bool(submitted),
+                                intent_id=str(intent.id),
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+            if result.verdict == "EMERGENCY_ACTION_REQUIRED":
+                try:
+                    from app.alerts.ops import emit_monitor_emergency_alert
+
+                    await emit_monitor_emergency_alert(
+                        self.session,
+                        self.settings,
+                        symbol=lc.symbol,
+                        reasons=list(result.reasons or []),
+                    )
+                    entry["emergency_alert"] = True
+                except Exception:  # noqa: BLE001
+                    pass
             out.append(entry)
         return out
 

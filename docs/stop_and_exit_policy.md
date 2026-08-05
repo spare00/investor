@@ -6,6 +6,8 @@ Supports FIXED_PRICE, PERCENTAGE, ATR_BASED, TIME_BASED stops; multi-target take
 
 `IntradayService.monitor_all` creates Order Intents on hard stop. Defaults stay fail-closed (`AUTO_EXECUTE_HARD_STOPS=false` → `PENDING_APPROVAL`).
 
+When alerts are enabled, each hard-stop intent emits `trading.hard_stop` (CRITICAL, deduped per symbol/day). Monitor `EMERGENCY_ACTION_REQUIRED` emits `trading.monitor_emergency`.
+
 Paper auto-submit only when **all** hold:
 
 - `AUTO_EXECUTE_HARD_STOPS=true`

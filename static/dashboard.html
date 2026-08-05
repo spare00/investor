@@ -398,6 +398,16 @@
         <div id="reconDetail" style="margin-top:0.65rem"></div>
       </section>
       <section class="wide">
+        <h2>Startup / Intraday Recovery</h2>
+        <div id="recoveryMeta" class="muted">Loading…</div>
+        <div id="recoveryDetail" style="margin-top:0.65rem"></div>
+      </section>
+      <section>
+        <h2>Active Alerts</h2>
+        <div id="activeAlertsMeta" class="muted">Loading…</div>
+        <div id="activeAlertsDetail" style="margin-top:0.5rem"></div>
+      </section>
+      <section class="wide">
         <h2>Position Monitor / Hard Stops</h2>
         <div id="monitorMeta" class="muted">Loading…</div>
         <div id="monitorPositions" style="margin-top:0.65rem"></div>
@@ -1119,6 +1129,59 @@
       }
     }
 
+    function renderRecovery(data) {
+      const meta = document.getElementById("recoveryMeta");
+      const detail = document.getElementById("recoveryDetail");
+      if (!meta || !detail) return;
+      const rec = data.latest_recovery;
+      if (!rec) {
+        meta.innerHTML = pill("no recovery run yet", "warn");
+        detail.innerHTML = `<div class="muted">Startup/intraday recovery has not run (enable broker connection/orders, or POST /intraday/recovery)</div>`;
+        return;
+      }
+      const reconRes = rec.reconciliation_result || "";
+      meta.innerHTML = [
+        pill(rec.emergency_stop ? "emergency STOP" : "controls ok", rec.emergency_stop ? "bad" : "good"),
+        pill(rec.new_orders_allowed ? "new orders allowed" : "new orders blocked", rec.new_orders_allowed ? "good" : "warn"),
+        reconRes
+          ? pill(`recon ${reconRes}`, /DRIFT|UNAVAILABLE|INVALID/i.test(reconRes) ? "bad" : "good")
+          : "",
+        pill(fmtWhen(rec.created_at), ""),
+      ].filter(Boolean).join(" ");
+      const actions = rec.actions || [];
+      const arows = actions.length
+        ? actions.map((a) => `<tr><td class="mono">${esc(a)}</td></tr>`).join("")
+        : "";
+      const lc = rec.lifecycle_sync || {};
+      const lcLine = (lc.upserted != null || lc.closed != null)
+        ? `<div class="muted" style="margin-bottom:0.35rem">Lifecycles upserted ${esc(lc.upserted ?? 0)} · closed ${esc(lc.closed ?? 0)}</div>`
+        : "";
+      detail.innerHTML =
+        lcLine +
+        dataTable(["Action"], arows, 1);
+    }
+
+    function renderActiveAlerts(data) {
+      const meta = document.getElementById("activeAlertsMeta");
+      const detail = document.getElementById("activeAlertsDetail");
+      if (!meta || !detail) return;
+      const alerts = data.active_alerts || [];
+      meta.innerHTML = alerts.length
+        ? pill(`${alerts.length} active`, alerts.some((a) => a.severity === "critical") ? "bad" : "warn")
+        : pill("none", "good");
+      if (!alerts.length) {
+        detail.innerHTML = `<div class="muted">No active operational alerts</div>`;
+        return;
+      }
+      const rows = alerts.map((a) => `<tr>
+          <td>${pill(a.severity || "info", a.severity === "critical" ? "bad" : a.severity === "warning" ? "warn" : "")}</td>
+          <td class="mono">${esc(a.code || "")}</td>
+          <td>${esc(a.message || "")}</td>
+          <td class="muted">${esc(fmtWhen(a.detected_at))}</td>
+        </tr>`).join("");
+      detail.innerHTML = dataTable(["Sev", "Code", "Message", "When"], rows, 4);
+    }
+
     function renderMonitor(data) {
       const meta = document.getElementById("monitorMeta");
       const posEl = document.getElementById("monitorPositions");
@@ -1315,6 +1378,8 @@
       renderUniverse(data.universe);
       renderForceClose(data);
       renderSettlement(data);
+      renderRecovery(data);
+      renderActiveAlerts(data);
       renderMonitor(data);
       renderIntradayCadence(data.market_status && data.market_status.workflow, data.session_jobs);
       renderSessionJobs(data.session_jobs);

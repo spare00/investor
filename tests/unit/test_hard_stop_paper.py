@@ -121,3 +121,119 @@ async def test_hard_stop_pending_when_not_armed(session: AsyncSession) -> None:
     assert hit.get("exit_intent_id")
     assert hit.get("orders_submitted") in (None, 0)
     assert "hard_stop_intent_pending_submit" in (hit.get("notes") or [])
+
+
+@pytest.mark.asyncio
+async def test_hard_stop_emits_ops_alert(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.alerts.fake_provider import FakeAlertProvider
+    from app.alerts.service import AlertService
+    from sqlalchemy import select
+    from app.models import AlertRecordModel
+
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        broker_environment="paper",
+        enable_broker_orders=True,
+        enable_automated_execution=True,
+        require_manual_order_approval=False,
+        auto_execute_hard_stops=False,
+        enable_intraday_monitoring=True,
+        enable_alerts=True,
+        alert_provider="fake",
+        critical_alert_cooldown_seconds=0,
+        intraday_operation_mode="PAPER_AUTOMATED",
+        starting_cash=50_000.0,
+    )
+    provider = FakeAlertProvider()
+    real_init = AlertService.__init__
+
+    def _init(self, session=None, settings=None, provider_arg=None):  # type: ignore[no-untyped-def]
+        real_init(self, session, settings=settings, provider=provider)
+
+    monkeypatch.setattr(AlertService, "__init__", _init)
+
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="SPY",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=100,
+            current_price=95,
+            stop_price=98,
+            overnight_allowed=False,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+    rows = await IntradayService(session, settings=settings).monitor_all(prices={"SPY": 95.0})
+    hit = next(r for r in rows if r["symbol"] == "SPY")
+    assert hit.get("exit_intent_id")
+    assert any(a.code == "trading.hard_stop" for a in provider.sent)
+    persisted = list((await session.execute(select(AlertRecordModel))).scalars().all())
+    assert any(a.alert_type == "trading.hard_stop" for a in persisted)
+
+
+@pytest.mark.asyncio
+async def test_monitor_emergency_emits_alert(session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.alerts.fake_provider import FakeAlertProvider
+    from app.alerts.service import AlertService
+
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        enable_intraday_monitoring=True,
+        enable_alerts=True,
+        alert_provider="fake",
+        critical_alert_cooldown_seconds=0,
+        daily_max_loss_pct=1.0,
+        max_drawdown_pct=50.0,
+        starting_cash=50_000.0,
+        intraday_operation_mode="OBSERVE_ONLY",
+    )
+    provider = FakeAlertProvider()
+    real_init = AlertService.__init__
+
+    def _init(self, session=None, settings=None, provider_arg=None):  # type: ignore[no-untyped-def]
+        real_init(self, session, settings=settings, provider=provider)
+
+    monkeypatch.setattr(AlertService, "__init__", _init)
+
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="QQQ",
+            status="OPEN",
+            quantity=1,
+            average_entry_price=100,
+            current_price=100,
+            overnight_allowed=True,
+            exit_policy={},
+        )
+    )
+    # PortfolioSnapshot with huge daily loss so monitor hits daily_loss_limit
+    from app.models import PortfolioSnapshot
+    from datetime import UTC, datetime
+
+    session.add(
+        PortfolioSnapshot(
+            id=uuid4(),
+            as_of=datetime.now(UTC),
+            equity=40_000,
+            cash=40_000,
+            cash_pct=100,
+            gross_exposure_pct=0,
+            daily_pnl=-2000,
+            daily_pnl_pct=-5.0,
+            drawdown_pct=0.0,
+            open_positions=1,
+        )
+    )
+    await session.flush()
+    rows = await IntradayService(session, settings=settings).monitor_all(prices={"QQQ": 100.0})
+    hit = next(r for r in rows if r["symbol"] == "QQQ")
+    assert hit["monitor"]["verdict"] == "EMERGENCY_ACTION_REQUIRED"
+    assert any(a.code == "trading.monitor_emergency" for a in provider.sent)

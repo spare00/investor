@@ -9,6 +9,8 @@ New orders remain blocked until reconciliation is clean and emergency is cleared
 - API startup (best-effort) when `ENABLE_BROKER_CONNECTION` or `ENABLE_BROKER_ORDERS` is on — after workflow `RecoveryService`
 - `POST /intraday/recovery` / CLI `intraday recovery run`
 
+Latest run is shown on Overview (`latest_recovery` in `/dashboard/summary`).
+
 ## Alerts
 
 When alerts are enabled, recovery emits:

@@ -26,10 +26,12 @@ from app.services.llm_budget import snapshot_llm_budget
 from app.models import (
     AgentReport,
     AgentRun,
+    AlertRecordModel,
     BrokerReconciliationRun,
     CIODecisionRecord,
     ClosingReview,
     IntradayEvent,
+    IntradayRecoveryRun,
     NewsItem,
     Order,
     OrderIntent,
@@ -476,6 +478,62 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     except Exception:  # noqa: BLE001
         latest_reconciliation = None
 
+    latest_recovery: dict[str, Any] | None = None
+    try:
+        rec_row = (
+            await session.execute(
+                select(IntradayRecoveryRun)
+                .order_by(desc(IntradayRecoveryRun.created_at))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if rec_row is not None:
+            payload = rec_row.payload if isinstance(rec_row.payload, dict) else {}
+            recon = payload.get("recon") if isinstance(payload.get("recon"), dict) else {}
+            lifecycle_sync = (
+                payload.get("lifecycle_sync")
+                if isinstance(payload.get("lifecycle_sync"), dict)
+                else {}
+            )
+            latest_recovery = {
+                "id": str(rec_row.id),
+                "emergency_stop": bool(rec_row.emergency_stop),
+                "new_orders_allowed": bool(rec_row.new_orders_allowed),
+                "actions": rec_row.actions or [],
+                "reconciliation_result": recon.get("result"),
+                "lifecycle_sync": lifecycle_sync,
+                "created_at": rec_row.created_at.isoformat() if rec_row.created_at else None,
+            }
+    except Exception:  # noqa: BLE001
+        latest_recovery = None
+
+    active_alerts: list[dict[str, Any]] = []
+    try:
+        arows = list(
+            (
+                await session.execute(
+                    select(AlertRecordModel)
+                    .where(AlertRecordModel.status == "active")
+                    .order_by(desc(AlertRecordModel.detected_at))
+                    .limit(8)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for a in arows:
+            active_alerts.append(
+                {
+                    "id": str(a.id),
+                    "severity": a.severity,
+                    "code": a.alert_type,
+                    "message": a.message,
+                    "detected_at": a.detected_at.isoformat() if a.detected_at else None,
+                }
+            )
+    except Exception:  # noqa: BLE001
+        active_alerts = []
+
     closing_intents: list[dict[str, Any]] = []
     try:
         irows = list(
@@ -554,6 +612,8 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
         "latest_closing": latest_closing,
         "latest_settlement": latest_settlement,
         "latest_reconciliation": latest_reconciliation,
+        "latest_recovery": latest_recovery,
+        "active_alerts": active_alerts,
         "closing_intents": closing_intents,
         "portfolio": None
         if snap is None
