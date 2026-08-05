@@ -122,6 +122,27 @@ def test_universe_blocks_penny_and_non_allowlist() -> None:
     assert "not_in_allowlist" in evaluate_symbol_eligibility(other, settings=settings).reasons
 
 
+def test_eligibility_uses_horizon_liquidity_bars() -> None:
+    """Scalp requires higher volume than global default."""
+    settings = Settings(trade_allowlist=["SPY"], min_avg_daily_volume=100_000)
+    mid = normalize_market_quote(
+        RawMarketQuote(
+            symbol="SPY",
+            as_of=datetime.now(UTC),
+            provider="stub",
+            last=500.0,
+            bid=499.9,
+            ask=500.1,
+            avg_volume_20d=2_000_000,  # below scalp 5M bar, above global 100k
+        )
+    )
+    assert evaluate_symbol_eligibility(mid, settings=settings).eligible is True
+    assert "insufficient_volume" in evaluate_symbol_eligibility(
+        mid, settings=settings, horizon="scalp"
+    ).reasons
+    assert evaluate_symbol_eligibility(mid, settings=settings, horizon="short").eligible is True
+
+
 def test_aggregate_quality_fail_closed_threshold() -> None:
     assert aggregate_data_quality([], [], None) == 0.0
     assert aggregate_data_quality([0.9], [0.9], 0.9) >= 0.9

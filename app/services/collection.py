@@ -84,10 +84,12 @@ class DataCollectionService:
         *,
         symbols: list[str] | None = None,
         workflow_id: UUID | None = None,
+        horizon_by_symbol: dict[str, str] | None = None,
     ) -> CollectionBundle:
         wf = workflow_id or uuid4()
         now = datetime.now(UTC)
         universe = symbols or list(self.settings.trade_allowlist)
+        horizons = {k.upper(): v for k, v in (horizon_by_symbol or {}).items()}
         bundle = CollectionBundle(workflow_id=wf, collected_at=now)
 
         try:
@@ -118,7 +120,11 @@ class DataCollectionService:
                 if self.persist:
                     await self.market_repo.add(norm)
                 bundle.eligibility.append(
-                    evaluate_symbol_eligibility(norm, settings=self.settings)
+                    evaluate_symbol_eligibility(
+                        norm,
+                        settings=self.settings,
+                        horizon=horizons.get(norm.symbol.upper()),
+                    )
                 )
         except Exception as exc:  # noqa: BLE001
             msg = f"market_collection_failed: {exc}"

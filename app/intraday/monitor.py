@@ -253,9 +253,28 @@ class PositionMonitor:
             overnight_allowed=False,
             closing_policy=self.settings.default_closing_policy,
             protection_submitted=False,
-            max_holding_minutes=None,
+            max_holding_minutes=await self._default_max_holding(symbol),
             exit_policy={"stop_loss": stop_price},
         )
         self.session.add(row)
         await self.session.flush()
         return row
+
+    async def _default_max_holding(self, symbol: str) -> int | None:
+        """Prefer watchlist horizon policy; otherwise leave unset."""
+        from sqlalchemy import select
+
+        from app.models import WatchlistSymbol
+        from app.universe.horizons import policy_for
+
+        row = (
+            await self.session.execute(
+                select(WatchlistSymbol).where(WatchlistSymbol.symbol == symbol.upper()).limit(1)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        try:
+            return int(policy_for(row.horizon).max_holding_minutes or 0) or None
+        except ValueError:
+            return None

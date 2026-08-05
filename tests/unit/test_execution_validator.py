@@ -401,3 +401,46 @@ def test_validator_blocks_buy_off_allowlist() -> None:
     )
     assert result.approved is False
     assert any("not_in_allowlist" in r for r in result.rejections)
+
+
+def test_validator_blocks_horizon_cap() -> None:
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.BUY,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="IWM",
+                action=SymbolAction.BUY,
+                confidence=70,
+                target_position_pct=5,
+                stop_loss=190,
+                thesis="scalp overflow",
+                invalidation="break",
+                entry_zone=PriceZone(min=200, max=201),
+            )
+        ],
+        cash_target_pct=50,
+        risk_approval=True,
+    )
+    # scalp max_positions = 2; already hold SPY+QQQ on scalp
+    result = ExecutionValidator(controls=TradingControls()).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=100_000,
+            cash=50_000,
+            cash_pct=50,
+            gross_exposure_pct=50,
+            positions=[
+                PositionRiskView(symbol="SPY", quantity=10, market_value=5000, sector="ETF", weight_pct=5),
+                PositionRiskView(symbol="QQQ", quantity=10, market_value=5000, sector="ETF", weight_pct=5),
+            ],
+        ),
+        latest_prices={"IWM": 200},
+        data_quality_score=0.9,
+        entry_universe={"IWM", "SPY", "QQQ"},
+        horizon_by_symbol={"SPY": "scalp", "QQQ": "scalp", "IWM": "scalp"},
+    )
+    assert result.approved is False
+    assert any("horizon_cap" in r for r in result.rejections)

@@ -37,10 +37,23 @@ def evaluate_symbol_eligibility(
     settings: Settings | None = None,
     halted: bool = False,
     entry_universe: set[str] | None = None,
+    horizon: str | None = None,
 ) -> EligibilityResult:
     cfg = settings or get_settings()
     symbol = snapshot.symbol.upper()
     reasons: list[str] = []
+
+    min_vol = cfg.min_avg_daily_volume
+    max_spread = cfg.max_bid_ask_spread_bps
+    if horizon:
+        try:
+            from app.universe.horizons import policy_for
+
+            pol = policy_for(horizon)
+            min_vol = float(pol.min_avg_daily_volume)
+            max_spread = float(pol.max_spread_bps)
+        except ValueError:
+            pass
 
     allowed = entry_universe if entry_universe is not None else cfg.allowlist_set()
     if symbol not in allowed:
@@ -51,9 +64,9 @@ def evaluate_symbol_eligibility(
         reasons.append("penny_stock")
     if is_leveraged_etf(symbol) and not cfg.allow_leveraged_etfs:
         reasons.append("leveraged_etf")
-    if snapshot.avg_volume_20d is not None and snapshot.avg_volume_20d < cfg.min_avg_daily_volume:
+    if snapshot.avg_volume_20d is not None and snapshot.avg_volume_20d < min_vol:
         reasons.append("insufficient_volume")
-    if snapshot.spread_bps is not None and snapshot.spread_bps > cfg.max_bid_ask_spread_bps:
+    if snapshot.spread_bps is not None and snapshot.spread_bps > max_spread:
         reasons.append("excessive_spread")
     if snapshot.quality_score < cfg.min_data_quality_score:
         reasons.append("low_data_quality")

@@ -216,7 +216,7 @@ class WorkflowService:
 
         collection = await DataCollectionService(
             self.session, settings=self.settings, persist=self.persist
-        ).collect_premarket(symbols=universe, workflow_id=wf)
+        ).collect_premarket(symbols=universe, workflow_id=wf, horizon_by_symbol=horizons)
 
         if collection.fail_closed:
             notes.append("collection_fail_closed")
