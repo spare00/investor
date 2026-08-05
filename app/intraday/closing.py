@@ -39,19 +39,28 @@ class ClosingService:
             .scalars()
             .all()
         )
-        positions = [
-            {
-                "symbol": p.symbol,
-                "quantity": p.quantity,
-                "is_intraday_only": not p.overnight_allowed,
-            }
-            for p in lifecycles
-        ]
+        horizons = await self._watchlist_horizons([p.symbol for p in lifecycles])
+        positions = []
+        intraday_symbols: set[str] = set()
+        for p in lifecycles:
+            hz = horizons.get(p.symbol.upper())
+            # Scalp/day books flatten near close even if overnight_allowed was set incorrectly.
+            force_intra = (not p.overnight_allowed) or (hz in {"scalp", "day"})
+            if force_intra:
+                intraday_symbols.add(p.symbol.upper())
+            positions.append(
+                {
+                    "symbol": p.symbol,
+                    "quantity": p.quantity,
+                    "is_intraday_only": force_intra,
+                    "horizon": hz,
+                }
+            )
         decision = self.engine.decide(
             as_of=datetime.now(UTC),
             positions=positions,
             policy=policy,
-            intraday_symbols={p.symbol for p in lifecycles if not p.overnight_allowed},
+            intraday_symbols=intraday_symbols,
         )
         notes = list(decision.notes)
         if in_closing_window:
@@ -102,6 +111,17 @@ class ClosingService:
             "notes": notes,
         }
 
+    async def _watchlist_horizons(self, symbols: list[str]) -> dict[str, str]:
+        from app.models import WatchlistSymbol
+
+        syms = {s.upper() for s in symbols if s}
+        if not syms:
+            return {}
+        rows = (
+            await self.session.execute(select(WatchlistSymbol).where(WatchlistSymbol.symbol.in_(syms)))
+        ).scalars().all()
+        return {r.symbol.upper(): str(r.horizon) for r in rows}
+
     async def overnight_review(
         self,
         *,
@@ -122,12 +142,14 @@ class ClosingService:
             .all()
         )
         results: list[dict[str, Any]] = []
+        horizons = await self._watchlist_horizons([lc.symbol for lc in lifecycles])
         for lc in lifecycles:
             status = "OVERNIGHT_APPROVED"
             reasons: list[str] = []
-            if not lc.overnight_allowed:
+            hz = horizons.get(lc.symbol.upper())
+            if not lc.overnight_allowed or hz in {"scalp", "day"}:
                 status = "CLOSE_BEFORE_MARKET_CLOSE"
-                reasons.append("overnight_not_allowed")
+                reasons.append("overnight_not_allowed" if not lc.overnight_allowed else f"horizon_{hz}")
             if earnings or economic_event:
                 status = "MANUAL_REVIEW_REQUIRED" if status == "OVERNIGHT_APPROVED" else status
                 reasons.append("event_risk")

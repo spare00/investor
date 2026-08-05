@@ -82,6 +82,7 @@ class ExecutionValidator:
         workflow_id: str | None = None,
         entry_universe: set[str] | None = None,
         horizon_by_symbol: dict[str, str] | None = None,
+        block_new_entries: bool = False,
     ) -> ExecutionValidationResult:
         rejections: list[str] = []
 
@@ -131,7 +132,10 @@ class ExecutionValidator:
                 allowlist=allowlist,
                 horizon_by_symbol=horizons,
                 held_symbols=held_syms,
+                block_new_entries=block_new_entries,
             )
+            if result is None:
+                continue  # skipped (e.g. new entry in closing window)
             if isinstance(result, str):
                 rejections.append(result)
             else:
@@ -158,13 +162,18 @@ class ExecutionValidator:
         allowlist: set[str],
         horizon_by_symbol: dict[str, str] | None = None,
         held_symbols: list[str] | None = None,
-    ) -> ValidatedOrderIntent | str:
+        block_new_entries: bool = False,
+    ) -> ValidatedOrderIntent | str | None:
         from app.universe.caps import horizon_cap_violation
         from app.universe.horizons import policy_for
 
         symbol = plan.symbol.upper()
         if plan.action in ENTRY_ACTIONS and symbol not in allowlist:
             return f"{symbol}:not_in_allowlist"
+
+        if plan.action in ENTRY_ACTIONS and block_new_entries:
+            # Skip entries so exit intents in the same batch can still approve.
+            return None
 
         if plan.action in ENTRY_ACTIONS and not decision.risk_approval:
             return f"{symbol}:entry_without_risk_approval"

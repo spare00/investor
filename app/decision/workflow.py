@@ -157,6 +157,24 @@ class WorkflowService:
             cooldown_until=portfolio.cooldown_until,
         )
 
+    def _block_new_entries_now(self, as_of: datetime | None = None) -> bool:
+        """True in closing / force-close window when new entries are disabled."""
+        if self.settings.allow_new_positions_in_closing_window:
+            return False
+        try:
+            from app.market.calendar import MarketCalendarService
+
+            status = MarketCalendarService(self.settings).get_market_status(as_of)
+            return bool(status.in_closing_window or status.in_force_close_window)
+        except Exception:  # noqa: BLE001
+            mtc = minutes_to_close(as_of or datetime.now(UTC))
+            if mtc is None:
+                return False
+            return mtc <= max(
+                self.settings.closing_window_minutes_before_close,
+                self.settings.force_close_before_market_close_minutes,
+            )
+
     async def run_premarket(
         self,
         *,
@@ -234,6 +252,9 @@ class WorkflowService:
 
         prices = {m.symbol: m.last for m in collection.markets}
         seen_keys = await OrderManager(self.session, settings=self.settings).seen_idempotency_keys()
+        block_entries = self._block_new_entries_now(started)
+        if block_entries:
+            notes.append("closing_window_block_new_entries")
         validation = ExecutionValidator(settings=self.settings).validate(
             analysis.cio,
             portfolio=self._portfolio_risk_view(port),
@@ -245,6 +266,7 @@ class WorkflowService:
             seen_idempotency_keys=seen_keys,
             entry_universe=entry_universe,
             horizon_by_symbol=horizons,
+            block_new_entries=block_entries,
         )
 
         orders: list[Order] = []
@@ -260,6 +282,10 @@ class WorkflowService:
             settings=self.settings,
             create_intents=not collection.fail_closed,
             allow_submit=not collection.fail_closed,
+            entry_universe=entry_universe,
+            horizon_by_symbol=horizons,
+            block_new_entries=block_entries,
+            market_session_clear=not collection.fail_closed,
         )
         notes.extend(execution.get("notes") or [])
         # Compatibility: WorkflowResult.orders length reflects submitted count
@@ -372,6 +398,18 @@ class WorkflowService:
         result = await self.run_premarket(portfolio=portfolio, workflow_id=wf)
         result.kind = "intraday"
         result.notes = notes + result.notes
+        if mtc is not None and mtc <= self.settings.force_close_before_market_close_minutes:
+            try:
+                from app.intraday.closing import ClosingService
+
+                closing = await ClosingService(self.session, settings=self.settings).run_closing(
+                    in_closing_window=True
+                )
+                closes = [p for p in closing.get("plans", []) if p.get("action") == "close"]
+                result.notes.append(f"force_close_plans={len(closes)}")
+                result.notes.extend(closing.get("notes") or [])
+            except Exception as exc:  # noqa: BLE001
+                result.notes.append(f"force_close_failed:{exc}")
         self._last_intraday_at = started
         return result
 

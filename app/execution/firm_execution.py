@@ -82,6 +82,10 @@ async def materialize_cio_decision(
     settings: Settings | None = None,
     create_intents: bool = True,
     allow_submit: bool = True,
+    entry_universe: set[str] | None = None,
+    horizon_by_symbol: dict[str, str] | None = None,
+    block_new_entries: bool = False,
+    market_session_clear: bool = True,
 ) -> dict[str, Any]:
     """
     Materialize a CIO decision into order intents and optionally auto-submit paper.
@@ -104,10 +108,13 @@ async def materialize_cio_decision(
         portfolio=risk_view,
         latest_prices=latest_prices,
         data_quality_score=data_quality_score,
-        market_session_clear=True,
+        market_session_clear=market_session_clear,
         broker_data_consistent=True,
         workflow_id=str(workflow_id) if workflow_id else None,
         seen_idempotency_keys=seen_keys,
+        entry_universe=entry_universe,
+        horizon_by_symbol=horizon_by_symbol,
+        block_new_entries=block_new_entries,
     )
 
     intent_ids: list[str] = []
