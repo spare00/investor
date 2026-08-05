@@ -374,8 +374,15 @@
       <section class="wide">
         <h2>Universe <button id="btnUniverse" type="button" style="float:right;font-size:0.8rem;padding:0.25rem 0.55rem" onclick="refreshUniverseNow()">Refresh Universe</button></h2>
         <div id="universeMeta" class="muted">Loading…</div>
+        <div id="universeBook" style="margin-top:0.5rem"></div>
         <div id="universeFocus" style="margin-top:0.5rem"></div>
         <div id="universeByHorizon" style="margin-top:0.75rem"></div>
+      </section>
+      <section class="wide">
+        <h2>Force-close / Overnight Flatten</h2>
+        <div id="forceCloseMeta" class="muted">Loading…</div>
+        <div id="forceClosePlans" style="margin-top:0.65rem"></div>
+        <div id="forceCloseIntents" style="margin-top:0.65rem"></div>
       </section>
       <section>
         <h2>Risk</h2>
@@ -898,21 +905,37 @@
       const meta = document.getElementById("universeMeta");
       const focusEl = document.getElementById("universeFocus");
       const byEl = document.getElementById("universeByHorizon");
+      const bookEl = document.getElementById("universeBook");
       if (!meta || !focusEl || !byEl) return;
       if (!u) {
         meta.textContent = "Universe unavailable";
         focusEl.innerHTML = "";
         byEl.innerHTML = "";
+        if (bookEl) bookEl.innerHTML = "";
         return;
       }
       const mode = u.mode || "—";
       const limits = u.limits || {};
       const wl = (u.watchlist || []).filter((r) => (r.status || "active") === "active");
+      const cand = (u.candidate_pool || []).length;
       meta.innerHTML = [
         pill(`mode ${mode}`, mode === "dynamic" ? "good" : "warn"),
         pill(`watch ${wl.length}/${limits.watchlist ?? "—"}`, ""),
         pill(`focus ≤${limits.focus ?? "—"}`, ""),
+        pill(`candidates ${cand}`, ""),
+        pill(u.allow_candidate_adds ? "candidate adds on" : "candidate adds off", u.allow_candidate_adds ? "good" : "warn"),
       ].join(" ");
+      if (bookEl) {
+        const usage = u.book_usage || {};
+        const order = ["scalp", "day", "short", "medium"];
+        bookEl.innerHTML = order.map((h) => {
+          const b = usage[h] || {};
+          const open = b.open ?? 0;
+          const max = b.max_positions ?? "—";
+          const label = b.label_ko ? `${b.label_ko}` : h;
+          return pill(`${label} ${open}/${max}`, b.full ? "bad" : open ? "good" : "");
+        }).join(" ");
+      }
       const focus = u.focus;
       if (focus && (focus.symbols || []).length) {
         focusEl.innerHTML =
@@ -952,6 +975,51 @@
       }).join("");
     }
 
+    function renderForceClose(data) {
+      const meta = document.getElementById("forceCloseMeta");
+      const plansEl = document.getElementById("forceClosePlans");
+      const intentsEl = document.getElementById("forceCloseIntents");
+      if (!meta || !plansEl || !intentsEl) return;
+      const fc = data.force_close || {};
+      meta.innerHTML = [
+        pill(fc.armed ? "paper auto-close ARMED" : "paper auto-close safe", fc.armed ? "warn" : "good"),
+        pill(`AUTO_EXECUTE_FORCE_CLOSE=${fc.auto_execute_force_close ? "on" : "off"}`, fc.auto_execute_force_close ? "warn" : ""),
+        pill(`paper submit ${fc.paper_auto_submit_allowed ? "allowed" : "blocked"}`, fc.paper_auto_submit_allowed ? "good" : "warn"),
+        pill(`mode ${fc.intraday_mode || "—"}`, ""),
+      ].join(" ");
+      const closing = data.latest_closing;
+      if (closing) {
+        const plans = closing.plans || [];
+        const rows = plans.length
+          ? plans.map((p) => `<tr>
+              <td class="mono">${esc(p.symbol)}</td>
+              <td>${esc(p.action)}</td>
+              <td>${esc(p.quantity)}</td>
+              <td>${pill(p.is_intraday_only ? "intraday" : "swing", p.is_intraday_only ? "warn" : "good")}</td>
+              <td class="muted">${esc(p.rationale || "")}</td>
+            </tr>`).join("")
+          : "";
+        plansEl.innerHTML =
+          `<div class="muted" style="margin-bottom:0.35rem">Latest closing · ${esc(fmtWhen(closing.created_at))} · ${esc(closing.policy || "")}</div>` +
+          dataTable(["Symbol", "Action", "Qty", "Book", "Rationale"], rows, 5);
+      } else {
+        plansEl.innerHTML = `<div class="muted">No closing review yet</div>`;
+      }
+      const intents = data.closing_intents || [];
+      const irows = intents.length
+        ? intents.map((i) => `<tr>
+            <td class="mono">${esc(i.symbol)}</td>
+            <td>${esc(i.side)}</td>
+            <td>${esc(i.quantity)}</td>
+            <td>${pill(i.status || "—", "")}</td>
+            <td class="muted">${esc(i.thesis || "")}</td>
+          </tr>`).join("")
+        : "";
+      intentsEl.innerHTML =
+        `<div class="muted" style="margin-bottom:0.35rem">Closing exit intents</div>` +
+        dataTable(["Symbol", "Side", "Qty", "Status", "Thesis"], irows, 5);
+    }
+
     async function refreshOverview() {
       const data = await fetchJson("/dashboard/summary");
       document.getElementById("asOf").textContent =
@@ -983,6 +1051,7 @@
         document.getElementById("riskMeta").textContent = `Daily PnL $${Number(p.daily_pnl).toFixed(2)}`;
       }
       renderUniverse(data.universe);
+      renderForceClose(data);
       const cio = data.cio;
       if (cio) {
         const actions = cio.payload?.symbol_actions || [];

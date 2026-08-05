@@ -27,8 +27,10 @@ from app.models import (
     AgentReport,
     AgentRun,
     CIODecisionRecord,
+    ClosingReview,
     NewsItem,
     Order,
+    OrderIntent,
     PortfolioSnapshot,
     Position,
     SystemEvent,
@@ -295,6 +297,62 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     except Exception:  # noqa: BLE001
         universe_summary = None
 
+    from app.execution.firm_execution import paper_auto_submit_allowed
+
+    force_close_ops = {
+        "auto_execute_force_close": bool(settings.auto_execute_force_close),
+        "paper_auto_submit_allowed": paper_auto_submit_allowed(settings),
+        "armed": bool(settings.auto_execute_force_close) and paper_auto_submit_allowed(settings),
+        "intraday_mode": settings.intraday_operation_mode,
+    }
+
+    latest_closing: dict[str, Any] | None = None
+    try:
+        crow = (
+            await session.execute(select(ClosingReview).order_by(desc(ClosingReview.created_at)).limit(1))
+        ).scalar_one_or_none()
+        if crow is not None:
+            latest_closing = {
+                "id": str(crow.id),
+                "policy": crow.policy,
+                "created_at": crow.created_at.isoformat() if crow.created_at else None,
+                "intent_drafts": crow.intent_drafts or [],
+                "notes": crow.notes or [],
+                "plans": (crow.payload or {}).get("plans") if isinstance(crow.payload, dict) else [],
+            }
+    except Exception:  # noqa: BLE001
+        latest_closing = None
+
+    closing_intents: list[dict[str, Any]] = []
+    try:
+        irows = list(
+            (
+                await session.execute(
+                    select(OrderIntent).order_by(desc(OrderIntent.created_at)).limit(30)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for intent in irows:
+            meta = intent.metadata_json or {}
+            thesis = intent.thesis or ""
+            if meta.get("source") == "closing_service" or thesis.startswith("closing:"):
+                closing_intents.append(
+                    {
+                        "id": str(intent.id),
+                        "symbol": intent.symbol,
+                        "side": intent.side,
+                        "quantity": intent.quantity,
+                        "status": intent.status,
+                        "thesis": thesis,
+                        "created_at": intent.created_at.isoformat() if intent.created_at else None,
+                    }
+                )
+        closing_intents = closing_intents[:8]
+    except Exception:  # noqa: BLE001
+        closing_intents = []
+
     return {
         "as_of": dual_timezone_labels(now),
         "market_status": {
@@ -305,6 +363,9 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             "workflow": workflow_summary,
         },
         "universe": universe_summary,
+        "force_close": force_close_ops,
+        "latest_closing": latest_closing,
+        "closing_intents": closing_intents,
         "portfolio": None
         if snap is None
         else {

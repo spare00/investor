@@ -157,7 +157,32 @@ class UniverseService:
             },
             "candidate_pool": self._candidate_pool(),
             "allow_candidate_adds": self.settings.universe_allow_candidate_adds,
+            "book_usage": await self._book_usage(),
         }
+
+    async def _book_usage(self) -> dict[str, Any]:
+        from app.models import Position
+        from app.universe.caps import count_open_by_horizon
+        from app.universe.horizons import HORIZON_POLICIES, UniverseHorizon
+
+        held = [
+            p.symbol.upper()
+            for p in (await self.session.execute(select(Position))).scalars().all()
+            if p.quantity
+        ]
+        horizons = await self.horizon_by_symbol()
+        counts = count_open_by_horizon(held, horizons)
+        out: dict[str, Any] = {}
+        for h in UniverseHorizon:
+            pol = HORIZON_POLICIES[h]
+            cur = int(counts.get(h.value, 0))
+            out[h.value] = {
+                "open": cur,
+                "max_positions": pol.max_positions,
+                "label_ko": pol.label_ko,
+                "full": cur >= pol.max_positions,
+            }
+        return out
 
     def _candidate_pool(
         self,
