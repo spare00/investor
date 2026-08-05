@@ -9,10 +9,10 @@
 
 | Tab | Data sources | UI |
 |-----|----------------|-----|
-| Overview | `/dashboard/summary` | US session, LLM budget panel, universe, force-close, settlement/recon/overnight, startup recovery, active alerts (ack/resolve), monitor, reeval cadence, session jobs, agent lamps |
-| Performance | `/performance/*` | Metric KPIs, holdings / drawdown tables, Raw JSON toggle |
-| Agents | `/performance/agents`, `/calibration`, `/decisions` | Accuracy KPIs, calibration bars, eval table |
-| Operations | `/operations/metrics`, `/alerts`, `/readiness`, `/simulations` | Ops KPIs, readiness checklist, sim table |
+| Overview | `/dashboard/summary` | Session, portfolio, risk, CIO, positions/orders, jobs, compact universe + ops strip (hard/force/alerts) |
+| Performance | `/performance/*` | Portfolio / returns / risk / drawdown / trades |
+| Agents | `/performance/agents`, `/calibration`, `/decisions` | Attribution KPIs (needs scored BUY/SELL), calibration, decision evals |
+| Operations | `/dashboard/summary` + `/operations/*` | Monitor, force-close, settlement/recon/overnight, recovery, alerts, LLM budget, universe horizons, ops KPIs |
 | Audit | `/status`, `/health`, `/decisions` | Status pills, risk caps, decision audit table |
 
 Overview and the top strip show **US equity session phase** (`REGULAR`, `PREMARKET`, `AFTER_HOURS`, …) from `MarketCalendarService` via `market_status.us_session`, plus operator trading controls and daily workflow state when present. `session_jobs` lists DB-planned daily jobs (not only APScheduler pollers in `next_jobs`).

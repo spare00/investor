@@ -146,8 +146,13 @@ def test_dashboard_routes_exist() -> None:
     assert b"ackAlert" in dash.content
     assert b"overnightDetail" in dash.content
     assert b"renderLlmBudgetPanel" in dash.content
+    assert b"overviewOpsStrip" in dash.content
+    assert b"renderOverviewOpsStrip" in dash.content
+    assert b"agentPerfNote" in dash.content
+    assert b"Horizon book" in dash.content
     assert b"Startup / Intraday Recovery" in dash.content
     assert b"Active Alerts" in dash.content
+    assert b"Position Monitor / Hard Stops" in dash.content
     metrics = client.get("/metrics")
     assert metrics.status_code == 200
     assert b"investor_" in metrics.content or b"python_" in metrics.content
