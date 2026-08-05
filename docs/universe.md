@@ -28,7 +28,9 @@ Policies live in `app/universe/horizons.py` (capacity, re-eval cadence, liquidit
 - `POST /universe/refresh` — run Universe Manager agent
 - `GET /universe/horizons` — policy summaries
 
-Dashboard Overview renders the same snapshot under **Universe** (mode, focus chips, active names by horizon).
+CLI: `investor universe show|horizons|refresh`
+
+Dashboard Overview renders the same snapshot under **Universe** (mode, focus chips, active names by horizon) with a Refresh Universe control.
 
 ## Scheduler
 

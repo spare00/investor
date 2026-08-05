@@ -372,7 +372,7 @@
         <div class="muted" id="portfolioMeta"></div>
       </section>
       <section class="wide">
-        <h2>Universe</h2>
+        <h2>Universe <button id="btnUniverse" type="button" style="float:right;font-size:0.8rem;padding:0.25rem 0.55rem" onclick="refreshUniverseNow()">Refresh Universe</button></h2>
         <div id="universeMeta" class="muted">Loading…</div>
         <div id="universeFocus" style="margin-top:0.5rem"></div>
         <div id="universeByHorizon" style="margin-top:0.75rem"></div>
@@ -516,7 +516,7 @@
     }
 
     function setBusy(busy, message) {
-      ["btnRefresh", "btnPremarket", "btnIntraday", "btnPause", "btnRestart", "btnStop"].forEach((id) => {
+      ["btnRefresh", "btnPremarket", "btnIntraday", "btnPause", "btnRestart", "btnStop", "btnUniverse"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.disabled = busy;
       });
@@ -1355,6 +1355,22 @@
         setBusy(false, `${label} done · ${body.outcome || body.status || "ok"}`);
       } catch (err) {
         setBusy(false, `${label} failed: ${err.message || err}`);
+      }
+    }
+
+    async function refreshUniverseNow() {
+      setBusy(true, "Universe refresh… (LLM may take a minute)");
+      try {
+        const res = await fetch("/universe/refresh", { method: "POST" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+        await refreshOverview();
+        const note = body.skipped
+          ? `skipped · ${body.reason || "n/a"}`
+          : `proposals ${body.proposals ?? 0}`;
+        setBusy(false, `Universe refreshed · ${note}`);
+      } catch (err) {
+        setBusy(false, `Universe refresh failed: ${err.message || err}`);
       }
     }
 

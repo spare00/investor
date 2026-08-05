@@ -421,6 +421,12 @@ def main(argv: list[str] | None = None) -> int:
     security = sub.add_parser("security", help="Security audit checks (Phase 7)")
     security.add_subparsers(dest="security_cmd").add_parser("audit")
 
+    universe = sub.add_parser("universe", help="AI watchlist / focus set")
+    universe_sub = universe.add_subparsers(dest="universe_cmd", required=True)
+    universe_sub.add_parser("show")
+    universe_sub.add_parser("horizons")
+    universe_sub.add_parser("refresh")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "run-analysis":
@@ -524,6 +530,8 @@ def main(argv: list[str] | None = None) -> int:
         result = asyncio.run(_backup_cmd(args))
     elif args.cmd == "security":
         result = _security_audit()
+    elif args.cmd == "universe":
+        result = asyncio.run(_universe_cmd(args.universe_cmd))
     else:
         return 1
 
@@ -781,6 +789,33 @@ async def _backup_cmd(args: argparse.Namespace) -> dict:
             verified = svc.verify(args.path)
             return {"valid": verified.valid, "errors": verified.errors, "backup_id": verified.backup_id}
         raise SystemExit("unknown backup command")
+
+
+async def _universe_cmd(cmd: str) -> dict:
+    from sqlalchemy import select
+
+    from app.models import Position
+    from app.universe.horizons import all_horizon_summaries
+    from app.universe.service import UniverseService
+
+    if cmd == "horizons":
+        return {"horizons": all_horizon_summaries()}
+
+    factory = get_session_factory()
+    async with factory() as session:
+        svc = UniverseService(session, settings=get_settings())
+        if cmd == "show":
+            snap = await svc.snapshot()
+            await session.commit()
+            return snap
+        if cmd == "refresh":
+            holdings = [
+                p.symbol for p in (await session.execute(select(Position))).scalars().all()
+            ]
+            result = await svc.refresh(holdings=holdings)
+            await session.commit()
+            return result
+        raise SystemExit(f"unknown universe command: {cmd}")
 
 
 def _security_audit() -> dict:
