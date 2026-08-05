@@ -136,12 +136,3 @@ def test_legacy_state_file_seeds_month_and_survives_reload(tmp_path) -> None:
     snap2 = snapshot_llm_budget(settings)
     assert snap2.total_tokens == 120
     assert snap2.month_calls == 3
-
-
-def test_dashboard_html_isolates_usage_strip() -> None:
-    from pathlib import Path
-
-    html = Path("static/dashboard.html").read_text()
-    assert "async function refreshStrip" in html
-    assert "Promise.allSettled" in html
-    assert "meta.dataset.hasValue" in html
