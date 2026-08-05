@@ -146,6 +146,17 @@ class PositionManager:
         self.session.add(snap)
         await self.session.flush()
 
+        lifecycle_sync: dict[str, Any] = {}
+        try:
+            from app.intraday.monitor import PositionMonitor
+
+            lifecycle_sync = await PositionMonitor(
+                self.session, settings=self.settings
+            ).sync_from_broker_positions(list(positions))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("lifecycle_sync_failed", error=str(exc)[:200])
+            lifecycle_sync = {"error": str(exc)[:200]}
+
         from app.core.metrics import (
             OPEN_POSITIONS,
             PORTFOLIO_CASH,
@@ -163,6 +174,8 @@ class PositionManager:
             equity=equity,
             cash=cash,
             positions=len(positions),
+            lifecycles=lifecycle_sync.get("upserted"),
+            lifecycles_closed=lifecycle_sync.get("closed"),
         )
         return {
             "equity": equity,
@@ -172,6 +185,7 @@ class PositionManager:
             "open_positions": len(positions),
             "daily_pnl": snap.daily_pnl,
             "daily_pnl_pct": snap.daily_pnl_pct,
+            "lifecycles": lifecycle_sync,
         }
 
     async def portfolio_state_input(self) -> PortfolioStateInput:

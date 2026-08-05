@@ -8,4 +8,4 @@ Material drift should block new risk-taking (operator review). Broker is source 
 
 Triggers: `ON_DEMAND`, `SCHEDULED` (APScheduler when `ENABLE_SCHEDULER` and broker connection/orders are on), startup/recovery hooks, CLI `execution reconcile`, `POST /execution/reconcile`.
 
-Cadence: `BROKER_RECONCILIATION_INTERVAL_SECONDS` (default 60, min 30). Scheduled runs also soft-sync positions via `PositionManager`.
+Cadence: `BROKER_RECONCILIATION_INTERVAL_SECONDS` (default 60, min 30). Scheduled runs poll order status (`BrokerUpdateProcessor`), then soft-sync positions via `PositionManager` (which also upserts `position_lifecycles`).

@@ -322,7 +322,14 @@ async def _reconcile_broker() -> None:
             return
         try:
             try:
+                from app.intraday.broker_updates import BrokerUpdateProcessor
+
                 recon = await ReconciliationService(session, settings=settings).run("SCHEDULED")
+                poll: dict[str, Any] = {}
+                try:
+                    poll = await BrokerUpdateProcessor(session, settings=settings).poll_and_apply()
+                except Exception as exc:  # noqa: BLE001
+                    poll = {"error": str(exc)[:200]}
                 sync: dict[str, Any] = {}
                 try:
                     sync = await PositionManager(session, settings=settings).sync_from_broker()
@@ -336,7 +343,11 @@ async def _reconcile_broker() -> None:
                     "result": recon.get("result"),
                     "issues": len(recon.get("issues") or []),
                     "blocks_new_orders": recon.get("blocks_new_orders"),
+                    "poll_updated": poll.get("updated"),
+                    "poll_error": poll.get("error"),
                     "sync_error": sync.get("error"),
+                    "lifecycles_upserted": (sync.get("lifecycles") or {}).get("upserted"),
+                    "lifecycles_closed": (sync.get("lifecycles") or {}).get("closed"),
                 }
                 _job_log.append(entry)
                 if len(_job_log) > 100:

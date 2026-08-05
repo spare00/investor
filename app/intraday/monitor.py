@@ -229,6 +229,7 @@ class PositionMonitor:
         avg_entry: float,
         decision_id: UUID | None = None,
         stop_price: float | None = None,
+        current_price: float | None = None,
     ) -> PositionLifecycle:
         existing = (
             await self.session.execute(
@@ -238,9 +239,17 @@ class PositionMonitor:
                 .limit(1)
             )
         ).scalar_one_or_none()
+        px = float(current_price if current_price is not None else avg_entry or 0)
         if existing:
             existing.quantity = quantity
             existing.average_entry_price = avg_entry
+            if px > 0:
+                existing.current_price = px
+            if stop_price is not None and existing.stop_price is None:
+                existing.stop_price = stop_price
+                policy = dict(existing.exit_policy or {})
+                policy["stop_loss"] = stop_price
+                existing.exit_policy = policy
             await self.session.flush()
             return existing
         holding = await self._default_max_holding(symbol)
@@ -251,7 +260,7 @@ class PositionMonitor:
             status="OPEN",
             quantity=quantity,
             average_entry_price=avg_entry,
-            current_price=avg_entry,
+            current_price=px or avg_entry,
             stop_price=stop_price,
             decision_id=decision_id,
             opened_at=datetime.now(UTC),
@@ -264,6 +273,57 @@ class PositionMonitor:
         self.session.add(row)
         await self.session.flush()
         return row
+
+    async def sync_from_broker_positions(
+        self,
+        positions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Upsert OPEN lifecycles from broker position rows; close flats.
+
+        Expected keys per row: symbol, qty (or quantity), avg_entry_price,
+        optional current_price / market_value / stop_price.
+        """
+        held: dict[str, dict[str, Any]] = {}
+        upserted = 0
+        for raw in positions:
+            symbol = str(raw.get("symbol") or "").upper()
+            qty = float(raw.get("qty") if raw.get("qty") is not None else raw.get("quantity") or 0)
+            if not symbol or abs(qty) < 1e-12:
+                continue
+            avg = float(raw.get("avg_entry_price") or raw.get("average_entry_price") or 0)
+            mv = raw.get("market_value")
+            cur = raw.get("current_price")
+            if cur is None and mv is not None and qty:
+                cur = float(mv) / abs(qty)
+            stop = raw.get("stop_price")
+            await self.ensure_lifecycle_from_broker(
+                symbol=symbol,
+                quantity=qty,
+                avg_entry=avg,
+                stop_price=float(stop) if stop is not None else None,
+                current_price=float(cur) if cur is not None else None,
+            )
+            held[symbol] = raw
+            upserted += 1
+
+        open_rows = await self.list_lifecycles()
+        closed = 0
+        now = datetime.now(UTC)
+        for lc in open_rows:
+            sym = lc.symbol.upper()
+            if sym in held:
+                continue
+            if lc.status in {"OPEN", "ADDING", "REDUCING", "PENDING_OPEN", "PENDING_CLOSE"}:
+                lc.status = "CLOSED"
+                lc.quantity = 0.0
+                lc.closed_at = now
+                meta = dict(lc.metadata_json or {})
+                meta["closed_by"] = "broker_position_sync"
+                meta["closed_at"] = now.isoformat()
+                lc.metadata_json = meta
+                closed += 1
+        await self.session.flush()
+        return {"upserted": upserted, "closed": closed, "held": sorted(held.keys())}
 
     async def _watchlist_horizon(self, symbol: str) -> str | None:
         from app.models import WatchlistSymbol
@@ -298,7 +358,3 @@ class PositionMonitor:
             return UniverseHorizon(horizon) in {UniverseHorizon.SHORT, UniverseHorizon.MEDIUM}
         except ValueError:
             return False
-        try:
-            return int(policy_for(row.horizon).max_holding_minutes or 0) or None
-        except ValueError:
-            return None
