@@ -212,16 +212,27 @@ class WorkflowService:
                 notes.append("portfolio_default_fallback")
 
         held = [p.symbol for p in port.positions]
+        from app.universe.context import load_last_regime_context
         from app.universe.service import UniverseService
 
         univ = UniverseService(self.session, settings=self.settings)
         await univ.ensure_seeded()
+        ctx = await load_last_regime_context(self.session)
         # Refresh focus lightly without mandatory LLM on every premarket if disabled;
-        # when enabled, run manager once per premarket.
+        # when enabled, run manager once per premarket with prior regime/themes.
         if self.settings.universe_manager_enabled and univ.is_dynamic():
             try:
-                await univ.refresh(holdings=held)
+                await univ.refresh(
+                    holdings=held,
+                    market_regime=ctx.get("market_regime"),
+                    themes=list(ctx.get("themes") or []),
+                )
                 notes.append("universe_refreshed")
+                if ctx.get("market_regime") or ctx.get("themes"):
+                    notes.append(
+                        f"universe_context_prior:{ctx.get('market_regime') or 'n/a'}:"
+                        f"{','.join((ctx.get('themes') or [])[:3]) or 'none'}"
+                    )
             except Exception as exc:  # noqa: BLE001
                 await univ.build_focus_without_llm(holdings=held)
                 notes.append(f"universe_refresh_fallback:{exc}")
@@ -249,6 +260,22 @@ class WorkflowService:
                 {"symbol": s, "horizon": horizons.get(s, "short")} for s in sorted(entry_universe)
             ],
         )
+
+        # After agents: boost theme-aligned names + rebuild focus for rest of session / next cycle.
+        try:
+            regime = analysis.macro.market_regime.value
+            themes = list(analysis.market_intelligence.top_market_themes or [])
+            applied = await univ.apply_session_context(
+                holdings=held, market_regime=regime, themes=themes
+            )
+            notes.append(
+                f"universe_context_applied:{regime}:boosted={applied.get('boosted', 0)}"
+            )
+            # Refresh entry/horizon map after priority boosts (same symbols, updated focus).
+            entry_universe = await univ.entry_universe()
+            horizons = await univ.horizon_by_symbol()
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"universe_context_apply_failed:{exc}")
 
         prices = {m.symbol: m.last for m in collection.markets}
         seen_keys = await OrderManager(self.session, settings=self.settings).seen_idempotency_keys()

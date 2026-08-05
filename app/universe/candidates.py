@@ -88,7 +88,21 @@ def themes_for_regime(market_regime: str | None) -> list[str]:
     if not market_regime:
         return []
     key = market_regime.strip().lower().replace("-", "_").replace(" ", "_")
-    return list(REGIME_THEMES.get(key, ()))
+    # Map firm MarketRegime enum values onto theme buckets.
+    aliases = {
+        "strong_risk_on": "risk_on",
+        "risk_on": "risk_on",
+        "neutral": "transition",
+        "risk_off": "risk_off",
+        "strong_risk_off": "risk_off",
+        "crisis": "crisis",
+        "transition": "transition",
+        "insufficient_data": "",
+    }
+    mapped = aliases.get(key, key)
+    if not mapped:
+        return []
+    return list(REGIME_THEMES.get(mapped, ()))
 
 
 def ranked_candidate_pool(

@@ -41,7 +41,7 @@ Dashboard Overview renders the same snapshot under **Universe** (mode, focus chi
 
 ## Scheduler
 
-When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler also runs `universe_refresh` every `UNIVERSE_REFRESH_SECONDS` (default 900). Premarket workflow still refreshes once per session.
+When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler also runs `universe_refresh` every `UNIVERSE_REFRESH_SECONDS` (default 900). Premarket workflow still refreshes once per session, using the prior CIO/MI **regime/themes** when available, then applies post-analysis priority boosts (no second LLM).
 
 ## Persistence
 

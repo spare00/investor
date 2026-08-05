@@ -69,7 +69,29 @@ def test_regime_maps_to_themes() -> None:
     from app.universe.candidates import themes_for_regime
 
     assert "tech" in themes_for_regime("risk_on")
+    assert "tech" in themes_for_regime("RISK_ON")
+    assert "tech" in themes_for_regime("STRONG_RISK_ON")
     assert themes_for_regime(None) == []
+    assert themes_for_regime("INSUFFICIENT_DATA") == []
+
+
+@pytest.mark.asyncio
+async def test_apply_session_context_boosts_theme_names(session: AsyncSession) -> None:
+    settings = Settings(
+        universe_mode="dynamic",
+        trade_allowlist=["SPY", "SMH", "WMT"],
+        universe_manager_enabled=False,
+        universe_focus_limit=3,
+    )
+    svc = UniverseService(session, settings=settings)
+    await svc.ensure_seeded()
+    before = {r.symbol: r.priority for r in await svc.list_active()}
+    out = await svc.apply_session_context(
+        holdings=["SPY"], market_regime="RISK_ON", themes=["semiconductor"]
+    )
+    assert out["boosted"] >= 1
+    after = {r.symbol: r.priority for r in await svc.list_active()}
+    assert after.get("SMH", 0) >= before.get("SMH", 0)
 
 
 def test_candidate_adds_can_be_disabled() -> None:

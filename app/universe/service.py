@@ -254,6 +254,67 @@ class UniverseService:
             source="universe_service",
         )
 
+    async def apply_session_context(
+        self,
+        *,
+        holdings: list[str] | None = None,
+        market_regime: str | None = None,
+        themes: list[str] | None = None,
+        session_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Boost theme-aligned watchlist priorities and rebuild focus (no LLM)."""
+        from app.universe.candidates import THEME_SYMBOLS, themes_for_regime
+
+        await self.ensure_seeded()
+        tags = [t.strip().lower() for t in (themes or []) if t and str(t).strip()]
+        tags.extend(themes_for_regime(market_regime))
+        tags = list(dict.fromkeys(tags))
+        boosted_syms: set[str] = set()
+        for tag in tags:
+            boosted_syms.update(s.upper() for s in THEME_SYMBOLS.get(tag, ()))
+
+        now = utc_now()
+        boosted = 0
+        if boosted_syms:
+            active = await self.list_active()
+            for row in active:
+                if row.symbol.upper() in boosted_syms:
+                    before = int(row.priority)
+                    row.priority = min(100, before + 8)
+                    if row.priority != before:
+                        boosted += 1
+                    row.last_reviewed_at = now
+                    row.payload = {
+                        **(row.payload or {}),
+                        "regime_boost": market_regime,
+                        "themes": tags,
+                    }
+            await self.session.flush()
+
+        focus = await self.build_focus_without_llm(
+            holdings=holdings or [],
+            session_date=session_date,
+        )
+        # Annotate latest focus with context
+        latest = await self._latest_focus()
+        if latest is not None:
+            latest.payload = {
+                **(latest.payload or {}),
+                "market_regime": market_regime,
+                "themes": tags,
+                "boosted_count": boosted,
+            }
+            latest.rationale = (
+                f"{latest.rationale} · regime={market_regime or 'n/a'} themes={','.join(tags[:4]) or 'none'}"
+            )
+            await self.session.flush()
+        return {
+            "boosted": boosted,
+            "themes": tags,
+            "market_regime": market_regime,
+            "focus": focus,
+        }
+
     async def _apply_proposals(self, out: UniverseManagerOutput) -> None:
         now = utc_now()
         by_sym = {
