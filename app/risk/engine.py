@@ -81,13 +81,15 @@ class DeterministicRiskEngine:
         stop_price: float,
         atr: float | None = None,
         existing_position_value: float = 0.0,
+        risk_mult: float = 1.0,
     ) -> SizingResult:
         """
-        Size by dollar risk = equity * risk_per_trade_pct / 100.
+        Size by dollar risk = equity * risk_per_trade_pct / 100 * risk_mult.
 
         Shares = floor(dollar_risk / stop_distance), then capped by max position %.
         Optional ATR is used only to widen stop distance if stop is tighter than 1*ATR
         (conservative: never size up on ATR alone).
+        Horizon books may pass risk_mult < 1 (e.g. scalp).
         """
         if equity <= 0 or entry_price <= 0:
             return SizingResult(shares=0, dollar_risk=0.0, stop_distance=0.0, position_notional=0.0)
@@ -96,7 +98,7 @@ class DeterministicRiskEngine:
         if atr is not None and atr > distance:
             distance = atr
 
-        dollar_risk = equity * (self.limits.risk_per_trade_pct / 100.0)
+        dollar_risk = equity * (self.limits.risk_per_trade_pct / 100.0) * max(0.0, risk_mult)
         raw_shares = int(dollar_risk // distance) if distance > 0 else 0
         capped_by: list[str] = []
 

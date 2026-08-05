@@ -78,10 +78,12 @@ class AgentPipeline:
         proposed_trades: list[ProposedTrade] | None = None,
         workflow_id: UUID | None = None,
         entry_universe: list[str] | None = None,
+        watchlist_context: list[dict] | None = None,
     ) -> AnalysisBundle:
         wf = workflow_id or collection.workflow_id or uuid4()
         as_of = collection.collected_at
         entry_list = list(entry_universe) if entry_universe is not None else list(self.settings.trade_allowlist)
+        watch_ctx = list(watchlist_context or [])
 
         mi_in = MarketIntelligenceInput(
             as_of=as_of,
@@ -228,6 +230,7 @@ class AgentPipeline:
                 portfolio_cash_pct=portfolio.cash_pct,
                 positions=list(portfolio.positions),
                 allowlist=entry_list,
+                watchlist=watch_ctx,
                 trace=TraceMetadata(source_data_timestamp=as_of),
             )
         )

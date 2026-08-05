@@ -34,7 +34,10 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
             "Produce final CIODecision JSON. Honor Hard Vetoes. "
             "If risk_approval is false, do not emit risk-increasing actions. "
             "Review EVERY open position and emit HOLD/REDUCE/PARTIAL_SELL/SELL as needed "
-            "(including symbols not on watchlist). New entries only from allowlist/watchlist.\n"
+            "(including symbols not on watchlist). New entries only from allowlist/watchlist. "
+            "Match time_horizon to watchlist horizon when present "
+            "(scalp/day→intraday, short→swing, medium→position). "
+            "Respect per-horizon book capacity — prefer highest-conviction names.\n"
             f"Open positions: {held}\n\n"
             f"{dump_for_prompt(payload)}"
         )

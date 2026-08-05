@@ -63,6 +63,10 @@ class CIOInput(StrictModel):
     portfolio_cash_pct: float
     positions: list[PositionSnapshot] = Field(default_factory=list)
     allowlist: list[str] = Field(default_factory=list)
+    watchlist: list[dict] = Field(
+        default_factory=list,
+        description="Active watchlist rows with horizon for CIO style matching",
+    )
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 
 

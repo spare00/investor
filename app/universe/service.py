@@ -95,6 +95,11 @@ class UniverseService:
             return set(self.settings.allowlist_set())
         return {row.symbol.upper() for row in active}
 
+    async def horizon_by_symbol(self) -> dict[str, str]:
+        await self.ensure_seeded()
+        rows = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
+        return {r.symbol.upper(): r.horizon for r in rows if r.status == "active"}
+
     async def collection_universe(self, holdings: list[str] | None = None) -> list[str]:
         """Symbols to collect/analyze this cycle: holdings ∪ focus (or watchlist capped)."""
         held = sorted({h.upper() for h in (holdings or []) if h})

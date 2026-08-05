@@ -212,6 +212,7 @@ class WorkflowService:
 
         universe = await univ.collection_universe(holdings=held)
         entry_universe = await univ.entry_universe()
+        horizons = await univ.horizon_by_symbol()
 
         collection = await DataCollectionService(
             self.session, settings=self.settings, persist=self.persist
@@ -226,6 +227,9 @@ class WorkflowService:
             proposed_trades=proposed_trades or [],
             workflow_id=wf,
             entry_universe=sorted(entry_universe),
+            watchlist_context=[
+                {"symbol": s, "horizon": horizons.get(s, "short")} for s in sorted(entry_universe)
+            ],
         )
 
         prices = {m.symbol: m.last for m in collection.markets}
@@ -240,6 +244,7 @@ class WorkflowService:
             workflow_id=str(wf),
             seen_idempotency_keys=seen_keys,
             entry_universe=entry_universe,
+            horizon_by_symbol=horizons,
         )
 
         orders: list[Order] = []

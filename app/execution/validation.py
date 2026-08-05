@@ -81,6 +81,7 @@ class ExecutionValidator:
         seen_idempotency_keys: set[str] | None = None,
         workflow_id: str | None = None,
         entry_universe: set[str] | None = None,
+        horizon_by_symbol: dict[str, str] | None = None,
     ) -> ExecutionValidationResult:
         rejections: list[str] = []
 
@@ -110,7 +111,9 @@ class ExecutionValidator:
 
         intents: list[ValidatedOrderIntent] = []
         allowlist = entry_universe if entry_universe is not None else self.settings.allowlist_set()
+        horizons = horizon_by_symbol or {}
         seen = seen_idempotency_keys or set()
+        held_syms = [p.symbol for p in portfolio.positions if p.quantity]
 
         for plan in decision.symbol_actions:
             if plan.action in {SymbolAction.HOLD, SymbolAction.NO_TRADE, SymbolAction.STAY_CASH}:
@@ -126,6 +129,8 @@ class ExecutionValidator:
                 seen=seen,
                 workflow_id=workflow_id,
                 allowlist=allowlist,
+                horizon_by_symbol=horizons,
+                held_symbols=held_syms,
             )
             if isinstance(result, str):
                 rejections.append(result)
@@ -151,7 +156,12 @@ class ExecutionValidator:
         seen: set[str],
         workflow_id: str | None,
         allowlist: set[str],
+        horizon_by_symbol: dict[str, str] | None = None,
+        held_symbols: list[str] | None = None,
     ) -> ValidatedOrderIntent | str:
+        from app.universe.caps import horizon_cap_violation
+        from app.universe.horizons import policy_for
+
         symbol = plan.symbol.upper()
         if plan.action in ENTRY_ACTIONS and symbol not in allowlist:
             return f"{symbol}:not_in_allowlist"
@@ -161,6 +171,18 @@ class ExecutionValidator:
 
         if plan.action in ENTRY_ACTIONS and plan.stop_loss is None and not plan.invalidation.strip():
             return f"{symbol}:missing_stop_or_invalidation"
+
+        horizons = horizon_by_symbol or {}
+        held = held_symbols or [p.symbol for p in portfolio.positions if p.quantity]
+        if plan.action in ENTRY_ACTIONS:
+            cap = horizon_cap_violation(
+                symbol=symbol,
+                horizon_by_symbol=horizons,
+                held_symbols=held,
+                is_new_symbol=True,
+            )
+            if cap:
+                return cap
 
         price = latest_prices.get(symbol)
         if price is None or price <= 0:
@@ -178,10 +200,18 @@ class ExecutionValidator:
             side = "buy"
             if plan.stop_loss is None:
                 return f"{symbol}:buy_requires_numeric_stop_for_sizing"
+            risk_mult = 1.0
+            hz = horizons.get(symbol)
+            if hz:
+                try:
+                    risk_mult = float(policy_for(hz).risk_per_trade_mult)
+                except ValueError:
+                    risk_mult = 1.0
             sizing = self.engine.position_size(
                 equity=portfolio.equity,
                 entry_price=price,
                 stop_price=plan.stop_loss,
+                risk_mult=risk_mult,
             )
             qty = float(sizing.shares)
             if qty <= 0:
