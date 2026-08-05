@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the Investor API (localhost-bound, paper-safe defaults).
+# Start local Postgres (if needed) + Investor API (localhost-bound, paper-safe).
 set -euo pipefail
 
 umask 077
@@ -37,6 +37,8 @@ fi
 if lsof -nP -iTCP:"${INVESTOR_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
   die "port ${INVESTOR_PORT} is already in use"
 fi
+
+ensure_local_db
 
 UVICORN="$(venv_uvicorn)"
 
@@ -86,6 +88,9 @@ for _ in $(seq 1 50); do
     echo "  url   http://${INVESTOR_HOST}:${INVESTOR_PORT}/dashboard"
     echo "  log   ${LOG_FILE}"
     echo "  pid   ${PID_FILE}"
+    if needs_local_db; then
+      echo "  db    docker compose service 'db' (managed)"
+    fi
     exit 0
   fi
   sleep 0.2

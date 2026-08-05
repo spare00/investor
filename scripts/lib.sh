@@ -13,6 +13,8 @@ INVESTOR_PORT="${INVESTOR_PORT:-8000}"
 INVESTOR_RELOAD="${INVESTOR_RELOAD:-0}"
 INVESTOR_ALLOW_LIVE="${INVESTOR_ALLOW_LIVE:-0}"
 INVESTOR_LOG_FORMAT="${INVESTOR_LOG_FORMAT:-console}"
+# Start/stop local docker-compose Postgres when DATABASE_URL points at localhost.
+INVESTOR_MANAGE_DB="${INVESTOR_MANAGE_DB:-1}"
 
 die() {
   echo "error: $*" >&2
@@ -83,4 +85,82 @@ read_pidfile() {
   pid="$(tr -d '[:space:]' < "${PID_FILE}")"
   [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
   printf '%s' "${pid}"
+}
+
+# True when .env DATABASE_URL looks like the local compose Postgres.
+needs_local_db() {
+  [[ "${INVESTOR_MANAGE_DB}" == "1" ]] || return 1
+  local url
+  url="$(env_get DATABASE_URL)"
+  if [[ -z "${url}" ]]; then
+    return 0
+  fi
+  case "${url}" in
+    *sqlite*) return 1 ;;
+    *127.0.0.1*|*localhost*|*@db:*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+docker_ready() {
+  command -v docker >/dev/null 2>&1 || return 1
+  docker info >/dev/null 2>&1
+}
+
+ensure_docker_runtime() {
+  if docker_ready; then
+    return 0
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    die "docker is required for local Postgres (or set INVESTOR_MANAGE_DB=0)"
+  fi
+  if command -v colima >/dev/null 2>&1; then
+    echo "docker daemon not running — starting colima…"
+    colima start
+    docker_ready || die "colima started but docker is still unavailable"
+    return 0
+  fi
+  die "docker daemon not running (start Docker Desktop / colima, or set INVESTOR_MANAGE_DB=0)"
+}
+
+compose() {
+  docker compose -f "${REPO_ROOT}/docker-compose.yml" "$@"
+}
+
+db_is_ready() {
+  docker_ready || return 1
+  # Prefer healthcheck; fall back to pg_isready inside the container.
+  local health
+  health="$(compose ps --status running --format '{{.Health}}' db 2>/dev/null | head -n1 || true)"
+  if [[ "${health}" == "healthy" ]]; then
+    return 0
+  fi
+  compose exec -T db pg_isready -U investor -d investor >/dev/null 2>&1
+}
+
+ensure_local_db() {
+  needs_local_db || return 0
+  ensure_docker_runtime
+  echo "ensuring local Postgres (docker compose db)…"
+  compose up -d db
+  local i
+  for i in $(seq 1 90); do
+    if db_is_ready; then
+      echo "postgres ready"
+      return 0
+    fi
+    sleep 1
+  done
+  die "postgres did not become ready — check: docker compose logs db"
+}
+
+stop_local_db() {
+  needs_local_db || return 0
+  if ! docker_ready; then
+    echo "docker not running — skipping db stop"
+    return 0
+  fi
+  echo "stopping local Postgres…"
+  compose stop db >/dev/null
+  echo "postgres stopped"
 }
