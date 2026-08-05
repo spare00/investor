@@ -4,7 +4,7 @@ Supports FIXED_PRICE, PERCENTAGE, ATR_BASED, TIME_BASED stops; multi-target take
 
 ## Hard stops (unattended)
 
-`IntradayService.monitor_all` creates Order Intents on hard stop. Defaults stay fail-closed (`AUTO_EXECUTE_HARD_STOPS=false` → `PENDING_APPROVAL`).
+`IntradayService.monitor_all` creates Order Intents on hard stop. For unattended paper, set `AUTO_EXECUTE_HARD_STOPS=true` so exits submit immediately (with the other paper automation gates). Leaving it false is fail-closed / manual only.
 
 When alerts are enabled, each hard-stop intent emits `trading.hard_stop` (CRITICAL, deduped per symbol/day). Monitor `EMERGENCY_ACTION_REQUIRED` emits `trading.monitor_emergency`.
 
