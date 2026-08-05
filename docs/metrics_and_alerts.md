@@ -21,6 +21,17 @@
 
 Providers: `log` (default), `fake`, `email`, `webhook`.
 
+## Wired emitters
+
+| Code | When |
+|------|------|
+| `trading.emergency_stop` | Emergency stop API / ops / intraday recovery restore |
+| `recon.material_drift` / `recon.broker_unavailable` / `recon.local_state_invalid` | Scheduled recon, recovery recon |
+| `llm.budget_exhausted` | Billable LLM call blocked by budget |
+| `llm.budget_soft_limit` | Soft % of daily/monthly budget hit |
+
+Helpers live in `app/alerts/ops.py` (dedupe + cooldown via `AlertService`).
+
 ## Not supported
 
 - PagerDuty/Opsgenie native integration

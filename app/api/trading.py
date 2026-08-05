@@ -79,6 +79,11 @@ async def emergency_stop(reason: str = "emergency_stop") -> dict[str, Any]:
         factory = get_session_factory()
         async with factory() as session:
             await persist_trading_controls(session, trading_controls, changed_by="api")
+            from app.alerts.ops import emit_emergency_stop_alert
+
+            await emit_emergency_stop_alert(
+                session, settings, reason=reason, source="trading_api"
+            )
             broker = get_broker(settings)
             if settings.emergency_stop_cancel_open_orders and hasattr(broker, "cancel_all_orders"):
                 canceled = await broker.cancel_all_orders()

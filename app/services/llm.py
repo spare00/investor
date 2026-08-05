@@ -15,6 +15,7 @@ from app.services.llm_budget import (
     LLMBudgetExceeded,
     assert_llm_budget_allows_call,
     record_llm_usage,
+    snapshot_llm_budget,
     usage_from_openai_response,
 )
 
@@ -73,6 +74,19 @@ class OpenAICompatibleClient:
             except Exception:  # noqa: BLE001
                 pass
             logger.error("llm_budget_blocked", reason=exc.reason, **(exc.snapshot or {}))
+            try:
+                from app.alerts.base import AlertSeverity
+                from app.alerts.ops import emit_llm_budget_alert
+
+                await emit_llm_budget_alert(
+                    settings=cfg,
+                    code="llm.budget_exhausted",
+                    message=str(exc.reason),
+                    severity=AlertSeverity.CRITICAL,
+                    context=exc.snapshot or {},
+                )
+            except Exception:  # noqa: BLE001
+                pass
             raise LLMError(str(exc)) from exc
         return await self._complete_json_with_retries(
             system_prompt=system_prompt,
@@ -139,6 +153,21 @@ class OpenAICompatibleClient:
             prompt_t = max(1, (len(system_prompt) + len(user_prompt)) // 4)
             completion_t = max(1, len(content) // 4)
         record_llm_usage(prompt_tokens=prompt_t, completion_tokens=completion_t, settings=cfg)
+        snap = snapshot_llm_budget(cfg)
+        if snap.soft_warned or snap.month_soft_warned:
+            try:
+                from app.alerts.base import AlertSeverity
+                from app.alerts.ops import emit_llm_budget_alert
+
+                await emit_llm_budget_alert(
+                    settings=cfg,
+                    code="llm.budget_soft_limit",
+                    message="LLM budget soft limit reached",
+                    severity=AlertSeverity.WARNING,
+                    context=snap.to_dict(),
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
         return LLMResponse(content=content, model=str(data.get("model") or payload["model"]), raw=data)
 

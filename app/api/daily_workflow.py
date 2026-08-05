@@ -166,6 +166,9 @@ async def operations_emergency_stop(
     settings = get_settings()
     snap = trading_controls.emergency_stop(reason)
     await persist_trading_controls(session, trading_controls, changed_by="operations")
+    from app.alerts.ops import emit_emergency_stop_alert
+
+    await emit_emergency_stop_alert(session, settings, reason=reason, source="operations_api")
     canceled = 0
     closed = 0
     error = None

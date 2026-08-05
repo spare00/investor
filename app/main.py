@@ -49,8 +49,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         factory = get_session_factory()
         async with factory() as session:
             recovery = await RecoveryService(session).run()
+            logger.info(
+                "startup_recovery",
+                **{k: recovery[k] for k in ("reclaimed_leases", "emergency_stop")},
+            )
+            if settings.enable_broker_connection or settings.enable_broker_orders:
+                from app.intraday.recovery import IntradayRecoveryService
+
+                intra = await IntradayRecoveryService(session, settings=settings).run()
+                logger.info(
+                    "startup_intraday_recovery",
+                    recovery_id=intra.get("recovery_id"),
+                    emergency_stop=intra.get("emergency_stop"),
+                    new_orders_allowed=intra.get("new_orders_allowed"),
+                    actions=intra.get("actions"),
+                )
             await session.commit()
-            logger.info("startup_recovery", **{k: recovery[k] for k in ("reclaimed_leases", "emergency_stop")})
     except Exception as exc:  # noqa: BLE001
         logger.warning("startup_recovery_skipped", error=str(exc))
     start_scheduler(settings)

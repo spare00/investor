@@ -325,6 +325,18 @@ async def _reconcile_broker() -> None:
                 from app.intraday.broker_updates import BrokerUpdateProcessor
 
                 recon = await ReconciliationService(session, settings=settings).run("SCHEDULED")
+                try:
+                    from app.alerts.ops import emit_reconciliation_alert
+
+                    await emit_reconciliation_alert(
+                        session,
+                        settings,
+                        result=str(recon.get("result") or ""),
+                        issues=list(recon.get("issues") or []),
+                        sync_type="SCHEDULED",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("broker_recon_alert_failed", error=str(exc)[:200])
                 poll: dict[str, Any] = {}
                 try:
                     poll = await BrokerUpdateProcessor(session, settings=settings).poll_and_apply()
