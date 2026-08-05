@@ -94,6 +94,15 @@ class ClosingService:
             lc = next((x for x in lifecycles if x.symbol.upper() == plan.symbol.upper()), None)
             if lc is None:
                 continue
+            # Idempotent: do not stack exit intents on every force-close tick.
+            if plan.action == "close" and lc.status == "PENDING_CLOSE":
+                draft["skipped"] = "already_pending_close"
+                notes.append(f"skip_duplicate_close:{plan.symbol}")
+                continue
+            if plan.action == "reduce" and lc.status == "REDUCING":
+                draft["skipped"] = "already_reducing"
+                notes.append(f"skip_duplicate_reduce:{plan.symbol}")
+                continue
             if plan.action == "close":
                 lc.status = "PENDING_CLOSE"
             elif plan.action == "reduce":

@@ -228,6 +228,18 @@ class WorkflowService:
                     themes=list(ctx.get("themes") or []),
                 )
                 notes.append("universe_refreshed")
+                try:
+                    from app.workflow.daily import DailyWorkflowService
+
+                    replan = await DailyWorkflowService(
+                        self.session, settings=self.settings
+                    ).replan_intraday_jobs()
+                    if not replan.get("skipped"):
+                        notes.append(
+                            f"intraday_replan:{replan.get('purged')}/{replan.get('created')}"
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    notes.append(f"intraday_replan_failed:{exc}")
                 if ctx.get("market_regime") or ctx.get("themes"):
                     notes.append(
                         f"universe_context_prior:{ctx.get('market_regime') or 'n/a'}:"

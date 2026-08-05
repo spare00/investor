@@ -13,7 +13,7 @@ Stop treating `TRADE_ALLOWLIST` as the only tradable set. The firm maintains a *
 | `short` | 단기 | multi-day swing | ~15m |
 | `medium` | 중기 | weeks–months | ~60m |
 
-Policies live in `app/universe/horizons.py` (capacity, re-eval cadence, liquidity bars, CIO `time_horizon` mapping). Intraday cooldowns use the **tightest** open book’s `reeval_seconds` (see `app/universe/reeval.py`). Session job plans (`intraday_eval_*`) use the tightest **active watchlist** horizon, floored by LLM budget (`≈ 2 × MAX_INTRADAY_REANALYSES` ticks per session); `INTRADAY_REEVALUATION_INTERVAL_MINUTES` is the fallback when no horizons are known.
+Policies live in `app/universe/horizons.py` (capacity, re-eval cadence, liquidity bars, CIO `time_horizon` mapping). Intraday cooldowns use the **tightest** open book’s `reeval_seconds` (see `app/universe/reeval.py`). Session job plans (`intraday_eval_*`) use the tightest **active watchlist** horizon, floored by LLM budget (`≈ 2 × MAX_INTRADAY_REANALYSES` ticks per session); `INTRADAY_REEVALUATION_INTERVAL_MINUTES` is the fallback when no horizons are known. Universe refresh (scheduler, `POST /universe/refresh`, premarket) replans pending ticks.
 
 ## Modes
 

@@ -142,6 +142,42 @@ async def test_force_close_intent_only_when_not_armed(session: AsyncSession) -> 
 
 
 @pytest.mark.asyncio
+async def test_closing_skips_duplicate_pending_close(session: AsyncSession) -> None:
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        broker_environment="paper",
+        enable_broker_orders=True,
+        enable_automated_execution=True,
+        require_manual_order_approval=False,
+        auto_execute_force_close=False,
+        intraday_operation_mode="PAPER_AUTOMATED",
+        default_closing_policy="CLOSE_INTRADAY_ONLY",
+    )
+    session.add(
+        WatchlistSymbol(symbol="QQQ", horizon="scalp", status="active", priority=80, thesis="t")
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="QQQ",
+            status="OPEN",
+            quantity=5,
+            average_entry_price=400,
+            current_price=400,
+            overnight_allowed=False,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+    first = await ClosingService(session, settings=settings).run_closing()
+    assert first["intent_ids"]
+    second = await ClosingService(session, settings=settings).run_closing()
+    assert second["intent_ids"] == []
+    assert any("skip_duplicate_close:QQQ" in n for n in second["notes"])
+
+
+@pytest.mark.asyncio
 async def test_daily_start_closing_materializes_intents(session: AsyncSession) -> None:
     """Unattended scheduler path: DailyWorkflowService.start_closing → ClosingService."""
     from app.workflow.daily import DailyWorkflowService
