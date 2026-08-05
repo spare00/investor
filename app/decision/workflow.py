@@ -194,7 +194,24 @@ class WorkflowService:
                 notes.append("portfolio_default_fallback")
 
         held = [p.symbol for p in port.positions]
-        universe = sorted({*self.settings.trade_allowlist, *held})
+        from app.universe.service import UniverseService
+
+        univ = UniverseService(self.session, settings=self.settings)
+        await univ.ensure_seeded()
+        # Refresh focus lightly without mandatory LLM on every premarket if disabled;
+        # when enabled, run manager once per premarket.
+        if self.settings.universe_manager_enabled and univ.is_dynamic():
+            try:
+                await univ.refresh(holdings=held)
+                notes.append("universe_refreshed")
+            except Exception as exc:  # noqa: BLE001
+                await univ.build_focus_without_llm(holdings=held)
+                notes.append(f"universe_refresh_fallback:{exc}")
+        else:
+            await univ.build_focus_without_llm(holdings=held)
+
+        universe = await univ.collection_universe(holdings=held)
+        entry_universe = await univ.entry_universe()
 
         collection = await DataCollectionService(
             self.session, settings=self.settings, persist=self.persist
@@ -208,6 +225,7 @@ class WorkflowService:
             portfolio=port,
             proposed_trades=proposed_trades or [],
             workflow_id=wf,
+            entry_universe=sorted(entry_universe),
         )
 
         prices = {m.symbol: m.last for m in collection.markets}
@@ -221,6 +239,7 @@ class WorkflowService:
             broker_data_consistent=True,
             workflow_id=str(wf),
             seen_idempotency_keys=seen_keys,
+            entry_universe=entry_universe,
         )
 
         orders: list[Order] = []

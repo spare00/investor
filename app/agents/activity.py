@@ -17,6 +17,7 @@ AGENT_ORDER = (
     "risk_manager",
     "devils_advocate",
     "cio",
+    "universe_manager",
 )
 
 AGENT_SHORT = {
@@ -26,6 +27,7 @@ AGENT_SHORT = {
     "risk_manager": "Risk",
     "devils_advocate": "Devil",
     "cio": "CIO",
+    "universe_manager": "Univ",
 }
 
 

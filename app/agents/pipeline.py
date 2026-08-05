@@ -77,9 +77,11 @@ class AgentPipeline:
         portfolio: PortfolioStateInput,
         proposed_trades: list[ProposedTrade] | None = None,
         workflow_id: UUID | None = None,
+        entry_universe: list[str] | None = None,
     ) -> AnalysisBundle:
         wf = workflow_id or collection.workflow_id or uuid4()
         as_of = collection.collected_at
+        entry_list = list(entry_universe) if entry_universe is not None else list(self.settings.trade_allowlist)
 
         mi_in = MarketIntelligenceInput(
             as_of=as_of,
@@ -98,7 +100,7 @@ class AgentPipeline:
             earnings_summaries=collection.earnings,
             sec_filings=collection.filings,
             portfolio_symbols=[p.symbol for p in portfolio.positions],
-            allowlist=list(self.settings.trade_allowlist),
+            allowlist=entry_list,
             trace=TraceMetadata(source_data_timestamp=as_of),
         )
         mi_out = await self.mi.run(mi_in)
@@ -225,7 +227,7 @@ class AgentPipeline:
                 devil=devil_out,
                 portfolio_cash_pct=portfolio.cash_pct,
                 positions=list(portfolio.positions),
-                allowlist=list(self.settings.trade_allowlist),
+                allowlist=entry_list,
                 trace=TraceMetadata(source_data_timestamp=as_of),
             )
         )

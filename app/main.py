@@ -24,6 +24,7 @@ from app.api.operations_phase7 import router as operations_phase7_router
 from app.api.performance import router as performance_router
 from app.api.portfolio import router as portfolio_router
 from app.api.trading import router as trading_router
+from app.api.universe import router as universe_router
 from app.api.workflow import router as workflow_router
 from app.core.config import get_settings
 from app.core.database import get_session_factory
@@ -92,6 +93,7 @@ app.include_router(execution_router)
 app.include_router(intraday_router)
 app.include_router(performance_router)
 app.include_router(operations_phase7_router)
+app.include_router(universe_router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 

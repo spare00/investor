@@ -115,6 +115,12 @@ class Settings(BaseSettings):
     penny_stock_max_price: float = 5.0
     allow_leveraged_etfs: bool = False
 
+    # Universe: static = TRADE_ALLOWLIST only; dynamic = AI watchlist (seeded from allowlist).
+    universe_mode: str = "dynamic"  # static | dynamic
+    universe_focus_limit: int = 12
+    universe_watchlist_limit: int = 40
+    universe_manager_enabled: bool = True
+
     trade_allowlist: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
             "SPY",

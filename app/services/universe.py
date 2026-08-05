@@ -36,12 +36,14 @@ def evaluate_symbol_eligibility(
     *,
     settings: Settings | None = None,
     halted: bool = False,
+    entry_universe: set[str] | None = None,
 ) -> EligibilityResult:
     cfg = settings or get_settings()
     symbol = snapshot.symbol.upper()
     reasons: list[str] = []
 
-    if symbol not in cfg.allowlist_set():
+    allowed = entry_universe if entry_universe is not None else cfg.allowlist_set()
+    if symbol not in allowed:
         reasons.append("not_in_allowlist")
     if halted:
         reasons.append("trading_halted")

@@ -287,6 +287,14 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     except Exception:  # noqa: BLE001 — dashboard should still render
         workflow_summary = None
 
+    universe_summary: dict[str, Any] | None = None
+    try:
+        from app.universe.service import UniverseService
+
+        universe_summary = await UniverseService(session, settings=settings).snapshot()
+    except Exception:  # noqa: BLE001
+        universe_summary = None
+
     return {
         "as_of": dual_timezone_labels(now),
         "market_status": {
@@ -296,6 +304,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             "us_session": us_session,
             "workflow": workflow_summary,
         },
+        "universe": universe_summary,
         "portfolio": None
         if snap is None
         else {

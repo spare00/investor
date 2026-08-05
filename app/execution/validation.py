@@ -80,6 +80,7 @@ class ExecutionValidator:
         broker_data_consistent: bool = True,
         seen_idempotency_keys: set[str] | None = None,
         workflow_id: str | None = None,
+        entry_universe: set[str] | None = None,
     ) -> ExecutionValidationResult:
         rejections: list[str] = []
 
@@ -108,7 +109,7 @@ class ExecutionValidator:
             return ExecutionValidationResult(approved=True, intents=[], rejections=[])
 
         intents: list[ValidatedOrderIntent] = []
-        allowlist = self.settings.allowlist_set()
+        allowlist = entry_universe if entry_universe is not None else self.settings.allowlist_set()
         seen = seen_idempotency_keys or set()
 
         for plan in decision.symbol_actions:

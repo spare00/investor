@@ -251,7 +251,14 @@ Alpaca paper keys in `.env` are needed for real paper order/portfolio sync.
 | Consecutive losses → halt day | 5 |
 | Force flatten before close | 15 min |
 
-Allowlist (editable via `TRADE_ALLOWLIST`):
+Allowlist / universe:
+
+- `TRADE_ALLOWLIST` seeds the book and bounds unknown AI tickers.
+- Default `UNIVERSE_MODE=dynamic`: AI **Universe Manager** keeps horizon groups
+  (초단타/단타/단기/중기) and a small **focus set** for each session.
+- See [docs/universe.md](docs/universe.md).
+
+Default seed:
 `SPY, QQQ, IWM, DIA, NVDA, MSFT, AMZN, GOOGL, META, AVGO, AMD, AAPL, TSLA, IONQ`
 
 ---

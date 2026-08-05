@@ -133,6 +133,7 @@ class AgentName(StrEnum):
     RISK_MANAGER = "risk_manager"
     DEVILS_ADVOCATE = "devils_advocate"
     CIO = "cio"
+    UNIVERSE_MANAGER = "universe_manager"
 
 
 class TraceMetadata(StrictModel):

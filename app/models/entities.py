@@ -1144,3 +1144,40 @@ class ReadinessEvaluationRecord(Base, TimestampMixin):
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     operator_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+
+class WatchlistSymbol(Base, TimestampMixin):
+    """AI-managed trade candidates grouped by horizon (scalp/day/short/medium)."""
+
+    __tablename__ = "watchlist_symbols"
+    __table_args__ = (
+        UniqueConstraint("symbol", name="uq_watchlist_symbol"),
+        Index("ix_watchlist_horizon_status", "horizon", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    horizon: Mapped[str] = mapped_column(String(16), nullable=False)  # scalp|day|short|medium
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")  # active|paused|removed
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)  # 0–100, higher = more focus
+    thesis: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    invalidation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="seed")  # seed|universe_manager|manual
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class FocusSetSnapshot(Base, TimestampMixin):
+    """Session focus set — symbols the firm reviews this cycle (not full universe)."""
+
+    __tablename__ = "focus_set_snapshots"
+    __table_args__ = (Index("ix_focus_set_as_of", "as_of"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    session_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD ET
+    symbols: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    holdings: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="universe_service")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+

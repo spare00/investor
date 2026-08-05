@@ -60,6 +60,8 @@ from app.models.entities import (
     TradeMetricRecord,
     TradePnL,
     TradeSignal,
+    WatchlistSymbol,
+    FocusSetSnapshot,
     WorkflowLease,
     WorkflowStateTransition,
 )
@@ -85,6 +87,7 @@ __all__ = [
     "DrawdownPeriodRecord",
     "Execution",
     "ExecutionQualityRecord",
+    "FocusSetSnapshot",
     "IntradayAnalysisRun",
     "IntradayDecisionRecord",
     "IntradayEvent",
@@ -124,6 +127,7 @@ __all__ = [
     "TradeMetricRecord",
     "TradePnL",
     "TradeSignal",
+    "WatchlistSymbol",
     "WorkflowLease",
     "WorkflowStateTransition",
 ]
