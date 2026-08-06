@@ -13,6 +13,7 @@ from app.risk import (
     TradeIntent,
     limits_from_settings,
 )
+from app.risk.types import VetoCode
 from app.schemas.common import AgentName, RiskVerdict, TraceMetadata
 from app.schemas.risk_manager import (
     RiskManagerInput,
@@ -25,7 +26,7 @@ from app.services.llm import LLMClient
 class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
     name = AgentName.RISK_MANAGER
     prompt_file = "system_v1.md"
-    prompt_version = "1.0.0"
+    prompt_version = "1.1.0"
 
     def __init__(
         self,
@@ -44,9 +45,19 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
         engine_preview = self._run_engine(payload)
         return (
             "Review portfolio risk. Hard Vetoes from the deterministic engine are authoritative.\n"
+            "You own present-market price integrity: if live_prices_required and price_feed_live "
+            "is false (stub/fixture quotes), that is a Hard Veto — never soft-approve new risk.\n"
             f"ENGINE_RESULT:\n{dump_for_prompt(engine_preview)}\n\n"
             f"INPUT:\n{dump_for_prompt(payload)}"
         )
+
+    def _price_integrity_vetoes(self, payload: RiskManagerInput) -> list[str]:
+        """Risk Officer hard gate: orders require present-market prices, never stubs."""
+        if not payload.live_prices_required:
+            return []
+        if payload.price_feed_live and payload.price_providers:
+            return []
+        return [VetoCode.NON_LIVE_MARKET_PRICES.value]
 
     def _portfolio_view(self, payload: RiskManagerInput) -> PortfolioRiskView:
         p = payload.portfolio
@@ -150,6 +161,23 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
                 )
             )
 
+        price_vetoes = self._price_integrity_vetoes(payload)
+        hard_vetoes.extend(price_vetoes)
+        if price_vetoes:
+            halt_day = True
+            adjustments = [
+                adj.model_copy(
+                    update={
+                        "verdict": RiskVerdict.REJECTED,
+                        "approved_quantity": 0.0,
+                        "reasons": list(adj.reasons) + price_vetoes,
+                    }
+                )
+                if adj.verdict == RiskVerdict.APPROVED
+                else adj
+                for adj in adjustments
+            ]
+
         if halt_day:
             overall = RiskVerdict.HALT_DAY
         elif hard_vetoes:
@@ -172,6 +200,14 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
         except Exception:  # noqa: BLE001
             soft_warnings = ["LLM soft review unavailable; engine-only decision"]
 
+        notes = ["Deterministic Risk Engine is authoritative for Hard Vetoes"]
+        if price_vetoes:
+            notes.append(
+                "Risk Officer veto: present-market prices required "
+                f"(providers={payload.price_providers or ['none']}; "
+                f"notes={payload.price_integrity_notes or ['price_feed_not_live']})"
+            )
+
         return RiskManagerOutput(
             timestamp=datetime.now(UTC),
             overall_verdict=overall,
@@ -181,7 +217,7 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
             halt_new_trades=halt_day or overall in {RiskVerdict.REJECTED, RiskVerdict.HALT_DAY},
             cash_pct=payload.portfolio.cash_pct,
             gross_exposure_pct=payload.portfolio.gross_exposure_pct,
-            notes=["Deterministic Risk Engine is authoritative for Hard Vetoes"],
+            notes=notes,
             engine_checks=trades,  # type: ignore[arg-type]
             trace=TraceMetadata(
                 agent_version=self.agent_version,
@@ -202,7 +238,9 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
         for t in trades:
             assert isinstance(t, dict)
             hard.extend(str(v) for v in (t.get("hard_vetoes") or []))
+        hard.extend(self._price_integrity_vetoes(payload))
         halt = any(bool(t.get("halt_day")) for t in trades if isinstance(t, dict))
+        halt = halt or bool(self._price_integrity_vetoes(payload))
         return RiskManagerOutput(
             timestamp=datetime.now(UTC),
             overall_verdict=RiskVerdict.HALT_DAY if halt else (
@@ -214,7 +252,7 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
             halt_new_trades=bool(hard or halt),
             cash_pct=payload.portfolio.cash_pct,
             gross_exposure_pct=payload.portfolio.gross_exposure_pct,
-            notes=["fallback engine-only"],
+            notes=["fallback engine-only", "Risk Officer enforces present-market prices"],
             engine_checks=trades,  # type: ignore[arg-type]
             trace=TraceMetadata(model_name="fallback-engine"),
         )

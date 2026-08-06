@@ -114,6 +114,34 @@ async def resolve_execution_prices(
     return live, notes
 
 
+def assess_collection_price_integrity(
+    *,
+    providers: list[str],
+    market_count: int,
+    settings: Settings | None = None,
+) -> tuple[bool, bool, list[str], list[str]]:
+    """Return (live_required, feed_live, providers, notes) for the Risk Officer."""
+    cfg = settings or get_settings()
+    live_required = requires_live_market_prices(cfg)
+    cleaned = sorted({(p or "").strip().lower() for p in providers if p})
+    notes: list[str] = []
+    if not live_required:
+        return False, True, cleaned, ["simulation_price_path"]
+    if market_count <= 0:
+        notes.append("no_market_quotes")
+        return True, False, cleaned, notes
+    if any(is_simulation_price_provider(p) for p in cleaned):
+        notes.append("simulation_provider_present")
+        return True, False, cleaned, notes
+    if not cleaned:
+        notes.append("missing_provider_labels")
+        return True, False, cleaned, notes
+    if not any(not is_simulation_price_provider(p) for p in cleaned):
+        notes.append("no_live_provider")
+        return True, False, cleaned, notes
+    return True, True, cleaned, notes
+
+
 def assert_provider_allowed_for_orders(
     provider: str | None, *, settings: Settings | None = None
 ) -> None:

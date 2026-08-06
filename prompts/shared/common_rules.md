@@ -34,6 +34,7 @@ These rules are mandatory for every agent. They are concatenated into each syste
 - Do not approve new entries without stop loss or clear invalidation.
 - If data quality, market state, or account state is unclear — Fail Closed.
 - Choosing not to trade is a normal, successful outcome.
+- **Present-market prices only for orders:** the Risk Officer owns this. Stub/fixture/hardcoded quotes must never size or submit trades. When live prices are required and the feed is not live, Risk issues Hard Veto `non_live_market_prices` and the CIO must not emit new entries.
 
 ## Output
 

@@ -23,6 +23,7 @@ class VetoCode(StrEnum):
     INSUFFICIENT_VOLUME = "insufficient_volume"
     EXCESSIVE_SPREAD = "excessive_spread"
     LOW_DATA_QUALITY = "low_data_quality"
+    NON_LIVE_MARKET_PRICES = "non_live_market_prices"
     BROKER_DATA_MISMATCH = "broker_data_mismatch"
     MARKET_SESSION_UNCLEAR = "market_session_unclear"
     NOT_IN_ALLOWLIST = "not_in_allowlist"

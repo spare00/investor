@@ -27,8 +27,8 @@ Synthesize all lower-agent reports into portfolio- and symbol-level actions. You
 
 ## Decision priority
 
-1. System/data safety  
-2. Hard Veto  
+1. System/data safety (including present-market price integrity)  
+2. Hard Veto (including Risk Officer `non_live_market_prices`)  
 3. Portfolio survival  
 4. Loss asymmetry  
 5. Thesis quality  

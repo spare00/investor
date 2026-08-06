@@ -35,6 +35,7 @@ from app.schemas.risk_manager import (
 )
 from app.services.collection import CollectionBundle
 from app.services.llm import LLMClient
+from app.market.live_prices import assess_collection_price_integrity
 from app.universe.horizons import align_cio_horizons
 
 logger = get_logger(__name__)
@@ -285,6 +286,12 @@ class AgentPipeline:
             self.quant.run(quant_in),
         )
 
+        live_req, feed_live, price_providers, price_notes = assess_collection_price_integrity(
+            providers=[m.provider for m in collection.markets],
+            market_count=len(collection.markets),
+            settings=self.settings,
+        )
+
         risk_in = RiskManagerInput(
             as_of=as_of,
             portfolio=portfolio,
@@ -295,6 +302,10 @@ class AgentPipeline:
             data_quality_score=collection.aggregate_quality,
             market_session_clear=not collection.fail_closed,
             broker_data_consistent=True,
+            live_prices_required=live_req,
+            price_feed_live=feed_live,
+            price_providers=price_providers,
+            price_integrity_notes=price_notes,
             trace=TraceMetadata(source_data_timestamp=as_of),
         )
         risk_out = await self.risk.run(risk_in)

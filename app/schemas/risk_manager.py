@@ -63,6 +63,11 @@ class RiskManagerInput(StrictModel):
     data_quality_score: float = Field(default=1.0, ge=0.0, le=1.0)
     market_session_clear: bool = True
     broker_data_consistent: bool = True
+    # Risk Officer owns present-market price integrity for any order path.
+    live_prices_required: bool = False
+    price_feed_live: bool = True
+    price_providers: list[str] = Field(default_factory=list)
+    price_integrity_notes: list[str] = Field(default_factory=list)
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 
 

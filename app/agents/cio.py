@@ -33,6 +33,8 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
         return (
             "Produce final CIODecision JSON. Honor Hard Vetoes. "
             "If risk_approval is false, do not emit risk-increasing actions. "
+            "Honor Risk Hard Vetoes including non_live_market_prices — "
+            "never SCALE_IN/BUY off stub or fixture quotes. "
             "Review EVERY open position and emit HOLD/REDUCE/PARTIAL_SELL/SELL as needed "
             "(including symbols not on watchlist). New entries only from allowlist/watchlist. "
             "Match time_horizon to watchlist horizon when present "
