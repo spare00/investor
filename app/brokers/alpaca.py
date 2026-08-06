@@ -9,6 +9,7 @@ import httpx
 
 from app.brokers.base import BrokerClient, OrderRequest, OrderResult, OrderSide, OrderStatus
 from app.brokers.errors import BrokerError
+from app.brokers.pricing import round_equity_price
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.core.security import require_execution_allowed
@@ -136,11 +137,11 @@ class AlpacaBroker:
         if request.idempotency_key:
             payload["client_order_id"] = request.idempotency_key[:48]
         if request.order_type == "limit" and request.limit_price is not None:
-            payload["limit_price"] = str(request.limit_price)
+            payload["limit_price"] = str(round_equity_price(request.limit_price))
         if request.order_type in {"stop", "stop_limit"} and request.stop_price is not None:
-            payload["stop_price"] = str(request.stop_price)
+            payload["stop_price"] = str(round_equity_price(request.stop_price))
         if request.order_type == "stop_limit" and request.limit_price is not None:
-            payload["limit_price"] = str(request.limit_price)
+            payload["limit_price"] = str(round_equity_price(request.limit_price))
 
         data = await self._request("POST", "/v2/orders", json=payload)
         assert isinstance(data, dict)
@@ -288,9 +289,9 @@ class AlpacaBroker:
     async def replace_order(self, broker_order_id: str, replacement: OrderRequest) -> OrderResult:
         payload: dict[str, Any] = {"qty": str(replacement.qty)}
         if replacement.limit_price is not None:
-            payload["limit_price"] = str(replacement.limit_price)
+            payload["limit_price"] = str(round_equity_price(replacement.limit_price))
         if replacement.stop_price is not None:
-            payload["stop_price"] = str(replacement.stop_price)
+            payload["stop_price"] = str(round_equity_price(replacement.stop_price))
         if replacement.time_in_force:
             payload["time_in_force"] = replacement.time_in_force
         data = await self._request("PATCH", f"/v2/orders/{broker_order_id}", json=payload)

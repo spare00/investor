@@ -296,6 +296,16 @@ class ExecutionValidator:
             if drift_bps > max_drift:
                 return f"{symbol}:limit_too_far_from_last:{drift_bps:.0f}bps"
 
+        from app.brokers.pricing import round_equity_price
+
+        if limit_price is not None:
+            limit_price = round_equity_price(float(limit_price))
+        stop_for_intent = (
+            round_equity_price(float(plan.stop_loss))
+            if plan.stop_loss is not None
+            else None
+        )
+
         key = f"{workflow_id or decision.decision_id}:{symbol}:{side}:{plan.action.value}"
         if key in seen:
             return f"{symbol}:duplicate_idempotency_key"
@@ -306,7 +316,7 @@ class ExecutionValidator:
             quantity=qty,
             order_type=order_type,
             limit_price=limit_price,
-            stop_price=plan.stop_loss,
+            stop_price=stop_for_intent,
             idempotency_key=key,
             decision_id=str(decision.decision_id),
             thesis=plan.thesis,

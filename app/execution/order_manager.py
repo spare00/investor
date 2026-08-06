@@ -197,9 +197,8 @@ class OrderManager:
                 context={"symbol": intent.symbol, "idempotency_key": intent.idempotency_key},
                 workflow_id=workflow_id,
             )
-            # Fail closed: do not continue submitting remaining in a partial-success batch
-            # — caller may still have prior successes; we mark this one rejected.
-            logger.exception("broker_submit_failed", symbol=intent.symbol)
+            # Expected reject (e.g. broker validation) — keep row rejected, continue batch.
+            logger.error("broker_submit_failed", symbol=intent.symbol, error=str(exc)[:240])
             return row
 
         row.broker_order_id = result.broker_order_id
