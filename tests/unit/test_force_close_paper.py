@@ -142,6 +142,107 @@ async def test_force_close_intent_only_when_not_armed(session: AsyncSession) -> 
 
 
 @pytest.mark.asyncio
+async def test_force_close_short_submits_buy_cover(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative lifecycle qty must still create intents and buy-to-cover."""
+    settings = _armed_settings()
+    broker = MockBroker(seed=12, starting_cash=50_000, allow_short=True)
+    broker.prices["EEM"] = 65.0
+    broker.positions["EEM"] = {
+        "symbol": "EEM",
+        "qty": "-6",
+        "avg_entry_price": "70",
+        "market_value": "-390",
+        "unrealized_pl": "30",
+        "side": "short",
+    }
+
+    session.add(
+        WatchlistSymbol(symbol="EEM", horizon="day", status="active", priority=80, thesis="flatten")
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="EEM",
+            status="OPEN",
+            quantity=-6.0,
+            average_entry_price=70,
+            current_price=65,
+            overnight_allowed=False,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+
+    import app.execution.order_manager as om_mod
+
+    monkeypatch.setattr(om_mod, "get_broker", lambda settings=None: broker)
+
+    from sqlalchemy import select
+
+    from app.models import Order, OrderIntent
+
+    closing = await ClosingService(session, settings=settings).run_closing()
+    assert closing["intent_ids"], closing.get("notes")
+    assert closing["orders_submitted"] >= 1
+    intent = (await session.execute(select(OrderIntent))).scalar_one()
+    assert intent.side == "buy"
+    assert float(intent.quantity) == 6.0
+    orders = list((await session.execute(select(Order))).scalars().all())
+    assert orders[0].side == "buy"
+
+
+@pytest.mark.asyncio
+async def test_force_close_retries_stuck_pending_short(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PENDING_CLOSE shorts from the old negative-qty bug still get submitted."""
+    settings = _armed_settings()
+    broker = MockBroker(seed=13, starting_cash=50_000, allow_short=True)
+    broker.prices["PLTR"] = 150.0
+    broker.positions["PLTR"] = {
+        "symbol": "PLTR",
+        "qty": "-1",
+        "avg_entry_price": "160",
+        "market_value": "-150",
+        "unrealized_pl": "10",
+        "side": "short",
+    }
+    session.add(
+        WatchlistSymbol(symbol="PLTR", horizon="scalp", status="active", priority=80, thesis="t")
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="PLTR",
+            status="PENDING_CLOSE",
+            quantity=-1.0,
+            average_entry_price=160,
+            current_price=150,
+            overnight_allowed=False,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+
+    import app.execution.order_manager as om_mod
+
+    monkeypatch.setattr(om_mod, "get_broker", lambda settings=None: broker)
+
+    from sqlalchemy import select
+
+    from app.models import Order
+
+    closing = await ClosingService(session, settings=settings).run_closing()
+    assert any("skip_duplicate_close:PLTR" in n for n in closing["notes"])
+    assert any("force_close_retry_pending_close" in n for n in closing["notes"])
+    assert closing["orders_submitted"] >= 1
+    orders = list((await session.execute(select(Order))).scalars().all())
+    assert orders[0].side == "buy"
+
+
+@pytest.mark.asyncio
 async def test_closing_skips_duplicate_pending_close(session: AsyncSession) -> None:
     settings = Settings(
         app_env="test",

@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     llm_budget_enforce: bool = True
     llm_daily_token_budget: int = 500_000
     llm_daily_call_budget: int = 120
-    llm_monthly_aud_budget: float = 10.0
+    llm_monthly_aud_budget: float = 20.0
     llm_aud_per_usd: float = 1.55
     llm_input_usd_per_mtok: float = 0.15  # gpt-4o-mini default
     llm_output_usd_per_mtok: float = 0.60

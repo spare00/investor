@@ -41,7 +41,7 @@ Evaluate market trend, volatility, breadth, liquidity, and per-symbol technical 
 
 JSON matching QuantStrategistOutput.
 Use exact enums for trend/momentum/volatility/breadth/liquidity states.
-`entry_zone` must be `{min, max}` objects; scenarios must be objects with name/description/probability.
+`entry_zone` must be `{min, max}` objects; use `upside_scenario` / `downside_scenario` objects with name/description/probability (never a bare `scenarios` key).
 Do not invent RSI/ATR/SMA values absent from inputs — reference calculation_ids or note missing.
 
 ## Abstention and Failure Conditions

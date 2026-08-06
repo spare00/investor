@@ -79,10 +79,13 @@ class ClosingService:
         # Materialize exit intents (and optionally paper-submit force closes).
         intent_drafts: list[dict[str, Any]] = []
         intent_ids: list[str] = []
+        retry_force_submit = False
         for plan in decision.plans:
             if plan.action not in {"close", "reduce"} or not caps.can_create_intent:
                 continue
-            qty = plan.quantity if plan.action == "close" else plan.quantity * 0.5
+            # Signed short qty must not fail the <=0 guard in _create_exit_intent.
+            raw_qty = plan.quantity if plan.action == "close" else plan.quantity * 0.5
+            qty = abs(float(raw_qty or 0))
             draft = {
                 "symbol": plan.symbol,
                 "action": plan.action,
@@ -98,15 +101,17 @@ class ClosingService:
             if plan.action == "close" and lc.status == "PENDING_CLOSE":
                 draft["skipped"] = "already_pending_close"
                 notes.append(f"skip_duplicate_close:{plan.symbol}")
+                # Prior ticks may have marked PENDING_CLOSE without creating an intent
+                # (e.g. negative short qty). Still allow armed force-close submit.
+                if qty > 0 and self._should_auto_submit_force_close(caps):
+                    retry_force_submit = True
                 continue
             if plan.action == "reduce" and lc.status == "REDUCING":
                 draft["skipped"] = "already_reducing"
                 notes.append(f"skip_duplicate_reduce:{plan.symbol}")
+                if qty > 0 and self._should_auto_submit_force_close(caps):
+                    retry_force_submit = True
                 continue
-            if plan.action == "close":
-                lc.status = "PENDING_CLOSE"
-            elif plan.action == "reduce":
-                lc.status = "REDUCING"
             if caps.intents_are_draft_only:
                 meta = dict(lc.metadata_json or {})
                 meta["exit_draft"] = {
@@ -115,6 +120,10 @@ class ClosingService:
                     "at": datetime.now(UTC).isoformat(),
                 }
                 lc.metadata_json = meta
+                if plan.action == "close":
+                    lc.status = "PENDING_CLOSE"
+                elif plan.action == "reduce":
+                    lc.status = "REDUCING"
                 continue
             intent = await self._create_exit_intent(
                 lc, action=plan.action, qty=qty, rationale=plan.rationale
@@ -122,11 +131,19 @@ class ClosingService:
             if intent is not None:
                 intent_ids.append(str(intent.id))
                 draft["intent_id"] = str(intent.id)
+                if plan.action == "close":
+                    lc.status = "PENDING_CLOSE"
+                elif plan.action == "reduce":
+                    lc.status = "REDUCING"
+            else:
+                notes.append(f"exit_intent_failed:{plan.symbol}")
 
         submitted = 0
-        if intent_ids and self._should_auto_submit_force_close(caps):
+        if (intent_ids or retry_force_submit) and self._should_auto_submit_force_close(caps):
             submitted = await self._submit_close_intents(lifecycles, decision.plans)
             notes.append(f"force_close_orders_submitted={submitted}")
+            if retry_force_submit and not intent_ids:
+                notes.append("force_close_retry_pending_close")
         elif intent_ids:
             notes.append("force_close_intents_pending_submit")
 
@@ -172,15 +189,21 @@ class ClosingService:
 
         if qty <= 0:
             return None
-        intent_type = (
-            IntentType.CLOSE_LONG.value if action == "close" else IntentType.REDUCE_LONG.value
-        )
+        is_short = float(lc.quantity or 0) < 0
+        if action == "close":
+            intent_type = (
+                IntentType.CLOSE_SHORT.value if is_short else IntentType.CLOSE_LONG.value
+            )
+        else:
+            intent_type = (
+                IntentType.REDUCE_SHORT.value if is_short else IntentType.REDUCE_LONG.value
+            )
         intent = OrderIntent(
             id=uuid4(),
             decision_id=lc.decision_id,
             symbol=lc.symbol,
             intent_type=intent_type,
-            side="sell" if float(lc.quantity or 0) >= 0 else "buy",
+            side="buy" if is_short else "sell",
             quantity=abs(float(qty)),
             entry_price=lc.current_price,
             stop_price=lc.stop_price,

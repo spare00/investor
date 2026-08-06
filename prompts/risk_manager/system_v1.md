@@ -39,7 +39,7 @@ Review portfolio state and proposed trades against risk limits. Soft semantic ri
 
 JSON matching RiskManagerOutput (or soft-warning subset when the engine already built the authoritative verdict).
 Include overall_verdict using: approved, conditional, size_reduced, rejected, halt_day.
-Echo hard_vetoes; soft_warnings as strings; data_quality_score 0–1.
+Echo hard_vetoes; soft_warnings as strings; include cash_pct and gross_exposure_pct (0–100). Do **not** emit data_quality_score on this output.
 
 ## Abstention and Failure Conditions
 

@@ -397,7 +397,7 @@
         </table>
       </section>
       <section>
-        <h2>Next Jobs</h2>
+        <h2>Next Jobs <span class="muted" style="font-weight:500;font-size:0.85rem">(ET)</span></h2>
         <ul id="jobs"><li class="muted">None</li></ul>
         <div id="sessionJobs" class="muted" style="margin-top:0.65rem"></div>
       </section>
@@ -681,6 +681,24 @@
       if (!iso) return "—";
       const s = String(iso);
       return s.length > 19 ? s.slice(0, 19).replace("T", " ") : s.replace("T", " ");
+    }
+
+    /** Job times — always US/Eastern (market clock), regardless of API timezone. */
+    function fmtEt(iso) {
+      if (!iso) return "—";
+      const d = new Date(String(iso));
+      if (Number.isNaN(d.getTime())) return fmtWhen(iso);
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).formatToParts(d);
+      const g = (t) => (parts.find((p) => p.type === t) || {}).value || "";
+      return `${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")} ET`;
     }
 
     function kpiTone(status, value, { higherGood } = {}) {
@@ -1428,13 +1446,13 @@
       const show = rows.slice(0, 12);
       const body = show.map((j) => `<tr>
           <td class="mono">${esc(j.job_key)}</td>
-          <td>${esc(fmtWhen(j.planned_at))}</td>
+          <td class="mono">${esc(fmtEt(j.planned_at))}</td>
           <td>${pill(j.status || "—", j.status === "completed" ? "good" : j.status === "skipped" ? "warn" : "")}</td>
           <td class="muted">${j.interval_minutes != null ? esc(j.interval_minutes) + "m" : "—"}</td>
         </tr>`).join("");
       el.innerHTML =
-        `<div class="muted" style="margin-bottom:0.35rem">Session plan (first ${show.length}/${rows.length})</div>` +
-        dataTable(["Job", "Planned", "Status", "Interval"], body, 4);
+        `<div class="muted" style="margin-bottom:0.35rem">Session plan ET (first ${show.length}/${rows.length})</div>` +
+        dataTable(["Job", "Planned (ET)", "Status", "Interval"], body, 4);
     }
 
     async function refreshOverview() {
@@ -1498,7 +1516,7 @@
             : `<div class="muted" style="margin-top:0.4rem">No symbol actions</div>`}`;
       }
       document.getElementById("jobs").innerHTML = (data.next_jobs || []).length
-        ? data.next_jobs.map(j => `<li class="mono">${j.id}: ${j.next_run_time || "n/a"}</li>`).join("")
+        ? data.next_jobs.map(j => `<li class="mono">${esc(j.id)}: ${esc(fmtEt(j.next_run_time))}</li>`).join("")
         : `<li class="muted">No scheduled jobs</li>`;
       document.getElementById("agents").innerHTML = AGENT_ORDER.map(name => {
         const a = (data.agents || {})[name];
@@ -1791,7 +1809,7 @@
         <div class="muted" style="margin:0.65rem 0 0.35rem">LLM · day ${esc(formatTokens(budget.total_tokens))} tok · ${esc(budget.calls ?? 0)} calls · month A$${esc(fmtNum(budget.month_aud_estimate, 2))}</div>
         <div class="muted">Allowlist: ${esc((status.allowlist || []).join(", ") || "—")}</div>
         <ul style="margin-top:0.55rem">${jobs.length
-          ? jobs.map((j) => `<li class="mono">${esc(j.id || j.name)}: ${esc(j.next_run_time || "n/a")}</li>`).join("")
+          ? jobs.map((j) => `<li class="mono">${esc(j.id || j.name)}: ${esc(fmtEt(j.next_run_time) || "n/a")}</li>`).join("")
           : `<li class="muted">No scheduled jobs</li>`}</ul>
         ${rawBlock(status)}`);
 

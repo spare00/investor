@@ -40,7 +40,7 @@ Using Market Intelligence and macro inputs, classify the near-term market regime
 
 JSON matching MacroStrategistOutput.
 Allowed regimes: STRONG_RISK_ON, RISK_ON, NEUTRAL, RISK_OFF, STRONG_RISK_OFF, INSUFFICIENT_DATA.
-Include confidence (0–1), bullish_factors, bearish_factors, sector impacts, invalidation_conditions, data_quality_score.
+Include confidence (0–1), bullish_factors, bearish_factors, expected_sector_impact as `[{sector, bias, rationale}, ...]` (not `sector_impacts`), invalidation_conditions, data_quality_score.
 
 ## Abstention and Failure Conditions
 

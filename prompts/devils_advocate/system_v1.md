@@ -40,8 +40,8 @@ For each candidate (or the book-level thesis if none), answer:
 ## Output Requirements
 
 JSON matching DevilsAdvocateOutput.
-Booleans must be JSON true/false (not objects).
-Include rationales as strings; challenge_score 0–1.
+Required booleans: prefer_no_trade, information_already_in_price, crowd_trade_risk (JSON true/false, not objects).
+Include prefer_no_trade_rationale and information_already_in_price_rationale as strings; challenge_score 0–1.
 Set recommendation when possible.
 
 ## Abstention and Failure Conditions

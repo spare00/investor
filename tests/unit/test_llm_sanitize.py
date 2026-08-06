@@ -41,6 +41,96 @@ def test_sanitize_market_intelligence_payload() -> None:
     assert out.data_quality_score == 1.0
 
 
+def test_sanitize_agent_shape_coercions() -> None:
+    from app.schemas.devils_advocate import DevilsAdvocateOutput
+    from app.schemas.macro_strategist import MacroStrategistOutput
+    from app.schemas.risk_manager import RiskManagerOutput
+
+    mi = MarketIntelligenceOutput.model_validate(
+        sanitize_llm_payload(
+            {
+                "market_events": [],
+                "top_market_themes": ["ai"],
+                "missing_information": ["quotes"],
+            }
+        )
+    )
+    assert mi.data_quality_score == 0.3
+
+    macro = MacroStrategistOutput.model_validate(
+        sanitize_llm_payload(
+            {
+                "market_regime": "RISK_ON",
+                "confidence": 0.6,
+                "sector_impacts": {"technology": "Potential upside from AI"},
+                "data_quality_score": 0.8,
+            }
+        )
+    )
+    assert macro.expected_sector_impact[0].sector == "technology"
+
+    quant = QuantStrategistOutput.model_validate(
+        sanitize_llm_payload(
+            {
+                "market_trend_state": "up",
+                "market_momentum_state": "steady",
+                "market_volatility_state": "normal",
+                "market_breadth_state": "healthy",
+                "market_liquidity_state": "normal",
+                "data_quality_score": 0.7,
+                "symbol_views": [
+                    {
+                        "symbol": "QQQ",
+                        "trend_state": "up",
+                        "momentum_state": "steady",
+                        "volatility_state": "normal",
+                        "liquidity_state": "normal",
+                        "probability_estimate": 0.55,
+                        "probability_basis": "test",
+                        "scenarios": [
+                            {
+                                "name": "upside",
+                                "description": "rally",
+                                "probability": 0.6,
+                            },
+                            {
+                                "name": "downside",
+                                "description": "selloff",
+                                "probability": 0.4,
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    assert quant.symbol_views[0].upside_scenario is not None
+    assert quant.symbol_views[0].downside_scenario is not None
+
+    risk = RiskManagerOutput.model_validate(
+        sanitize_llm_payload(
+            {
+                "overall_verdict": "approved",
+                "data_quality_score": 0.9,
+                "hard_vetoes": [],
+            }
+        )
+    )
+    assert risk.cash_pct == 50.0
+
+    devil = DevilsAdvocateOutput.model_validate(
+        sanitize_llm_payload(
+            {
+                "strongest_reason_thesis_is_wrong": "priced in",
+                "opposing_market_scenario": "fade",
+                "challenge_score": 0.8,
+                "recommendation": "WAIT",
+            }
+        )
+    )
+    assert devil.prefer_no_trade is True
+
+
 def test_sanitize_quant_synonyms_and_aliases() -> None:
     data = sanitize_llm_payload(
         {

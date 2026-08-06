@@ -118,6 +118,8 @@ _FIELD_ALIASES: dict[str, str] = {
     "market_liquidity": "market_liquidity_state",
     "upside": "upside_scenario",
     "downside": "downside_scenario",
+    "sector_impacts": "expected_sector_impact",
+    "sector_impact": "expected_sector_impact",
 }
 
 _BOOL_FIELDS = {
@@ -286,6 +288,145 @@ def _fill_symbol_action_defaults(plan: dict[str, Any]) -> dict[str, Any]:
     return plan
 
 
+def _split_scenarios_list(view: dict[str, Any]) -> None:
+    """Map LLM ``scenarios`` list/dict onto upside/downside_scenario keys."""
+    raw = view.pop("scenarios", None)
+    if raw is None:
+        return
+    upside = view.get("upside_scenario")
+    downside = view.get("downside_scenario")
+    items: list[Any]
+    if isinstance(raw, dict):
+        items = list(raw.values()) if raw else []
+        if "upside" in raw or "downside" in raw:
+            if upside is None and raw.get("upside") is not None:
+                view["upside_scenario"] = _normalize_scenario(raw.get("upside"))
+            if downside is None and raw.get("downside") is not None:
+                view["downside_scenario"] = _normalize_scenario(raw.get("downside"))
+            return
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        items = [raw]
+    for item in items:
+        scen = _normalize_scenario(item)
+        if not isinstance(scen, dict):
+            continue
+        name = str(scen.get("name") or "").lower()
+        desc = str(scen.get("description") or "").lower()
+        blob = f"{name} {desc}"
+        if upside is None and any(t in blob for t in ("up", "bull", "rally", "positive")):
+            view["upside_scenario"] = scen
+            upside = scen
+        elif downside is None and any(t in blob for t in ("down", "bear", "sell", "negative")):
+            view["downside_scenario"] = scen
+            downside = scen
+        elif upside is None:
+            view["upside_scenario"] = scen
+            upside = scen
+        elif downside is None:
+            view["downside_scenario"] = scen
+            downside = scen
+
+
+def _normalize_sector_impact(value: Any) -> Any:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        out: list[Any] = []
+        for item in value:
+            if isinstance(item, dict):
+                row = {
+                    "sector": str(item.get("sector") or item.get("name") or "unknown"),
+                    "bias": str(item.get("bias") or item.get("direction") or "neutral"),
+                    "rationale": str(
+                        item.get("rationale") or item.get("reason") or item.get("summary") or ""
+                    ),
+                }
+                out.append(row)
+            elif isinstance(item, str):
+                out.append({"sector": item, "bias": "neutral", "rationale": ""})
+        return out
+    if isinstance(value, dict):
+        # {"technology": "Potential ...", ...} or already SectorImpact-shaped
+        if {"sector", "bias"} <= set(value.keys()):
+            return [
+                {
+                    "sector": str(value.get("sector") or "unknown"),
+                    "bias": str(value.get("bias") or "neutral"),
+                    "rationale": str(value.get("rationale") or ""),
+                }
+            ]
+        return [
+            {
+                "sector": str(k),
+                "bias": "neutral",
+                "rationale": v if isinstance(v, str) else _as_text(v),
+            }
+            for k, v in value.items()
+        ]
+    return value
+
+
+def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
+    """Coerce common LLM shape mistakes that StrictModel would reject."""
+    looks_mi = "market_events" in out or "top_market_themes" in out
+    looks_macro = "expected_sector_impact" in out or "bullish_factors" in out or "market_regime" in out
+    looks_quant = "symbol_views" in out or "market_trend_state" in out
+    looks_risk = "overall_verdict" in out or "hard_vetoes" in out or "trade_adjustments" in out
+    looks_devil = (
+        "strongest_reason_thesis_is_wrong" in out
+        or "challenge_score" in out
+        or "opposing_market_scenario" in out
+    )
+
+    if looks_mi and "data_quality_score" not in out:
+        missing = out.get("missing_information") or []
+        out["data_quality_score"] = 0.3 if missing else 0.5
+
+    if "expected_sector_impact" in out:
+        out["expected_sector_impact"] = _normalize_sector_impact(out["expected_sector_impact"])
+
+    if looks_quant and isinstance(out.get("symbol_views"), list):
+        for view in out["symbol_views"]:
+            if isinstance(view, dict):
+                _split_scenarios_list(view)
+                for scen_key in ("upside_scenario", "downside_scenario"):
+                    if scen_key in view:
+                        view[scen_key] = _normalize_scenario(view[scen_key])
+
+    if looks_risk:
+        # Input-only / prompt-echo field — not on RiskManagerOutput.
+        out.pop("data_quality_score", None)
+        out.setdefault("cash_pct", 50.0)
+        out.setdefault("gross_exposure_pct", 0.0)
+        out.setdefault("notes", [])
+        if isinstance(out.get("notes"), str):
+            out["notes"] = [out["notes"]]
+
+    if looks_devil:
+        if "prefer_no_trade" not in out:
+            rec = str(out.get("recommendation") or "").upper()
+            try:
+                challenge = float(out.get("challenge_score") or 0.0)
+            except (TypeError, ValueError):
+                challenge = 0.0
+            out["prefer_no_trade"] = rec in {"WAIT", "NO_TRADE"} or challenge >= 0.7
+        out.setdefault("prefer_no_trade_rationale", "")
+        if "information_already_in_price" not in out:
+            out["information_already_in_price"] = False
+        out.setdefault("information_already_in_price_rationale", "")
+        if "challenge_score" not in out:
+            out["challenge_score"] = 0.5
+        if "opposing_market_scenario" in out:
+            out["opposing_market_scenario"] = _as_text(out["opposing_market_scenario"])
+
+    if looks_macro and "data_quality_score" not in out and "market_regime" in out:
+        out.setdefault("data_quality_score", 0.5)
+
+    return out
+
+
 def sanitize_llm_payload(data: dict[str, Any]) -> dict[str, Any]:
     """Best-effort cleanup so StrictModel validation succeeds more often."""
 
@@ -314,6 +455,10 @@ def sanitize_llm_payload(data: dict[str, Any]) -> dict[str, Any]:
             for scen_key in ("upside_scenario", "downside_scenario"):
                 if scen_key in out:
                     out[scen_key] = _normalize_scenario(out[scen_key])
+            if "scenarios" in out and (
+                "upside_scenario" not in out or "downside_scenario" not in out
+            ):
+                _split_scenarios_list(out)
             _extract_bool_rationale(
                 out, "information_already_in_price", "information_already_in_price_rationale"
             )
@@ -368,7 +513,10 @@ def sanitize_llm_payload(data: dict[str, Any]) -> dict[str, Any]:
                 return coerced
         return node
 
-    return walk(data, None)
+    cleaned = walk(data, None)
+    if isinstance(cleaned, dict):
+        return _agent_shape_fixes(cleaned)
+    return cleaned
 
 
 def _coerce_by_field(key: str, value: str) -> Any:
@@ -417,7 +565,11 @@ def schema_enum_hint() -> str:
         "Booleans must be JSON true/false (not objects).",
         "Scores (data_quality_score, challenge_score, probability*): 0.0-1.0.",
         "cash_target_pct: 0-100. timestamp: ISO-8601 required.",
-        "entry_zone must be {min,max}; scenarios must be objects with name/description/probability.",
+        "entry_zone must be {min,max}; use upside_scenario/downside_scenario objects "
+        "(name/description/probability) — never a bare scenarios key.",
+        "macro: expected_sector_impact is [{sector, bias, rationale}, ...] not sector_impacts.",
+        "risk output: overall_verdict, cash_pct, gross_exposure_pct — do NOT echo data_quality_score.",
+        "devil: prefer_no_trade (bool) + prefer_no_trade_rationale required.",
         "symbol_actions items need: symbol, action, confidence(0-100), target_position_pct, thesis, invalidation.",
     ]
     return "\n".join(lines)
