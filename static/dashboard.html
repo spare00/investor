@@ -2023,6 +2023,9 @@
           return;
         }
         const dw = data.daily_workflow || {};
+        const latestCio = ((data.premarket || {}).cio) || {};
+        const cioAction = latestCio.portfolio_action || dw.cio_action || "—";
+        const riskVerdict = dw.risk_verdict || "—";
         const comp = data.completeness || {};
         if (metaEl) {
           metaEl.innerHTML = `${esc(data.session_date)} · ${esc(dw.state || "?")} · agents ${comp.agent_reports_found ?? 0}/${comp.agent_reports_expected ?? 6}`;
@@ -2052,10 +2055,10 @@
         bodyEl.className = "";
         bodyEl.innerHTML = `
           <div class="briefing-kv" style="margin-bottom:0.75rem">
-            <div><span class="k">CIO action</span>${esc(dw.cio_action || "—")}</div>
-            <div><span class="k">Risk verdict</span>${esc(dw.risk_verdict || "—")}</div>
+            <div><span class="k">CIO action</span>${pill(esc(cioAction), cioAction === "NO_TRADE" || cioAction === "STAY_CASH" ? "warn" : "good")}</div>
+            <div><span class="k">Risk verdict</span>${esc(riskVerdict)}</div>
             <div><span class="k">Intents</span>${esc(dw.intent_count ?? "—")}</div>
-            <div><span class="k">No-trade</span>${esc(dw.no_trade_reason || "—")}</div>
+            <div><span class="k">No-trade</span>${esc(dw.no_trade_reason || latestCio.reason_not_to_trade || "—")}</div>
             <div><span class="k">Workflow</span><span class="mono">${esc(links.premarket_workflow_id || "—")}</span></div>
           </div>
           ${comp.note ? `<p class="muted">${esc(comp.note)}</p>` : ""}

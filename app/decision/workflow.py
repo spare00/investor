@@ -166,6 +166,7 @@ class WorkflowService:
         now: datetime,
         cio_action: str | None = None,
         risk_verdict: str | None = None,
+        intent_count: int | None = None,
     ) -> None:
         """Stamp today's DailyWorkflowRun so Briefing can find WorkflowService dumps."""
         try:
@@ -187,6 +188,8 @@ class WorkflowService:
                 meta["cio_action"] = cio_action
             if risk_verdict:
                 meta["risk_verdict"] = risk_verdict
+            if intent_count is not None:
+                meta["intent_count"] = int(intent_count)
             daily.metadata_json = meta
             if decision_id is not None:
                 daily.latest_decision_id = decision_id
@@ -409,6 +412,7 @@ class WorkflowService:
             now=finished,
             cio_action=analysis.cio.portfolio_action.value,
             risk_verdict=analysis.risk.overall_verdict.value,
+            intent_count=int(execution.get("intent_count") or 0),
         )
         WORKFLOW_DURATION.labels(kind="premarket").observe(
             (finished - started).total_seconds()
@@ -506,6 +510,9 @@ class WorkflowService:
         result.kind = "intraday"
         result.notes = notes + result.notes
         if result.analysis is not None:
+            intent_n = None
+            if result.validation is not None:
+                intent_n = len(result.validation.intents or [])
             await self._link_briefing_to_daily(
                 workflow_id=result.workflow_id,
                 decision_id=result.analysis.cio.decision_id,
@@ -513,6 +520,7 @@ class WorkflowService:
                 now=datetime.now(UTC),
                 cio_action=result.analysis.cio.portfolio_action.value,
                 risk_verdict=result.analysis.risk.overall_verdict.value,
+                intent_count=intent_n,
             )
         if mtc is not None and mtc <= self.settings.force_close_before_market_close_minutes:
             try:

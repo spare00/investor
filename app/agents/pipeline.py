@@ -16,16 +16,16 @@ from app.agents.risk_manager import RiskManagerAgent
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.schemas import (
-    CIODecision,
     DevilsAdvocateOutput,
     MacroStrategistOutput,
     MarketIntelligenceOutput,
     QuantStrategistOutput,
     RiskManagerOutput,
 )
-from app.schemas.common import TraceMetadata
+from app.schemas.cio import CIODecision, CIOInput, SymbolActionPlan
+from app.schemas.common import SymbolAction, TraceMetadata
 from app.schemas.devils_advocate import DevilsAdvocateInput, ProposedThesis
-from app.schemas.macro_strategist import MacroSnapshotInput, MacroStrategistInput, MacroStrategistOutput
+from app.schemas.macro_strategist import MacroSnapshotInput, MacroStrategistInput
 from app.schemas.market_intelligence import MarketIntelligenceInput, NewsItemInput
 from app.schemas.quant_strategist import BarSnapshot, QuantStrategistInput, QuantStrategistOutput
 from app.schemas.risk_manager import (
@@ -33,12 +33,17 @@ from app.schemas.risk_manager import (
     ProposedTrade,
     RiskManagerInput,
 )
-from app.schemas.cio import CIOInput
 from app.services.collection import CollectionBundle
 from app.services.llm import LLMClient
 from app.universe.horizons import align_cio_horizons
 
 logger = get_logger(__name__)
+
+_ENTRY_ACTIONS = {
+    SymbolAction.STRONG_BUY,
+    SymbolAction.BUY,
+    SymbolAction.SCALE_IN,
+}
 
 
 def theses_from_quant(
@@ -95,6 +100,48 @@ def theses_from_quant(
         )
     ranked.sort(key=lambda item: item[0], reverse=True)
     return [thesis for _, thesis in ranked[:limit]]
+
+
+def enrich_cio_entry_stops(
+    decision: CIODecision,
+    quant: QuantStrategistOutput,
+    *,
+    latest_prices: dict[str, float] | None = None,
+) -> CIODecision:
+    """Fill missing numeric stops so execution sizing can approve BUY/SCALE_IN."""
+    prices = {k.upper(): float(v) for k, v in (latest_prices or {}).items() if v}
+    by_sym = {str(v.symbol).upper(): v for v in (quant.symbol_views or []) if v.symbol}
+    updated: list[SymbolActionPlan] = []
+    changed = False
+    for plan in decision.symbol_actions:
+        if plan.action not in _ENTRY_ACTIONS or plan.stop_loss is not None:
+            updated.append(plan)
+            continue
+        sym = plan.symbol.upper()
+        view = by_sym.get(sym)
+        stop = float(view.stop_or_invalidation) if view and view.stop_or_invalidation else None
+        if stop is None and plan.entry_zone is not None:
+            try:
+                stop = float(plan.entry_zone.min) * 0.99
+            except (TypeError, ValueError):
+                stop = None
+        if stop is None and sym in prices:
+            stop = round(prices[sym] * 0.98, 4)
+        if stop is None:
+            updated.append(plan)
+            continue
+        changed = True
+        inv = plan.invalidation if plan.invalidation and plan.invalidation.strip() not in {"", "n/a"} else (
+            f"Stop {stop}"
+        )
+        updated.append(plan.model_copy(update={"stop_loss": stop, "invalidation": inv}))
+    if not changed:
+        return decision
+    filled = sum(1 for p in updated if p.stop_loss is not None) - sum(
+        1 for p in decision.symbol_actions if p.stop_loss is not None
+    )
+    logger.info("cio_entry_stops_enriched", filled=filled)
+    return decision.model_copy(update={"symbol_actions": updated})
 
 
 @dataclass(slots=True)
@@ -299,6 +346,8 @@ class AgentPipeline:
                 trace=TraceMetadata(source_data_timestamp=as_of),
             )
         )
+        prices = {m.symbol.upper(): float(m.last) for m in collection.markets if m.last}
+        cio_out = enrich_cio_entry_stops(cio_out, quant_out, latest_prices=prices)
         cio_out = align_cio_horizons(cio_out, watch_ctx)
 
         logger.info(

@@ -269,6 +269,10 @@ class BriefingService:
         intraday = await self._intraday_for_session(run.session_date, include_raw=include_raw)
 
         meta = dict(run.metadata_json or {})
+        latest_cio_action = next(
+            (a["summary"].get("portfolio_action") for a in premarket_agents if a["agent"] == AgentName.CIO.value and a["present"]),
+            None,
+        ) or meta.get("cio_action")
         return {
             "available": True,
             "session_date": run.session_date,
@@ -278,7 +282,7 @@ class BriefingService:
                 "status": run.status,
                 "analysis_workflow_run_id": str(wf_id) if wf_id else None,
                 "latest_decision_id": str(run.latest_decision_id) if run.latest_decision_id else None,
-                "cio_action": meta.get("cio_action"),
+                "cio_action": latest_cio_action,
                 "risk_verdict": meta.get("risk_verdict"),
                 "no_trade_reason": meta.get("no_trade_reason"),
                 "analysis_completed_at": meta.get("analysis_completed_at"),

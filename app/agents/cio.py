@@ -41,6 +41,8 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
             "If the book is flat, risk is approved, and macro is RISK_ON/STRONG_RISK_ON, "
             "do NOT choose NO_TRADE solely because Devil prefer_no_trade is soft/advisory — "
             "prefer SCALE_IN/BUY on the best Quant allowlist names with entry_zone+stop. "
+            "Every BUY/STRONG_BUY/SCALE_IN MUST include a numeric stop_loss "
+            "(copy Quant stop_or_invalidation or ~1–2% below entry). "
             "Hard risk vetoes still win.\n"
             f"Open positions: {held}\n\n"
             f"{dump_for_prompt(payload)}"
