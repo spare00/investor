@@ -44,6 +44,7 @@ from app.models import (
     SystemEvent,
 )
 from app.workflow.daily import DailyWorkflowService
+from app.services.briefing import BriefingService
 from fastapi.responses import Response
 
 router = APIRouter(tags=["dashboard"])
@@ -79,6 +80,19 @@ async def list_decisions(
             for r in rows
         ]
     }
+
+
+@router.get("/dashboard/briefing")
+async def dashboard_briefing(
+    session_date: str | None = None,
+    raw: bool = False,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """Readable daily report of agent materials that fed the CIO."""
+    return await BriefingService(session).build(
+        session_date=session_date or None,
+        include_raw=bool(raw),
+    )
 
 
 @router.get("/agents/runs")

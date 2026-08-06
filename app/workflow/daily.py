@@ -211,6 +211,9 @@ class DailyWorkflowService:
                 proposed_trades=[],
                 workflow_id=run.id,
             )
+            from app.services.audit import AuditService
+
+            await AuditService(self.session).persist_analysis(analysis)
             prices = {m.symbol: m.last for m in collection.markets}
             from app.execution.firm_execution import materialize_cio_decision
 

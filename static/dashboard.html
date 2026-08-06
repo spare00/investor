@@ -256,6 +256,29 @@
     ul { margin: 0; padding-left: 1.1rem; color: var(--muted); }
     li { margin: 0.35rem 0; }
     .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; }
+    .briefing-toolbar {
+      display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; margin-bottom: 0.85rem;
+    }
+    .briefing-toolbar input[type="date"] {
+      background: var(--bg); color: var(--text); border: 1px solid var(--line);
+      border-radius: 6px; padding: 0.35rem 0.55rem; font: inherit;
+    }
+    .briefing-agent {
+      border-top: 1px solid var(--line); padding: 0.85rem 0 0.35rem; margin-top: 0.65rem;
+    }
+    .briefing-agent:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+    .briefing-agent h3 {
+      margin: 0 0 0.45rem; font-size: 1rem; font-weight: 600; letter-spacing: 0.01em;
+    }
+    .briefing-list { margin: 0.35rem 0 0; padding-left: 1.1rem; color: var(--text); }
+    .briefing-list li { margin: 0.2rem 0; }
+    .briefing-kv { display: grid; gap: 0.25rem; margin-top: 0.35rem; }
+    .briefing-kv div { font-size: 0.92rem; }
+    .briefing-kv .k { color: var(--muted); margin-right: 0.35rem; }
+    .intraday-card {
+      border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem; margin-top: 0.65rem;
+      background: color-mix(in srgb, var(--bg) 55%, var(--panel));
+    }
     .agent-card { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem; background: #121820; min-height: 110px; }
     .agent-card h3 { margin: 0 0 0.4rem; font-size: 0.85rem; }
     .muted { color: var(--muted); font-size: 0.8rem; }
@@ -352,6 +375,7 @@
   </div>
   <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="briefing">Briefing</button>
     <button class="tab" data-tab="performance">Performance</button>
     <button class="tab" data-tab="agents">Agents</button>
     <button class="tab" data-tab="operations">Operations</button>
@@ -412,6 +436,22 @@
       <section class="full">
         <h2>Six Agents — Latest Opinions</h2>
         <div class="agent-grid" id="agents"></div>
+      </section>
+    </div>
+
+    <div id="panel-briefing" class="tab-panel">
+      <section class="full">
+        <h2>Daily CIO Briefing</h2>
+        <div class="briefing-toolbar">
+          <label class="muted" for="briefingDate">Session (ET)</label>
+          <input id="briefingDate" type="date" />
+          <button type="button" id="btnBriefingLoad" onclick="refreshBriefing()">Load</button>
+          <label class="muted" style="display:flex;align-items:center;gap:0.35rem;margin-left:0.35rem">
+            <input id="briefingRaw" type="checkbox" /> Include raw JSON
+          </label>
+          <span id="briefingMeta" class="muted"></span>
+        </div>
+        <div id="briefingBody" class="muted">Open this tab to load today’s agent materials for the CIO.</div>
       </section>
     </div>
 
@@ -609,6 +649,9 @@
     function showTab(name) {
       document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
       document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === `panel-${name}`));
+      if (name === "briefing") {
+        refreshBriefing().catch(() => {});
+      }
     }
 
     document.getElementById("tabs").addEventListener("click", (e) => {
@@ -1473,6 +1516,9 @@
       renderLlmBudgetPanel(data.llm_budget);
       renderAgentLamps(data.agent_lamps, data.agents);
       renderUsSession(data.market_status);
+      const wfSession = (data.market_status && data.market_status.workflow && data.market_status.workflow.session_date) || null;
+      const briefingDate = document.getElementById("briefingDate");
+      if (briefingDate && wfSession && !briefingDate.value) briefingDate.value = wfSession;
       const ts = data.market_status.trading_state;
       const cls = ts === "active" ? "good" : ts === "paused" ? "warn" : "bad";
       document.getElementById("tradingState").innerHTML =
@@ -1857,6 +1903,171 @@
       renderMount("auditDecisions", `
         ${dataTable(["When", "Regime", "Action", "Risk", "Reason"], decRows)}
         ${rawBlock(decisions)}`);
+    }
+
+    function briefingList(items) {
+      const arr = (items || []).filter((x) => x != null && String(x).trim() !== "");
+      if (!arr.length) return `<p class="muted">None</p>`;
+      return `<ul class="briefing-list">${arr.map((x) => `<li>${esc(typeof x === "string" ? x : JSON.stringify(x))}</li>`).join("")}</ul>`;
+    }
+
+    function renderBriefingAgent(agent) {
+      const s = agent.summary || {};
+      const missing = !agent.present;
+      let body = "";
+      if (missing) {
+        body = `<p class="muted">No persisted report for this agent on this workflow.</p>`;
+      } else if (agent.agent === "market_intelligence") {
+        body = `
+          <div class="briefing-kv"><div><span class="k">Themes</span>${esc((s.themes || []).join(", ") || "—")}</div>
+          <div><span class="k">Quality</span>${esc(s.data_quality_score ?? "—")}</div></div>
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Events</h4>
+          ${briefingList((s.events || []).map((e) => `${e.importance ?? "?"} · ${e.headline || "—"} [${(e.symbols || []).join(",")}]`))}
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Conflicts / gaps</h4>
+          ${briefingList([...(s.conflicts || []), ...(s.missing_information || [])])}`;
+      } else if (agent.agent === "macro_strategist") {
+        body = `
+          <div class="briefing-kv">
+            <div><span class="k">Regime</span>${pill(esc(s.market_regime || "?"), "")}</div>
+            <div><span class="k">Confidence</span>${esc(s.confidence ?? "—")}</div>
+          </div>
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Bullish</h4>
+          ${briefingList(s.bullish_factors)}
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Bearish</h4>
+          ${briefingList(s.bearish_factors)}
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Invalidation</h4>
+          ${briefingList(s.invalidation_conditions)}`;
+      } else if (agent.agent === "quant_strategist") {
+        const views = (s.symbol_views || []).map((v) => {
+          const ez = v.entry_zone ? `${v.entry_zone.min ?? "?"}–${v.entry_zone.max ?? "?"}` : "—";
+          return `${v.symbol}: ${v.trend || "?"} / ${v.momentum || "?"} · p=${v.probability ?? "?"} · entry ${ez} · stop ${v.stop ?? "—"}`;
+        });
+        body = `
+          <div class="briefing-kv">
+            <div><span class="k">Trend</span>${esc(s.market_trend_state || "—")}</div>
+            <div><span class="k">Vol</span>${esc(s.market_volatility_state || "—")}</div>
+            <div><span class="k">Breadth</span>${esc(s.market_breadth_state || "—")}</div>
+          </div>
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Symbol views</h4>
+          ${briefingList(views)}`;
+      } else if (agent.agent === "risk_manager") {
+        body = `
+          <div class="briefing-kv">
+            <div><span class="k">Verdict</span>${pill(esc(s.overall_verdict || "?"), s.halt_new_trades ? "bad" : "good")}</div>
+            <div><span class="k">Halt new</span>${esc(String(s.halt_new_trades))}</div>
+            <div><span class="k">Cash %</span>${esc(s.cash_pct ?? "—")}</div>
+          </div>
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Hard vetoes</h4>
+          ${briefingList(s.hard_vetoes)}
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Soft warnings</h4>
+          ${briefingList(s.soft_warnings)}`;
+      } else if (agent.agent === "devils_advocate") {
+        body = `
+          <div class="briefing-kv">
+            <div><span class="k">Prefer no trade</span>${pill(esc(String(s.prefer_no_trade)), s.prefer_no_trade ? "warn" : "good")}</div>
+            <div><span class="k">Challenge</span>${esc(s.challenge_score ?? "—")}</div>
+            <div><span class="k">Rec</span>${esc(s.recommendation || "—")}</div>
+          </div>
+          <p style="margin:0.45rem 0 0.2rem">${esc(s.strongest_reason_thesis_is_wrong || "")}</p>
+          <p class="muted" style="margin:0.25rem 0">${esc(s.opposing_market_scenario || "")}</p>
+          <p class="muted" style="margin:0.25rem 0">${esc(s.prefer_no_trade_rationale || "")}</p>
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Withdrawal conditions</h4>
+          ${briefingList(s.immediate_withdrawal_conditions)}`;
+      } else if (agent.agent === "cio") {
+        const acts = (s.symbol_actions || []).map((a) =>
+          `${a.symbol}: ${a.action} · ${a.confidence ?? "?"} · ${a.target_position_pct ?? "?"}% · ${a.time_horizon || ""} — ${a.thesis || ""}`
+        );
+        body = `
+          <div class="briefing-kv">
+            <div><span class="k">Action</span>${pill(esc(s.portfolio_action || "?"), "")}</div>
+            <div><span class="k">Regime</span>${esc(s.market_regime || "—")}</div>
+            <div><span class="k">Risk OK</span>${pill(esc(String(s.risk_approval)), s.risk_approval ? "good" : "bad")}</div>
+            <div><span class="k">Cash target</span>${esc(s.cash_target_pct ?? "—")}%</div>
+          </div>
+          ${s.reason_not_to_trade ? `<p class="muted" style="margin:0.45rem 0">${esc(s.reason_not_to_trade)}</p>` : ""}
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Symbol actions</h4>
+          ${briefingList(acts)}
+          <h4 class="muted" style="margin:0.55rem 0 0.2rem;font-size:0.75rem;text-transform:uppercase">Risk conditions</h4>
+          ${briefingList(s.risk_conditions)}`;
+      } else {
+        body = rawBlock(s);
+      }
+      const when = agent.run?.display?.brisbane || agent.run?.display?.us_eastern || agent.run?.started_at || "";
+      return `<article class="briefing-agent">
+        <h3>${esc(agent.label || agent.agent)} ${missing ? pill("missing", "warn") : pill("ok", "good")}
+          <span class="muted" style="font-weight:400;font-size:0.8rem;margin-left:0.35rem">${esc(when)}</span>
+        </h3>
+        ${body}
+        ${agent.payload ? rawBlock(agent.payload) : ""}
+      </article>`;
+    }
+
+    async function refreshBriefing() {
+      const dateEl = document.getElementById("briefingDate");
+      const rawEl = document.getElementById("briefingRaw");
+      const metaEl = document.getElementById("briefingMeta");
+      const bodyEl = document.getElementById("briefingBody");
+      if (!bodyEl) return;
+      bodyEl.className = "muted";
+      bodyEl.textContent = "Loading briefing…";
+      const q = new URLSearchParams();
+      if (dateEl && dateEl.value) q.set("session_date", dateEl.value);
+      if (rawEl && rawEl.checked) q.set("raw", "true");
+      const path = `/dashboard/briefing${q.toString() ? `?${q}` : ""}`;
+      try {
+        const data = await fetchJson(path);
+        if (dateEl && data.session_date && !dateEl.value) dateEl.value = data.session_date;
+        if (!data.available) {
+          if (metaEl) metaEl.textContent = data.reason || "unavailable";
+          bodyEl.innerHTML = `<p class="muted">No daily workflow for this session yet. Prepare / run premarket analysis first.</p>`;
+          return;
+        }
+        const dw = data.daily_workflow || {};
+        const comp = data.completeness || {};
+        if (metaEl) {
+          metaEl.innerHTML = `${esc(data.session_date)} · ${esc(dw.state || "?")} · agents ${comp.agent_reports_found ?? 0}/${comp.agent_reports_expected ?? 6}`;
+        }
+        const agentsHtml = ((data.premarket || {}).agents || []).map(renderBriefingAgent).join("");
+        const intra = data.intraday || [];
+        const intraHtml = intra.length
+          ? intra.map((row) => {
+              const acts = (row.symbol_actions || []).map((a) =>
+                typeof a === "object"
+                  ? `${a.symbol}: ${a.action} · conf ${a.confidence ?? "?"}`
+                  : String(a)
+              );
+              const agentBits = (row.agents || []).length
+                ? `<details style="margin-top:0.45rem"><summary class="muted">Agent materials (${row.agents_present || 0}/6)</summary>${(row.agents || []).map(renderBriefingAgent).join("")}</details>`
+                : `<p class="muted" style="margin:0.35rem 0 0">No full agent dump for this tick (decision summary only).</p>`;
+              const when = row.display?.brisbane || row.display?.us_eastern || row.as_of || "";
+              return `<div class="intraday-card">
+                <div><strong>${esc(when)}</strong> · ${pill(esc(row.portfolio_action || "?"), "")} · thesis ${esc(row.thesis_status || "—")} · ${pill(row.risk_approval ? "risk ok" : "risk blocked", row.risk_approval ? "good" : "bad")}</div>
+                <div class="muted" style="margin-top:0.25rem">regime ${esc(row.market_regime || "—")} · mode ${esc(row.mode || "—")}</div>
+                ${briefingList(acts)}
+                ${agentBits}
+              </div>`;
+            }).join("")
+          : `<p class="muted">No intraday decisions for this session yet.</p>`;
+        const links = data.links || {};
+        bodyEl.className = "";
+        bodyEl.innerHTML = `
+          <div class="briefing-kv" style="margin-bottom:0.75rem">
+            <div><span class="k">CIO action</span>${esc(dw.cio_action || "—")}</div>
+            <div><span class="k">Risk verdict</span>${esc(dw.risk_verdict || "—")}</div>
+            <div><span class="k">Intents</span>${esc(dw.intent_count ?? "—")}</div>
+            <div><span class="k">No-trade</span>${esc(dw.no_trade_reason || "—")}</div>
+            <div><span class="k">Workflow</span><span class="mono">${esc(links.premarket_workflow_id || "—")}</span></div>
+          </div>
+          ${comp.note ? `<p class="muted">${esc(comp.note)}</p>` : ""}
+          <h2 style="margin-top:1rem">Premarket — materials for CIO</h2>
+          ${agentsHtml || `<p class="muted">No agent reports.</p>`}
+          <h2 style="margin-top:1.25rem">Intraday re-evals</h2>
+          ${intraHtml}
+        `;
+      } catch (err) {
+        if (metaEl) metaEl.textContent = "failed";
+        bodyEl.textContent = `Briefing failed: ${err.message || err}`;
+      }
     }
 
     async function refreshAll() {

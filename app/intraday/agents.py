@@ -141,6 +141,9 @@ class IntradayAgentService:
                     for s in sorted(entry_universe)
                 ],
             )
+            from app.services.audit import AuditService
+
+            await AuditService(self.session).persist_analysis(analysis)
             cio: CIODecision = analysis.cio
 
             # Prioritize existing positions: sort symbol_actions

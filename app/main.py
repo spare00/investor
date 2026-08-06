@@ -173,6 +173,7 @@ async def status() -> dict[str, Any]:
             "dashboard": "GET /dashboard",
             "metrics": "GET /metrics",
             "summary": "GET /dashboard/summary",
+            "briefing": "GET /dashboard/briefing",
             "decisions": "GET /decisions",
             "agent_runs": "GET /agents/runs",
             "events": "GET /events",
