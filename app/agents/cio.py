@@ -38,6 +38,10 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
             "Match time_horizon to watchlist horizon when present "
             "(scalp/day→intraday, short→swing, medium→position). "
             "Respect per-horizon book capacity — prefer highest-conviction names.\n"
+            "If the book is flat, risk is approved, and macro is RISK_ON/STRONG_RISK_ON, "
+            "do NOT choose NO_TRADE solely because Devil prefer_no_trade is soft/advisory — "
+            "prefer SCALE_IN/BUY on the best Quant allowlist names with entry_zone+stop. "
+            "Hard risk vetoes still win.\n"
             f"Open positions: {held}\n\n"
             f"{dump_for_prompt(payload)}"
         )

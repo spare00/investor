@@ -25,9 +25,9 @@ from app.schemas import (
 )
 from app.schemas.common import TraceMetadata
 from app.schemas.devils_advocate import DevilsAdvocateInput, ProposedThesis
-from app.schemas.macro_strategist import MacroSnapshotInput, MacroStrategistInput
+from app.schemas.macro_strategist import MacroSnapshotInput, MacroStrategistInput, MacroStrategistOutput
 from app.schemas.market_intelligence import MarketIntelligenceInput, NewsItemInput
-from app.schemas.quant_strategist import BarSnapshot, QuantStrategistInput
+from app.schemas.quant_strategist import BarSnapshot, QuantStrategistInput, QuantStrategistOutput
 from app.schemas.risk_manager import (
     PortfolioStateInput,
     ProposedTrade,
@@ -39,6 +39,62 @@ from app.services.llm import LLMClient
 from app.universe.horizons import align_cio_horizons
 
 logger = get_logger(__name__)
+
+
+def theses_from_quant(
+    quant: QuantStrategistOutput,
+    *,
+    entry_universe: list[str] | None,
+    regime: str | None,
+    limit: int = 5,
+) -> list[ProposedThesis]:
+    """Build Devil/CIO challenge targets from actionable Quant views.
+
+    Premarket/intraday often pass no explicit ProposedTrade; without theses Devil
+    only sees "No explicit trade proposal" and soft-blocks a flat RISK_ON book.
+    """
+    allow = {s.upper() for s in (entry_universe or []) if s} or None
+    ranked: list[tuple[float, ProposedThesis]] = []
+    for view in quant.symbol_views or []:
+        sym = str(view.symbol or "").upper()
+        if not sym:
+            continue
+        if allow is not None and sym not in allow:
+            continue
+        if view.entry_zone is None:
+            continue
+        prob = float(view.probability_estimate or 0.0)
+        if prob < 0.45:
+            continue
+        trend = getattr(view.trend_state, "value", str(view.trend_state or ""))
+        direction = "short" if trend == "down" else "long"
+        ez = view.entry_zone
+        ranked.append(
+            (
+                prob,
+                ProposedThesis(
+                    symbol=sym,
+                    direction=direction,
+                    summary=(
+                        f"Quant {direction} {sym} p={prob:.2f} trend={trend} "
+                        f"entry={ez.min}-{ez.max}"
+                    ),
+                    supporting_points=[
+                        p
+                        for p in [
+                            regime or "",
+                            view.probability_basis or "",
+                            f"stop={view.stop_or_invalidation}"
+                            if view.stop_or_invalidation is not None
+                            else "",
+                        ]
+                        if p
+                    ],
+                ),
+            )
+        )
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [thesis for _, thesis in ranked[:limit]]
 
 
 @dataclass(slots=True)
@@ -198,14 +254,22 @@ class AgentPipeline:
                 supporting_points=[macro_out.market_regime.value],
             )
             for t in (proposed_trades or [])
-        ] or [
-            ProposedThesis(
-                symbol=None,
-                direction="flat",
-                summary="No explicit trade proposal",
-                supporting_points=[],
-            )
         ]
+        if not theses:
+            theses = theses_from_quant(
+                quant_out,
+                entry_universe=entry_list,
+                regime=macro_out.market_regime.value,
+            )
+        if not theses:
+            theses = [
+                ProposedThesis(
+                    symbol=None,
+                    direction="flat",
+                    summary="No explicit trade proposal",
+                    supporting_points=[],
+                )
+            ]
 
         devil_out = await self.devil.run(
             DevilsAdvocateInput(
