@@ -115,10 +115,13 @@ async def _collect(
     collection_type: str,
     *,
     symbols: list[str] | None,
-    fixture: bool,
+    fixture: bool | None,
     idempotency_key: str | None,
 ) -> dict[str, Any]:
     settings = get_settings()
+    use_fixture = (
+        bool(fixture) if fixture is not None else not settings.enable_external_data
+    )
     leases = LeaseService(session, settings)
     key = f"collect:{collection_type}:{idempotency_key or 'default'}"
     try:
@@ -127,7 +130,9 @@ async def _collect(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         result = await DataCollectionPipeline(
-            session, settings=settings, fixture_mode=fixture or not settings.enable_external_data
+            session,
+            settings=settings,
+            fixture_mode=use_fixture or not settings.enable_external_data,
         ).collect(collection_type, symbols=symbols)
         payload = result.to_dict()
         payload["quotes"] = [q.model_dump(mode="json") for q in result.quotes]
@@ -139,6 +144,7 @@ async def _collect(
         payload["economic_events"] = [e.model_dump(mode="json") for e in result.economic_events]
         payload["conflicts"] = [c.model_dump(mode="json") for c in result.conflicts]
         payload["contexts"] = result.contexts
+        payload["fixture_mode"] = use_fixture or not settings.enable_external_data
         _LAST_RUNS["latest"] = payload
         _LAST_RUNS[str(result.collection_run_id)] = payload
         await session.commit()
@@ -152,51 +158,63 @@ async def _collect(
 
 @router.post("/collect/premarket")
 async def collect_premarket(
-    fixture: bool = True,
-    session: AsyncSession = Depends(get_db_session),
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-) -> dict[str, Any]:
-    return await _collect(session, "PREMARKET", symbols=None, fixture=fixture, idempotency_key=idempotency_key)
-
-
-@router.post("/collect/revalidation")
-async def collect_revalidation(
-    fixture: bool = True,
+    fixture: bool | None = None,
     session: AsyncSession = Depends(get_db_session),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     return await _collect(
-        session, "PREOPEN_REVALIDATION", symbols=None, fixture=fixture, idempotency_key=idempotency_key
+        session, "PREMARKET", symbols=None, fixture=fixture, idempotency_key=idempotency_key
+    )
+
+
+@router.post("/collect/revalidation")
+async def collect_revalidation(
+    fixture: bool | None = None,
+    session: AsyncSession = Depends(get_db_session),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    return await _collect(
+        session,
+        "PREOPEN_REVALIDATION",
+        symbols=None,
+        fixture=fixture,
+        idempotency_key=idempotency_key,
     )
 
 
 @router.post("/collect/intraday")
 async def collect_intraday(
     symbols: str | None = None,
-    fixture: bool = True,
+    fixture: bool | None = None,
     session: AsyncSession = Depends(get_db_session),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     syms = [s.strip().upper() for s in symbols.split(",")] if symbols else None
-    return await _collect(session, "INTRADAY", symbols=syms, fixture=fixture, idempotency_key=idempotency_key)
+    return await _collect(
+        session, "INTRADAY", symbols=syms, fixture=fixture, idempotency_key=idempotency_key
+    )
 
 
 @router.post("/collect/postmarket")
 async def collect_postmarket(
-    fixture: bool = True,
+    fixture: bool | None = None,
     session: AsyncSession = Depends(get_db_session),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
-    return await _collect(session, "POSTMARKET", symbols=None, fixture=fixture, idempotency_key=idempotency_key)
+    return await _collect(
+        session, "POSTMARKET", symbols=None, fixture=fixture, idempotency_key=idempotency_key
+    )
 
 
 @router.post("/collect/on-demand")
 async def collect_on_demand(
-    fixture: bool = True,
+    fixture: bool | None = None,
     session: AsyncSession = Depends(get_db_session),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
-    return await _collect(session, "ON_DEMAND", symbols=None, fixture=fixture, idempotency_key=idempotency_key)
+    return await _collect(
+        session, "ON_DEMAND", symbols=None, fixture=fixture, idempotency_key=idempotency_key
+    )
 
 
 @router.post("/events/rebuild")
