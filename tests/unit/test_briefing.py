@@ -192,3 +192,28 @@ async def test_briefing_service_assembles_premarket(session: AsyncSession) -> No
     assert briefing["premarket"]["cio"]["portfolio_action"] == "SCALE_IN"
     assert len(briefing["intraday"]) == 1
     assert briefing["intraday"][0]["portfolio_action"] == "HOLD"
+    assert len(briefing["session_analyses"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_briefing_finds_manual_intraday_workflow(session: AsyncSession) -> None:
+    """Dashboard Intraday Eval persists under a fresh workflow_id not on daily.analysis_workflow_run_id."""
+    analysis = _analysis()
+    await AuditService(session).persist_analysis(analysis)
+    # Daily run points at a different (empty) workflow id — like production before linking.
+    run = DailyWorkflowRun(
+        id=uuid4(),
+        session_date="2026-08-06",
+        calendar_name="NYSE",
+        current_state="INTRADAY",
+        status="running",
+        analysis_workflow_run_id=uuid4(),
+        metadata_json={},
+    )
+    session.add(run)
+    await session.flush()
+
+    briefing = await BriefingService(session).build(session_date="2026-08-06")
+    assert briefing["completeness"]["complete"] is True
+    assert briefing["premarket"]["workflow_id"] == str(analysis.workflow_id)
+    assert briefing["session_analyses"][0]["workflow_id"] == str(analysis.workflow_id)

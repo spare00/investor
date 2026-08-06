@@ -157,6 +157,43 @@ class WorkflowService:
             cooldown_until=portfolio.cooldown_until,
         )
 
+    async def _link_briefing_to_daily(
+        self,
+        *,
+        workflow_id: UUID,
+        decision_id: UUID | None,
+        kind: str,
+        now: datetime,
+        cio_action: str | None = None,
+        risk_verdict: str | None = None,
+    ) -> None:
+        """Stamp today's DailyWorkflowRun so Briefing can find WorkflowService dumps."""
+        try:
+            from app.market.calendar import MarketCalendarService
+            from app.workflow.daily import DailyWorkflowService
+
+            status = MarketCalendarService(self.settings).get_market_status(now)
+            session_date = status.session_date.isoformat()
+            daily = await DailyWorkflowService(self.session, settings=self.settings).get_current(
+                session_date
+            )
+            if daily is None:
+                return
+            meta = dict(daily.metadata_json or {})
+            meta["last_briefing_workflow_id"] = str(workflow_id)
+            meta["last_briefing_kind"] = kind
+            meta["last_briefing_at"] = now.isoformat()
+            if cio_action:
+                meta["cio_action"] = cio_action
+            if risk_verdict:
+                meta["risk_verdict"] = risk_verdict
+            daily.metadata_json = meta
+            if decision_id is not None:
+                daily.latest_decision_id = decision_id
+            await self.session.flush()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("briefing_daily_link_failed", error=str(exc)[:200])
+
     def _block_new_entries_now(self, as_of: datetime | None = None) -> bool:
         """True in closing / force-close window when new entries are disabled."""
         if self.settings.allow_new_positions_in_closing_window:
@@ -365,6 +402,14 @@ class WorkflowService:
 
         TRADING_STATE.set(trading_state_value(trading_controls.snapshot().state.value))
         finished = datetime.now(UTC)
+        await self._link_briefing_to_daily(
+            workflow_id=wf,
+            decision_id=analysis.cio.decision_id,
+            kind="premarket",
+            now=finished,
+            cio_action=analysis.cio.portfolio_action.value,
+            risk_verdict=analysis.risk.overall_verdict.value,
+        )
         WORKFLOW_DURATION.labels(kind="premarket").observe(
             (finished - started).total_seconds()
         )
@@ -460,6 +505,15 @@ class WorkflowService:
         result = await self.run_premarket(portfolio=portfolio, workflow_id=wf)
         result.kind = "intraday"
         result.notes = notes + result.notes
+        if result.analysis is not None:
+            await self._link_briefing_to_daily(
+                workflow_id=result.workflow_id,
+                decision_id=result.analysis.cio.decision_id,
+                kind="intraday_manual",
+                now=datetime.now(UTC),
+                cio_action=result.analysis.cio.portfolio_action.value,
+                risk_verdict=result.analysis.risk.overall_verdict.value,
+            )
         if mtc is not None and mtc <= self.settings.force_close_before_market_close_minutes:
             try:
                 from app.intraday.closing import ClosingService

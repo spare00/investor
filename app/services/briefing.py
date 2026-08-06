@@ -225,6 +225,21 @@ class BriefingService:
 
         wf_id = run.analysis_workflow_run_id or run.id
         agent_map = await self._agents_for_workflow(wf_id)
+        # Manual dashboard "Intraday Eval" / WorkflowService uses a fresh workflow_id
+        # that is not written to analysis_workflow_run_id — recover by session day.
+        if len(agent_map) < 6:
+            fallback_wf, fallback_map = await self._latest_agents_for_session(run.session_date)
+            meta_probe = dict(run.metadata_json or {})
+            linked = meta_probe.get("last_briefing_workflow_id")
+            if linked:
+                linked_map = await self._agents_for_workflow(UUID(str(linked)))
+                if len(linked_map) > len(agent_map):
+                    wf_id = UUID(str(linked))
+                    agent_map = linked_map
+            if len(fallback_map) > len(agent_map):
+                wf_id = fallback_wf or wf_id
+                agent_map = fallback_map
+
         cio_row = await self._cio_for_run(run)
 
         premarket_agents = []
@@ -250,6 +265,7 @@ class BriefingService:
             )
 
         found = sum(1 for a in premarket_agents if a["present"])
+        session_analyses = await self._session_analyses(run.session_date, include_raw=include_raw)
         intraday = await self._intraday_for_session(run.session_date, include_raw=include_raw)
 
         meta = dict(run.metadata_json or {})
@@ -267,6 +283,8 @@ class BriefingService:
                 "no_trade_reason": meta.get("no_trade_reason"),
                 "analysis_completed_at": meta.get("analysis_completed_at"),
                 "intent_count": meta.get("intent_count"),
+                "last_briefing_workflow_id": meta.get("last_briefing_workflow_id"),
+                "last_briefing_kind": meta.get("last_briefing_kind"),
             },
             "premarket": {
                 "workflow_id": str(wf_id),
@@ -276,6 +294,7 @@ class BriefingService:
                     None,
                 ),
             },
+            "session_analyses": session_analyses,
             "intraday": intraday,
             "completeness": {
                 "agent_reports_found": found,
@@ -344,6 +363,95 @@ class BriefingService:
             if report is None:
                 continue
             out[run.agent_name] = (run, report)
+        return out
+
+    async def _latest_agents_for_session(
+        self, session_date: str
+    ) -> tuple[UUID | None, dict[str, tuple[AgentRun, AgentReport]]]:
+        start, end = session_day_bounds_utc(session_date)
+        runs = list(
+            (
+                await self.session.execute(
+                    select(AgentRun)
+                    .where(AgentRun.started_at >= start, AgentRun.started_at < end)
+                    .order_by(desc(AgentRun.started_at))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        best_wf: UUID | None = None
+        best_map: dict[str, tuple[AgentRun, AgentReport]] = {}
+        seen: set[UUID] = set()
+        for run in runs:
+            if run.workflow_id in seen:
+                continue
+            seen.add(run.workflow_id)
+            agent_map = await self._agents_for_workflow(run.workflow_id)
+            if len(agent_map) > len(best_map):
+                best_wf = run.workflow_id
+                best_map = agent_map
+            if len(best_map) >= 6:
+                break
+        return best_wf, best_map
+
+    async def _session_analyses(
+        self, session_date: str, *, include_raw: bool
+    ) -> list[dict[str, Any]]:
+        """All distinct agent workflow bundles for the ET session day (newest first)."""
+        start, end = session_day_bounds_utc(session_date)
+        runs = list(
+            (
+                await self.session.execute(
+                    select(AgentRun)
+                    .where(AgentRun.started_at >= start, AgentRun.started_at < end)
+                    .order_by(desc(AgentRun.started_at))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        out: list[dict[str, Any]] = []
+        seen: set[UUID] = set()
+        for run in runs:
+            if run.workflow_id in seen:
+                continue
+            seen.add(run.workflow_id)
+            agent_map = await self._agents_for_workflow(run.workflow_id)
+            if not agent_map:
+                continue
+            agents = [
+                shape_agent_section(
+                    name,
+                    payload=agent_map[name][1].payload
+                    if name in agent_map and isinstance(agent_map[name][1].payload, dict)
+                    else None,
+                    run=agent_map[name][0] if name in agent_map else None,
+                    include_raw=include_raw,
+                )
+                for name in (
+                    AgentName.MARKET_INTELLIGENCE.value,
+                    AgentName.MACRO_STRATEGIST.value,
+                    AgentName.QUANT_STRATEGIST.value,
+                    AgentName.RISK_MANAGER.value,
+                    AgentName.DEVILS_ADVOCATE.value,
+                    AgentName.CIO.value,
+                )
+            ]
+            started = max((a["run"]["started_at"] for a in agents if a.get("run")), default=None)
+            cio_summary = next((a["summary"] for a in agents if a["agent"] == AgentName.CIO.value and a["present"]), None)
+            out.append(
+                {
+                    "workflow_id": str(run.workflow_id),
+                    "started_at": started,
+                    "agents_present": sum(1 for a in agents if a["present"]),
+                    "cio_action": (cio_summary or {}).get("portfolio_action"),
+                    "market_regime": (cio_summary or {}).get("market_regime"),
+                    "agents": agents,
+                }
+            )
+            if len(out) >= 8:
+                break
         return out
 
     async def _cio_for_run(self, run: DailyWorkflowRun) -> CIODecisionRecord | None:

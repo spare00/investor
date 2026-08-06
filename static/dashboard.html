@@ -2059,9 +2059,24 @@
             <div><span class="k">Workflow</span><span class="mono">${esc(links.premarket_workflow_id || "—")}</span></div>
           </div>
           ${comp.note ? `<p class="muted">${esc(comp.note)}</p>` : ""}
-          <h2 style="margin-top:1rem">Premarket — materials for CIO</h2>
+          <h2 style="margin-top:1rem">Latest materials for CIO</h2>
           ${agentsHtml || `<p class="muted">No agent reports.</p>`}
-          <h2 style="margin-top:1.25rem">Intraday re-evals</h2>
+          <h2 style="margin-top:1.25rem">All analyses this session</h2>
+          ${(data.session_analyses || []).length
+            ? (data.session_analyses || []).map((bundle) => `
+                <div class="intraday-card">
+                  <div><strong class="mono">${esc(bundle.started_at || "")}</strong>
+                    · wf <span class="mono">${esc((bundle.workflow_id || "").slice(0, 8))}</span>
+                    · ${pill(esc(bundle.cio_action || "?"), "")}
+                    · agents ${bundle.agents_present || 0}/6
+                    · ${esc(bundle.market_regime || "")}
+                  </div>
+                  <details style="margin-top:0.45rem"><summary class="muted">Open agent report</summary>
+                    ${(bundle.agents || []).map(renderBriefingAgent).join("")}
+                  </details>
+                </div>`).join("")
+            : `<p class="muted">No persisted agent workflows for this ET session yet.</p>`}
+          <h2 style="margin-top:1.25rem">Intraday decision records</h2>
           ${intraHtml}
         `;
       } catch (err) {
@@ -2103,6 +2118,9 @@
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.detail || body.message || `HTTP ${res.status}`);
         await refreshAll();
+        if (document.querySelector('.tab.active')?.dataset.tab === 'briefing' || kind === 'intraday' || kind === 'premarket') {
+          await refreshBriefing().catch(() => {});
+        }
         setBusy(false, `${label} done · ${body.outcome || body.status || "ok"}`);
       } catch (err) {
         setBusy(false, `${label} failed: ${err.message || err}`);
