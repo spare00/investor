@@ -179,7 +179,9 @@ class AlpacaMarketDataAdapter:
             syms = ",".join(s.upper() for s in symbols)
             # Snapshots give last trade + NBBO; latest quotes alone often lack a print.
             url = f"{cfg.alpaca_data_url.rstrip('/')}/v2/stocks/snapshots"
-            async with httpx.AsyncClient(timeout=cfg.provider_request_timeout_seconds) as client:
+            async with httpx.AsyncClient(
+                timeout=cfg.provider_request_timeout_seconds, trust_env=False
+            ) as client:
                 resp = await client.get(url, params={"symbols": syms}, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()

@@ -74,7 +74,9 @@ class AlpacaBroker:
     async def _http(self) -> httpx.AsyncClient:
         if self._client is not None:
             return self._client
-        return httpx.AsyncClient(base_url=self.base_url, headers=self._headers, timeout=30.0)
+        return httpx.AsyncClient(
+            base_url=self.base_url, headers=self._headers, timeout=30.0, trust_env=False
+        )
 
     async def _request(
         self, method: str, path: str, *, json: dict[str, Any] | None = None

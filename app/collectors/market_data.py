@@ -91,7 +91,7 @@ class AlpacaMarketDataProvider:
 
         url = f"{settings.alpaca_data_url.rstrip('/')}/v2/stocks/snapshots"
         timeout = float(settings.provider_request_timeout_seconds)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             resp = await client.get(url, params={"symbols": ",".join(syms)}, headers=headers)
             resp.raise_for_status()
             payload = resp.json()
