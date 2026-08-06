@@ -1,8 +1,11 @@
-"""LLM spend budget — daily token/call caps + monthly AUD cost cap.
+"""LLM spend budget — monthly AUD is primary; daily token/call caps derive from it.
 
 Counters are process-local with an optional JSON state file. Daily keys reset on
 UTC date change; monthly keys reset on UTC month change. Cost is estimated from
 prompt/completion tokens using configured per-1M USD rates and AUD/USD.
+
+When ``llm_daily_token_budget`` / ``llm_daily_call_budget`` are 0, daily caps are
+sliced from ``llm_monthly_aud_budget / trading_days`` using model $/token rates.
 """
 
 from __future__ import annotations
@@ -43,6 +46,62 @@ class LLMBudgetExceeded(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class DailyBudgetResolution:
+    token_budget: int
+    call_budget: int
+    daily_aud_budget: float
+    derived: bool
+    trading_days: int
+
+
+def resolve_daily_llm_budgets(settings: Settings) -> DailyBudgetResolution:
+    """Resolve effective daily token/call caps.
+
+    Monthly AUD is the source of truth. With daily overrides at 0, split the
+    month across ``llm_budget_trading_days_per_month`` and invert model rates
+    to a token (and call) cap. Explicit daily >0 keeps manual/test overrides.
+    """
+    month_aud = max(0.0, float(settings.llm_monthly_aud_budget))
+    days = max(1, int(settings.llm_budget_trading_days_per_month or 21))
+    explicit_tok = max(0, int(settings.llm_daily_token_budget))
+    explicit_call = max(0, int(settings.llm_daily_call_budget))
+
+    if month_aud <= 0:
+        return DailyBudgetResolution(
+            token_budget=explicit_tok,
+            call_budget=explicit_call,
+            daily_aud_budget=0.0,
+            derived=False,
+            trading_days=days,
+        )
+
+    daily_aud = month_aud / float(days)
+    derived_tok = 0
+    derived_call = 0
+    aud_per_usd = max(1e-9, float(settings.llm_aud_per_usd))
+    daily_usd = daily_aud / aud_per_usd
+    share = min(1.0, max(0.0, float(settings.llm_budget_input_token_share)))
+    blend = share * float(settings.llm_input_usd_per_mtok) + (1.0 - share) * float(
+        settings.llm_output_usd_per_mtok
+    )
+    if blend > 0 and daily_usd > 0:
+        derived_tok = max(1, int(daily_usd / blend * 1_000_000))
+        avg_call = max(1, int(settings.llm_budget_avg_tokens_per_call or 5_000))
+        derived_call = max(1, derived_tok // avg_call)
+
+    token_budget = explicit_tok if explicit_tok > 0 else derived_tok
+    call_budget = explicit_call if explicit_call > 0 else derived_call
+    derived = explicit_tok <= 0 or explicit_call <= 0
+    return DailyBudgetResolution(
+        token_budget=token_budget,
+        call_budget=call_budget,
+        daily_aud_budget=daily_aud,
+        derived=derived and month_aud > 0,
+        trading_days=days,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class LLMBudgetSnapshot:
     day: str
     month: str
@@ -68,6 +127,9 @@ class LLMBudgetSnapshot:
     month_aud_remaining: float | None
     month_blocked: bool
     month_soft_warned: bool
+    daily_aud_budget: float = 0.0
+    daily_budget_derived: bool = False
+    trading_days_per_month: int = 21
 
     def to_dict(self) -> dict[str, Any]:
         daily_pct = 0.0
@@ -107,6 +169,9 @@ class LLMBudgetSnapshot:
             ),
             "month_blocked": self.month_blocked,
             "month_soft_warned": self.month_soft_warned,
+            "daily_aud_budget": round(self.daily_aud_budget, 4),
+            "daily_budget_derived": self.daily_budget_derived,
+            "trading_days_per_month": self.trading_days_per_month,
             "daily_pct": round(daily_pct, 4),
             "month_pct": round(month_pct, 4),
             "display_pct": round(max(daily_pct, month_pct), 4),
@@ -299,8 +364,9 @@ def snapshot_llm_budget(settings: Settings | None = None) -> LLMBudgetSnapshot:
         day, month = _roll_period(cfg)
         total = _prompt_tokens + _completion_tokens
         month_total = _month_prompt_tokens + _month_completion_tokens
-        token_budget = max(0, int(cfg.llm_daily_token_budget))
-        call_budget = max(0, int(cfg.llm_daily_call_budget))
+        daily = resolve_daily_llm_budgets(cfg)
+        token_budget = daily.token_budget
+        call_budget = daily.call_budget
         month_aud_budget = max(0.0, float(cfg.llm_monthly_aud_budget))
         month_usd = estimate_usd_cost(_month_prompt_tokens, _month_completion_tokens, cfg)
         month_aud = month_usd * float(cfg.llm_aud_per_usd)
@@ -340,6 +406,9 @@ def snapshot_llm_budget(settings: Settings | None = None) -> LLMBudgetSnapshot:
             month_aud_remaining=(month_aud_budget - month_aud) if month_aud_budget > 0 else None,
             month_blocked=month_blocked,
             month_soft_warned=_month_warned_soft,
+            daily_aud_budget=daily.daily_aud_budget,
+            daily_budget_derived=daily.derived,
+            trading_days_per_month=daily.trading_days,
         )
 
 
@@ -388,8 +457,9 @@ def record_llm_usage(
         _month_calls += 1
         total = _prompt_tokens + _completion_tokens
         soft_pct = float(cfg.llm_budget_soft_limit_pct)
-        token_budget = max(0, int(cfg.llm_daily_token_budget))
-        call_budget = max(0, int(cfg.llm_daily_call_budget))
+        daily = resolve_daily_llm_budgets(cfg)
+        token_budget = daily.token_budget
+        call_budget = daily.call_budget
         month_aud_budget = max(0.0, float(cfg.llm_monthly_aud_budget))
         month_aud = estimate_aud_cost(_month_prompt_tokens, _month_completion_tokens, cfg)
         if not _warned_soft and soft_pct > 0:
@@ -405,6 +475,7 @@ def record_llm_usage(
                     calls=_calls,
                     call_budget=call_budget,
                     soft_limit_pct=soft_pct,
+                    daily_budget_derived=daily.derived,
                 )
         if not _month_warned_soft and soft_pct > 0 and month_aud_budget > 0:
             if month_aud >= month_aud_budget * soft_pct:

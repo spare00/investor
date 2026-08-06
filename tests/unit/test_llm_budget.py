@@ -81,7 +81,50 @@ def test_monthly_aud_budget_blocks(tmp_path) -> None:
         assert_llm_budget_allows_call(settings)
 
 
-def test_budget_disabled_allows_overage(tmp_path) -> None:
+def test_daily_budgets_derive_from_monthly(tmp_path) -> None:
+    from app.services.llm_budget import resolve_daily_llm_budgets
+
+    settings = Settings(
+        llm_budget_enforce=True,
+        llm_monthly_aud_budget=20.0,
+        llm_budget_trading_days_per_month=21,
+        llm_daily_token_budget=0,
+        llm_daily_call_budget=0,
+        llm_aud_per_usd=1.55,
+        llm_input_usd_per_mtok=0.15,
+        llm_output_usd_per_mtok=0.60,
+        llm_budget_input_token_share=0.75,
+        llm_budget_avg_tokens_per_call=5_000,
+        llm_budget_state_path=str(tmp_path / "budget.json"),
+    )
+    daily = resolve_daily_llm_budgets(settings)
+    assert daily.derived is True
+    assert abs(daily.daily_aud_budget - (20.0 / 21.0)) < 1e-9
+    # Doubling monthly doubles the daily token slice.
+    doubled = resolve_daily_llm_budgets(
+        settings.model_copy(update={"llm_monthly_aud_budget": 40.0})
+    )
+    assert doubled.token_budget == daily.token_budget * 2
+    assert doubled.call_budget == daily.call_budget * 2
+
+    snap = snapshot_llm_budget(settings)
+    assert snap.daily_budget_derived is True
+    assert snap.token_budget == daily.token_budget
+    assert snap.call_budget == daily.call_budget
+
+
+def test_explicit_daily_override_still_works(tmp_path) -> None:
+    from app.services.llm_budget import resolve_daily_llm_budgets
+
+    settings = Settings(
+        llm_monthly_aud_budget=20.0,
+        llm_daily_token_budget=100,
+        llm_daily_call_budget=1000,
+        llm_budget_state_path=str(tmp_path / "budget.json"),
+    )
+    daily = resolve_daily_llm_budgets(settings)
+    assert daily.token_budget == 100
+    assert daily.call_budget == 1000
     settings = Settings(
         llm_budget_enforce=False,
         llm_daily_token_budget=1,

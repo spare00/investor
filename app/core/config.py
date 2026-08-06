@@ -75,12 +75,20 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096
     llm_timeout_seconds: int = 60
     llm_max_retries: int = 2
-    # LLM spend guard: daily token/call (UTC day) + monthly AUD cost (UTC month).
-    # 0 disables that dimension. OpenAI account limits remain the outer safety net.
+    # LLM spend guard: monthly AUD is the source of truth. Daily token/call
+    # budgets auto-split across trading days when set to 0.
+    # OpenAI account limits remain the outer safety net.
     llm_budget_enforce: bool = True
-    llm_daily_token_budget: int = 500_000
-    llm_daily_call_budget: int = 120
     llm_monthly_aud_budget: float = 20.0
+    # Approx US equity sessions per month used to slice the monthly AUD cap.
+    llm_budget_trading_days_per_month: int = 21
+    # Typical tokens/call for converting daily AUD → call cap (prompt+completion).
+    llm_budget_avg_tokens_per_call: int = 5_000
+    # Prompt share when inverting $/token rates (rest = completion).
+    llm_budget_input_token_share: float = 0.75
+    # 0 = derive from monthly AUD; >0 = explicit override (tests / manual ops).
+    llm_daily_token_budget: int = 0
+    llm_daily_call_budget: int = 0
     llm_aud_per_usd: float = 1.55
     llm_input_usd_per_mtok: float = 0.15  # gpt-4o-mini default
     llm_output_usd_per_mtok: float = 0.60

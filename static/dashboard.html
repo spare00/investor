@@ -698,7 +698,7 @@
         hour12: false,
       }).formatToParts(d);
       const g = (t) => (parts.find((p) => p.type === t) || {}).value || "";
-      return `${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")} ET`;
+      return `${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")}`;
     }
 
     function kpiTone(status, value, { higherGood } = {}) {
@@ -967,15 +967,20 @@
       const calls = Number(budget.calls) || 0;
       const monthAud = Number(budget.month_aud_estimate) || 0;
       const monthBudget = Number(budget.month_aud_budget) || 0;
+      const dayPct = tokenBudget > 0 ? total / tokenBudget : 0;
+      const callPct = callBudget > 0 ? calls / callBudget : 0;
+      const monthPct = monthBudget > 0 ? monthAud / monthBudget : 0;
       const pct = Number(budget.display_pct);
       const pctVal = Number.isFinite(pct)
         ? pct
-        : Math.max(
-            tokenBudget > 0 ? total / tokenBudget : 0,
-            callBudget > 0 ? calls / callBudget : 0,
-            monthBudget > 0 ? monthAud / monthBudget : 0,
-          );
+        : Math.max(dayPct, callPct, monthPct);
       const pctShow = Math.min(100, Math.round(pctVal * 1000) / 10);
+      const driver =
+        monthPct >= dayPct && monthPct >= callPct && monthPct > 0
+          ? "month"
+          : callPct >= dayPct && callPct > 0
+            ? "calls"
+            : "day";
       let level = "ok";
       if (!budget.enforce) level = "off";
       else if (budget.blocked || budget.month_blocked || pctVal >= 0.9) level = "bad";
@@ -987,13 +992,18 @@
         ? "monitor only"
         : budget.blocked
           ? (budget.month_blocked ? "MONTH BLOCKED" : "BLOCKED")
-          : `${pctShow}%`;
+          : `${pctShow}% ${driver}`;
+      const monthPctShow = Math.round(monthPct * 1000) / 10;
       meta.dataset.hasValue = "1";
       meta.innerHTML =
         `<strong>${status}</strong>` +
         ` · day ${formatTokens(total)} / ${tokenBudget > 0 ? formatTokens(tokenBudget) : "∞"} tok` +
         ` · ${calls} / ${callBudget > 0 ? callBudget : "∞"} calls` +
         ` · month A$${monthAud.toFixed(2)} / ${monthBudget > 0 ? "A$" + monthBudget.toFixed(0) : "∞"}` +
+        (monthBudget > 0 ? ` (${monthPctShow}%)` : "") +
+        (budget.daily_budget_derived
+          ? ` · day from month÷${budget.trading_days_per_month || 21}`
+          : "") +
         ` · UTC ${budget.day || "—"}`;
     }
 
@@ -1451,8 +1461,8 @@
           <td class="muted">${j.interval_minutes != null ? esc(j.interval_minutes) + "m" : "—"}</td>
         </tr>`).join("");
       el.innerHTML =
-        `<div class="muted" style="margin-bottom:0.35rem">Session plan ET (first ${show.length}/${rows.length})</div>` +
-        dataTable(["Job", "Planned (ET)", "Status", "Interval"], body, 4);
+        `<div class="muted" style="margin-bottom:0.35rem">Session plan (first ${show.length}/${rows.length})</div>` +
+        dataTable(["Job", "Planned", "Status", "Interval"], body, 4);
     }
 
     async function refreshOverview() {
