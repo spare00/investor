@@ -12,7 +12,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
-from app.agents.llm_sanitize import sanitize_llm_payload, schema_enum_hint
+from app.agents.llm_sanitize import sanitize_for_model, schema_enum_hint
 from app.agents.prompts import LoadedPrompt, load_agent_prompt
 from app.agents.activity import mark_agent_finished, mark_agent_started
 from app.core.config import Settings, get_settings
@@ -130,8 +130,8 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
             data = json.loads(response.content)
             if not isinstance(data, dict):
                 raise ValueError("LLM content must be a JSON object")
-            data = sanitize_llm_payload(data)
             model = self.output_model()
+            data = sanitize_for_model(data, model)
             latency_ms = (time.perf_counter() - started) * 1000.0
             trace = data.get("trace") or {}
             if isinstance(trace, dict):

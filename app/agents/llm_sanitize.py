@@ -125,6 +125,10 @@ _FIELD_ALIASES: dict[str, str] = {
     "no_trade_better": "prefer_no_trade",
     "immediate_withdrawal_conditions_if_entered": "immediate_withdrawal_conditions",
     "missing_or_conflicting_data": "missing_information",
+    "withdrawal_conditions": "immediate_withdrawal_conditions",
+    "affected_symbols": "symbols",
+    "verified_facts": "facts",
+    "directional_bias": "sentiment",
 }
 
 _CROSS_AGENT_EXTRAS = frozenset(
@@ -143,6 +147,26 @@ _CROSS_AGENT_EXTRAS = frozenset(
         "portfolio_action",
         "symbol_actions",
         "hedge_required",
+        "risk",
+        "macro",
+        "market_intelligence",
+        "quant",
+        "proposed_theses",
+    }
+)
+
+_DEVIL_JUNK = frozenset(
+    {
+        "cash_pct",
+        "gross_exposure_pct",
+        "notes",
+        "can_wait_for_better_price_confirmation",
+        "can_we_wait_for_better_price_confirmation",
+        "multiple_agents_over_reliant_on_thin_data",
+        "are_multiple_agents_over_reliant_on_the_same_thin_data",
+        "wait_for_confirmation",
+        "missing_data",
+        "overall_verdict",
     }
 )
 
@@ -321,13 +345,24 @@ def _split_scenarios_list(view: dict[str, Any]) -> None:
     downside = view.get("downside_scenario")
     items: list[Any]
     if isinstance(raw, dict):
-        items = list(raw.values()) if raw else []
-        if "upside" in raw or "downside" in raw:
-            if upside is None and raw.get("upside") is not None:
-                view["upside_scenario"] = _normalize_scenario(raw.get("upside"))
-            if downside is None and raw.get("downside") is not None:
-                view["downside_scenario"] = _normalize_scenario(raw.get("downside"))
+        # Common LLM shapes: {upside/downside} or {upside_scenario/downside_scenario}
+        if upside is None:
+            for key in ("upside", "upside_scenario", "bull", "positive"):
+                if raw.get(key) is not None:
+                    view["upside_scenario"] = _normalize_scenario(raw.get(key))
+                    upside = view["upside_scenario"]
+                    break
+        if downside is None:
+            for key in ("downside", "downside_scenario", "bear", "negative"):
+                if raw.get(key) is not None:
+                    view["downside_scenario"] = _normalize_scenario(raw.get(key))
+                    downside = view["downside_scenario"]
+                    break
+        if upside is not None and downside is not None:
             return
+        items = [v for k, v in raw.items() if k not in {
+            "upside", "downside", "upside_scenario", "downside_scenario", "bull", "bear", "positive", "negative"
+        }]
     elif isinstance(raw, list):
         items = raw
     else:
@@ -351,6 +386,41 @@ def _split_scenarios_list(view: dict[str, Any]) -> None:
         elif downside is None:
             view["downside_scenario"] = scen
             downside = scen
+
+
+def _clamp_importance(value: Any) -> Any:
+    """MarketEvent.importance is 1–5; LLMs often emit 0–100."""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return value
+    if num > 5:
+        # 0–100 scale → 1–5
+        if num <= 100:
+            return max(1, min(5, int(round(num / 20.0))))
+        return 5
+    if num < 1:
+        return 1
+    return int(round(num))
+
+
+def _normalize_market_event(ev: dict[str, Any]) -> dict[str, Any]:
+    if "interpretations" in ev:
+        interps = ev.pop("interpretations")
+        if "interpretation" not in ev and interps:
+            if isinstance(interps, list) and interps:
+                ev["interpretation"] = _as_text(interps[0])
+            else:
+                ev["interpretation"] = _as_text(interps)
+    for junk in ("themes", "conflicts", "missing_information", "data_quality_score", "as_of"):
+        ev.pop(junk, None)
+    if "importance" in ev:
+        ev["importance"] = _clamp_importance(ev["importance"])
+    if isinstance(ev.get("facts"), str):
+        ev["facts"] = [ev["facts"]]
+    if isinstance(ev.get("uncertainties"), str):
+        ev["uncertainties"] = [ev["uncertainties"]]
+    return ev
 
 
 def _normalize_sector_impact(value: Any) -> Any:
@@ -414,17 +484,23 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
     )
     looks_cio = "portfolio_action" in out or "symbol_actions" in out or "cash_target_pct" in out
 
-    if looks_mi and "data_quality_score" not in out:
-        missing = out.get("missing_information") or []
-        out["data_quality_score"] = 0.3 if missing else 0.5
+    if looks_mi:
+        if "data_quality_score" not in out:
+            missing = out.get("missing_information") or []
+            out["data_quality_score"] = 0.3 if missing else 0.5
+        if isinstance(out.get("market_events"), list):
+            out["market_events"] = [
+                _normalize_market_event(ev) if isinstance(ev, dict) else ev
+                for ev in out["market_events"]
+            ]
+        if isinstance(out.get("top_market_themes"), str):
+            out["top_market_themes"] = [out["top_market_themes"]]
 
     if "expected_sector_impact" in out:
         out["expected_sector_impact"] = _normalize_sector_impact(out["expected_sector_impact"])
 
     if looks_quant:
         for key in _CROSS_AGENT_EXTRAS:
-            if key == "notes":
-                continue
             out.pop(key, None)
         if "data_quality_score" not in out:
             out["data_quality_score"] = 0.6
@@ -433,6 +509,7 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
                 if not isinstance(view, dict):
                     continue
                 _split_scenarios_list(view)
+                view.pop("scenarios", None)
                 conf = view.pop("confidence", None)
                 if "probability_estimate" not in view and conf is not None:
                     try:
@@ -442,6 +519,8 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
                         view["probability_estimate"] = 0.5
                 view.setdefault("probability_basis", "llm")
                 view.setdefault("notes", [])
+                if isinstance(view.get("notes"), str):
+                    view["notes"] = [view["notes"]]
                 for scen_key in ("upside_scenario", "downside_scenario"):
                     if scen_key in view:
                         view[scen_key] = _normalize_scenario(view[scen_key])
@@ -463,17 +542,11 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
             except (TypeError, ValueError):
                 challenge = 0.0
             out["prefer_no_trade"] = rec in {"WAIT", "NO_TRADE"} or challenge >= 0.7
-        if "recommendation" not in out and isinstance(out.get("overall_verdict"), str):
+        if "recommendation" not in out and out.get("overall_verdict") is not None:
             out["recommendation"] = out.pop("overall_verdict")
         else:
             out.pop("overall_verdict", None)
-        for junk in (
-            "cash_pct",
-            "gross_exposure_pct",
-            "notes",
-            "can_wait_for_better_price_confirmation",
-            "multiple_agents_over_reliant_on_thin_data",
-        ):
+        for junk in _DEVIL_JUNK:
             out.pop(junk, None)
         out.setdefault("prefer_no_trade_rationale", "")
         if "information_already_in_price" not in out:
@@ -489,11 +562,19 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
             out["immediate_withdrawal_conditions"] = [out["immediate_withdrawal_conditions"]]
         if isinstance(out.get("missing_information"), str):
             out["missing_information"] = [out["missing_information"]]
+        if "strongest_reason_thesis_is_wrong" not in out:
+            out["strongest_reason_thesis_is_wrong"] = "Unspecified challenge"
 
     if looks_macro and "data_quality_score" not in out and "market_regime" in out:
         out.setdefault("data_quality_score", 0.5)
+    if looks_macro and not looks_cio:
+        out.pop("sector_impacts", None)  # aliased earlier; drop leftovers
 
     if looks_cio:
+        if "market_regime" not in out:
+            nested = out.get("macro")
+            if isinstance(nested, dict) and nested.get("market_regime") is not None:
+                out["market_regime"] = nested.get("market_regime")
         ra = out.get("risk_approval")
         if isinstance(ra, dict):
             verdict = str(ra.get("overall_verdict") or ra.get("verdict") or "").lower()
@@ -504,11 +585,82 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
             }
         elif not isinstance(ra, bool):
             out["risk_approval"] = _unwrap_bool(ra) if ra is not None else True
-        out.pop("data_quality_score", None)
-        out.pop("devil", None)
-        out.pop("overall_verdict", None)
+        for junk in (
+            "data_quality_score",
+            "devil",
+            "overall_verdict",
+            "risk",
+            "macro",
+            "market_intelligence",
+            "quant",
+            "positions",
+            "allowlist",
+            "watchlist",
+            "portfolio_cash_pct",
+        ):
+            out.pop(junk, None)
+        out.setdefault("hedge_required", False)
+        out.setdefault("risk_conditions", [])
+        out.setdefault("symbol_actions", [])
+        if "cash_target_pct" not in out:
+            out["cash_target_pct"] = 50.0
 
     return out
+
+
+def _unwrap_annotation(ann: Any) -> Any:
+    from types import UnionType
+    from typing import Union, get_args, get_origin
+
+    origin = get_origin(ann)
+    if origin is Union or origin is UnionType:
+        args = [a for a in get_args(ann) if a is not type(None)]
+        return _unwrap_annotation(args[0]) if len(args) == 1 else (args[0] if args else ann)
+    return ann
+
+
+def prune_to_model(data: dict[str, Any], model: type[Any]) -> dict[str, Any]:
+    """Drop unknown keys so StrictModel(extra=forbid) can validate LLM JSON."""
+    from typing import get_args, get_origin
+
+    from pydantic import BaseModel
+
+    if not isinstance(data, dict) or not issubclass(model, BaseModel):
+        return data
+    out: dict[str, Any] = {}
+    for name, field in model.model_fields.items():
+        if name not in data:
+            continue
+        val = data[name]
+        ann = _unwrap_annotation(field.annotation)
+        origin = get_origin(ann)
+        if origin is list:
+            inner = get_args(ann)[0] if get_args(ann) else None
+            inner = _unwrap_annotation(inner) if inner is not None else None
+            if (
+                isinstance(val, list)
+                and isinstance(inner, type)
+                and issubclass(inner, BaseModel)
+            ):
+                out[name] = [
+                    prune_to_model(item, inner) if isinstance(item, dict) else item
+                    for item in val
+                ]
+            else:
+                out[name] = val
+        elif isinstance(ann, type) and issubclass(ann, BaseModel) and isinstance(val, dict):
+            out[name] = prune_to_model(val, ann)
+        else:
+            out[name] = val
+    return out
+
+
+def sanitize_for_model(data: dict[str, Any], model: type[Any]) -> dict[str, Any]:
+    """Sanitize then prune to the agent's output model fields."""
+    cleaned = sanitize_llm_payload(data)
+    if not isinstance(cleaned, dict):
+        return cleaned
+    return prune_to_model(cleaned, model)
 
 
 def sanitize_llm_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -539,10 +691,12 @@ def sanitize_llm_payload(data: dict[str, Any]) -> dict[str, Any]:
             for scen_key in ("upside_scenario", "downside_scenario"):
                 if scen_key in out:
                     out[scen_key] = _normalize_scenario(out[scen_key])
-            if "scenarios" in out and (
-                "upside_scenario" not in out or "downside_scenario" not in out
-            ):
+            if "scenarios" in out:
                 _split_scenarios_list(out)
+            if "importance" in out and (
+                "headline" in out or "category" in out or "sentiment" in out
+            ):
+                _normalize_market_event(out)
             _extract_bool_rationale(
                 out, "information_already_in_price", "information_already_in_price_rationale"
             )
