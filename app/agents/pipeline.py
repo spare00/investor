@@ -36,6 +36,7 @@ from app.schemas.risk_manager import (
 from app.schemas.cio import CIOInput
 from app.services.collection import CollectionBundle
 from app.services.llm import LLMClient
+from app.universe.horizons import align_cio_horizons
 
 logger = get_logger(__name__)
 
@@ -234,6 +235,7 @@ class AgentPipeline:
                 trace=TraceMetadata(source_data_timestamp=as_of),
             )
         )
+        cio_out = align_cio_horizons(cio_out, watch_ctx)
 
         logger.info(
             "agent_pipeline_complete",

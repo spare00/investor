@@ -59,8 +59,10 @@ def planned_intraday_interval_minutes(
 ) -> int:
     """Minutes between planned ``intraday_eval_*`` scheduler jobs.
 
-    Uses the tightest active-watchlist horizon so scalp/day books get denser
-    ticks; falls back to ``intraday_reevaluation_interval_minutes`` when empty.
+    Uses the tightest horizon among the books under review (open positions or
+    focus/entry set). Falls back to ``intraday_reevaluation_interval_minutes``
+    when empty. Callers should pass open/focus horizons — not the full watchlist —
+    so a single scalp seed does not densify a medium-only session plan.
 
     When ``session_minutes`` is set, spacing is also floored so we do not plan
     more than roughly ``1.5 * max_intraday_reanalyses`` ticks (LLM budget).

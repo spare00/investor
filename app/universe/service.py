@@ -107,10 +107,14 @@ class UniverseService:
             return sorted({*self.settings.trade_allowlist, *held})
 
         await self.ensure_seeded()
+        active_set = {r.symbol.upper() for r in await self.list_active()}
+        allowed = active_set | set(held)
         latest = await self._latest_focus()
         if latest and latest.symbols:
-            focus = [str(s).upper() for s in latest.symbols]
-            return sorted({*focus, *held})
+            # Drop sold / paused names that lingered in an older focus snapshot.
+            focus = [str(s).upper() for s in latest.symbols if str(s).upper() in allowed]
+            if focus or held:
+                return sorted({*focus, *held})
 
         active = await self.list_active()
         ranked = sorted(active, key=lambda r: (-r.priority, r.symbol))
@@ -561,15 +565,24 @@ class UniverseService:
         now = utc_now()
         day = session_date or now.astimezone(UTC).date().isoformat()
         # Prefer ET session date when possible — keep simple UTC date if unknown
+        held = [h.upper() for h in holdings]
+        active_set = {r.symbol.upper() for r in await self.list_active()}
+        allowed = active_set | set(held)
         cleaned = []
         for s in symbols:
             u = str(s).upper().strip()
-            if u and u not in cleaned:
+            if u and u in allowed and u not in cleaned:
                 cleaned.append(u)
-        held = [h.upper() for h in holdings]
         for h in held:
             if h not in cleaned:
                 cleaned.insert(0, h)
+        # If LLM/focus listed only stale names, fall back to priority actives.
+        if not cleaned:
+            ranked = sorted(
+                [r for r in (await self.list_active())],
+                key=lambda r: (-r.priority, r.symbol),
+            )
+            cleaned = [r.symbol.upper() for r in ranked[: self.settings.universe_focus_limit]]
         cleaned = cleaned[: max(self.settings.universe_focus_limit, len(held))]
         row = FocusSetSnapshot(
             id=uuid4(),

@@ -250,6 +250,13 @@ class PositionMonitor:
                 policy = dict(existing.exit_policy or {})
                 policy["stop_loss"] = stop_price
                 existing.exit_policy = policy
+            # Re-sync horizon policy on upsert so day→short rehorizon doesn't
+            # keep overnight_allowed=False / stale max_holding from open day.
+            holding = await self._default_max_holding(symbol)
+            overnight = await self._overnight_allowed(symbol)
+            existing.overnight_allowed = overnight
+            if holding is not None:
+                existing.max_holding_minutes = holding
             await self.session.flush()
             return existing
         holding = await self._default_max_holding(symbol)

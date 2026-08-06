@@ -139,3 +139,46 @@ def all_horizon_summaries() -> list[dict[str, object]]:
             }
         )
     return out
+
+
+def align_cio_horizons(
+    decision: "CIODecision",
+    watchlist_context: list[dict] | None,
+) -> "CIODecision":
+    """Stamp CIO symbol plans with watchlist horizon → cio_time_horizon / max hold."""
+    from app.schemas.cio import CIODecision, SymbolActionPlan
+
+    if not watchlist_context:
+        return decision
+    by_sym: dict[str, HorizonPolicy] = {}
+    for row in watchlist_context:
+        sym = str(row.get("symbol") or "").upper()
+        hz = row.get("horizon")
+        if not sym or not hz:
+            continue
+        try:
+            by_sym[sym] = policy_for(hz)
+        except ValueError:
+            continue
+    if not by_sym:
+        return decision
+    updated: list[SymbolActionPlan] = []
+    changed = False
+    for plan in decision.symbol_actions:
+        pol = by_sym.get(plan.symbol.upper())
+        if pol is None:
+            updated.append(plan)
+            continue
+        kwargs: dict = {}
+        if plan.time_horizon != pol.cio_time_horizon:
+            kwargs["time_horizon"] = pol.cio_time_horizon
+        if pol.max_holding_minutes and plan.max_holding_time_minutes is None:
+            kwargs["max_holding_time_minutes"] = pol.max_holding_minutes
+        if kwargs:
+            changed = True
+            updated.append(plan.model_copy(update=kwargs))
+        else:
+            updated.append(plan)
+    if not changed:
+        return decision
+    return decision.model_copy(update={"symbol_actions": updated})

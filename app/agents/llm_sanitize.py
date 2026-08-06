@@ -120,7 +120,31 @@ _FIELD_ALIASES: dict[str, str] = {
     "downside": "downside_scenario",
     "sector_impacts": "expected_sector_impact",
     "sector_impact": "expected_sector_impact",
+    "events": "market_events",
+    "realistic_opposing_catalyst": "opposing_market_scenario",
+    "no_trade_better": "prefer_no_trade",
+    "immediate_withdrawal_conditions_if_entered": "immediate_withdrawal_conditions",
+    "missing_or_conflicting_data": "missing_information",
 }
+
+_CROSS_AGENT_EXTRAS = frozenset(
+    {
+        "overall_verdict",
+        "cash_target_pct",
+        "gross_exposure_pct",
+        "devil",
+        "cash_pct",
+        "hard_vetoes",
+        "soft_warnings",
+        "trade_adjustments",
+        "halt_new_trades",
+        "engine_checks",
+        "risk_approval",
+        "portfolio_action",
+        "symbol_actions",
+        "hedge_required",
+    }
+)
 
 _BOOL_FIELDS = {
     "information_already_in_price",
@@ -370,15 +394,25 @@ def _normalize_sector_impact(value: Any) -> Any:
 
 def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
     """Coerce common LLM shape mistakes that StrictModel would reject."""
+    # MI often emits as_of/events instead of timestamp/market_events.
+    if "as_of" in out and "timestamp" not in out:
+        out["timestamp"] = out.pop("as_of")
+    elif "as_of" in out:
+        out.pop("as_of", None)
+
     looks_mi = "market_events" in out or "top_market_themes" in out
-    looks_macro = "expected_sector_impact" in out or "bullish_factors" in out or "market_regime" in out
+    looks_macro = (
+        "expected_sector_impact" in out or "bullish_factors" in out or "market_regime" in out
+    )
     looks_quant = "symbol_views" in out or "market_trend_state" in out
     looks_risk = "overall_verdict" in out or "hard_vetoes" in out or "trade_adjustments" in out
     looks_devil = (
         "strongest_reason_thesis_is_wrong" in out
         or "challenge_score" in out
         or "opposing_market_scenario" in out
+        or "prefer_no_trade" in out
     )
+    looks_cio = "portfolio_action" in out or "symbol_actions" in out or "cash_target_pct" in out
 
     if looks_mi and "data_quality_score" not in out:
         missing = out.get("missing_information") or []
@@ -387,15 +421,32 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
     if "expected_sector_impact" in out:
         out["expected_sector_impact"] = _normalize_sector_impact(out["expected_sector_impact"])
 
-    if looks_quant and isinstance(out.get("symbol_views"), list):
-        for view in out["symbol_views"]:
-            if isinstance(view, dict):
+    if looks_quant:
+        for key in _CROSS_AGENT_EXTRAS:
+            if key == "notes":
+                continue
+            out.pop(key, None)
+        if "data_quality_score" not in out:
+            out["data_quality_score"] = 0.6
+        if isinstance(out.get("symbol_views"), list):
+            for view in out["symbol_views"]:
+                if not isinstance(view, dict):
+                    continue
                 _split_scenarios_list(view)
+                conf = view.pop("confidence", None)
+                if "probability_estimate" not in view and conf is not None:
+                    try:
+                        c = float(conf)
+                        view["probability_estimate"] = c / 100.0 if c > 1.0 else c
+                    except (TypeError, ValueError):
+                        view["probability_estimate"] = 0.5
+                view.setdefault("probability_basis", "llm")
+                view.setdefault("notes", [])
                 for scen_key in ("upside_scenario", "downside_scenario"):
                     if scen_key in view:
                         view[scen_key] = _normalize_scenario(view[scen_key])
 
-    if looks_risk:
+    if looks_risk and not looks_cio and not looks_quant:
         # Input-only / prompt-echo field — not on RiskManagerOutput.
         out.pop("data_quality_score", None)
         out.setdefault("cash_pct", 50.0)
@@ -404,25 +455,58 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
         if isinstance(out.get("notes"), str):
             out["notes"] = [out["notes"]]
 
-    if looks_devil:
+    if looks_devil and not looks_cio:
         if "prefer_no_trade" not in out:
-            rec = str(out.get("recommendation") or "").upper()
+            rec = str(out.get("recommendation") or out.get("overall_verdict") or "").upper()
             try:
                 challenge = float(out.get("challenge_score") or 0.0)
             except (TypeError, ValueError):
                 challenge = 0.0
             out["prefer_no_trade"] = rec in {"WAIT", "NO_TRADE"} or challenge >= 0.7
+        if "recommendation" not in out and isinstance(out.get("overall_verdict"), str):
+            out["recommendation"] = out.pop("overall_verdict")
+        else:
+            out.pop("overall_verdict", None)
+        for junk in (
+            "cash_pct",
+            "gross_exposure_pct",
+            "notes",
+            "can_wait_for_better_price_confirmation",
+            "multiple_agents_over_reliant_on_thin_data",
+        ):
+            out.pop(junk, None)
         out.setdefault("prefer_no_trade_rationale", "")
         if "information_already_in_price" not in out:
             out["information_already_in_price"] = False
         out.setdefault("information_already_in_price_rationale", "")
         if "challenge_score" not in out:
             out["challenge_score"] = 0.5
-        if "opposing_market_scenario" in out:
+        if "opposing_market_scenario" not in out:
+            out["opposing_market_scenario"] = "Unspecified opposing scenario"
+        else:
             out["opposing_market_scenario"] = _as_text(out["opposing_market_scenario"])
+        if isinstance(out.get("immediate_withdrawal_conditions"), str):
+            out["immediate_withdrawal_conditions"] = [out["immediate_withdrawal_conditions"]]
+        if isinstance(out.get("missing_information"), str):
+            out["missing_information"] = [out["missing_information"]]
 
     if looks_macro and "data_quality_score" not in out and "market_regime" in out:
         out.setdefault("data_quality_score", 0.5)
+
+    if looks_cio:
+        ra = out.get("risk_approval")
+        if isinstance(ra, dict):
+            verdict = str(ra.get("overall_verdict") or ra.get("verdict") or "").lower()
+            out["risk_approval"] = verdict in {
+                RiskVerdict.APPROVED.value,
+                RiskVerdict.CONDITIONAL.value,
+                RiskVerdict.SIZE_REDUCED.value,
+            }
+        elif not isinstance(ra, bool):
+            out["risk_approval"] = _unwrap_bool(ra) if ra is not None else True
+        out.pop("data_quality_score", None)
+        out.pop("devil", None)
+        out.pop("overall_verdict", None)
 
     return out
 

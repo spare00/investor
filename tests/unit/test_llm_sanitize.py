@@ -159,3 +159,78 @@ def test_sanitize_quant_synonyms_and_aliases() -> None:
     assert out.market_volatility_state is VolatilityState.NORMAL
     assert out.symbol_views[0].trend_state is TrendState.UP
     assert out.symbol_views[0].entry_zone is not None
+
+
+def test_sanitize_live_schema_fallbacks_v2() -> None:
+    """Coerce shapes seen in live RTH logs (MI as_of, Quant extras, Devil aliases, CIO risk dict)."""
+    from app.schemas.cio import CIODecision
+    from app.schemas.devils_advocate import DevilsAdvocateOutput
+
+    mi = MarketIntelligenceOutput.model_validate(
+        sanitize_llm_payload(
+            {
+                "as_of": "2026-08-06T14:10:00Z",
+                "events": [],
+                "top_market_themes": ["ai"],
+            }
+        )
+    )
+    assert mi.timestamp is not None
+    assert mi.data_quality_score == 0.5
+
+    quant = QuantStrategistOutput.model_validate(
+        sanitize_llm_payload(
+            {
+                "market_trend_state": "up",
+                "market_momentum_state": "steady",
+                "market_volatility_state": "normal",
+                "market_breadth_state": "healthy",
+                "market_liquidity_state": "normal",
+                "overall_verdict": "approved",
+                "cash_pct": 40,
+                "devil": {"prefer_no_trade": True},
+                "symbol_views": [
+                    {
+                        "symbol": "QQQ",
+                        "trend_state": "up",
+                        "momentum_state": "steady",
+                        "volatility_state": "normal",
+                        "liquidity_state": "normal",
+                        "confidence": 62,
+                        "probability_basis": "llm",
+                    }
+                ],
+            }
+        )
+    )
+    assert quant.data_quality_score == 0.6
+    assert quant.symbol_views[0].probability_estimate == 0.62
+
+    devil = DevilsAdvocateOutput.model_validate(
+        sanitize_llm_payload(
+            {
+                "strongest_reason_thesis_is_wrong": "priced in",
+                "realistic_opposing_catalyst": "fade into close",
+                "no_trade_better": True,
+                "challenge_score": 0.7,
+                "overall_verdict": "WAIT",
+                "cash_pct": 50,
+            }
+        )
+    )
+    assert devil.prefer_no_trade is True
+    assert "fade" in devil.opposing_market_scenario.lower()
+
+    cio = CIODecision.model_validate(
+        sanitize_llm_payload(
+            {
+                "portfolio_action": "HOLD",
+                "cash_target_pct": 100,
+                "symbol_actions": [],
+                "risk_approval": {"overall_verdict": "approved"},
+                "data_quality_score": 0.9,
+                "market_regime": "RISK_ON",
+            }
+        )
+    )
+    assert cio.risk_approval is True

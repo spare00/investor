@@ -22,14 +22,57 @@ def test_scalp_reeval_faster_than_medium() -> None:
     assert reeval_seconds_for_horizon(None, settings) == 300
 
 
-def test_planned_interval_follows_tightest_watchlist_horizon() -> None:
+def test_planned_interval_follows_tightest_passed_horizon() -> None:
     settings = Settings(intraday_reevaluation_interval_minutes=20, max_intraday_reanalyses=24)
     assert planned_intraday_interval_minutes([], settings) == 20
     assert planned_intraday_interval_minutes(None, settings) == 20
     assert planned_intraday_interval_minutes(["medium"], settings) == 60
     assert planned_intraday_interval_minutes(["short"], settings) == 15
     assert planned_intraday_interval_minutes(["day"], settings) == 5
+    # Callers must pass open/focus horizons — not full watchlist — so this
+    # only densifies when a scalp book is actually under review.
     assert planned_intraday_interval_minutes(["scalp", "medium"], settings) == 2
+    assert planned_intraday_interval_minutes(["medium"], settings) == 60
+
+
+def test_align_cio_horizons_from_watchlist() -> None:
+    from uuid import uuid4
+
+    from app.schemas.cio import CIODecision, SymbolActionPlan
+    from app.schemas.common import (
+        MarketRegime,
+        PortfolioAction,
+        SymbolAction,
+        TimeHorizon,
+        TraceMetadata,
+    )
+    from app.universe.horizons import align_cio_horizons
+
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=datetime.now(UTC),
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.SCALE_IN,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="MSFT",
+                action=SymbolAction.SCALE_IN,
+                confidence=60,
+                target_position_pct=5.0,
+                thesis="theme",
+                invalidation="break",
+                time_horizon=TimeHorizon.INTRADAY,
+            )
+        ],
+        cash_target_pct=90.0,
+        risk_approval=True,
+        trace=TraceMetadata(),
+    )
+    out = align_cio_horizons(
+        decision, [{"symbol": "MSFT", "horizon": "medium"}]
+    )
+    assert out.symbol_actions[0].time_horizon is TimeHorizon.POSITION
+    assert out.symbol_actions[0].max_holding_time_minutes == 60 * 24 * 60
 
 
 def test_planned_interval_floors_by_llm_budget() -> None:

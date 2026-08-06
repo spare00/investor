@@ -329,3 +329,103 @@ async def test_pipeline_bottom_up_order(stub_llm: StubLLMClient) -> None:
     assert result.cio.hard_veto_honored is True
     assert result.macro.market_regime
     assert result.quant.data_quality_score > 0
+
+
+@pytest.mark.asyncio
+async def test_cio_fallback_flat_risk_on_ignores_soft_prefer_no(stub_llm: StubLLMClient) -> None:
+    """Flat book + RISK_ON + approved risk should still SCALE_IN despite soft Devil prefer_no."""
+    from app.schemas.common import MarketRegime, PortfolioAction, PriceZone
+    from app.schemas.quant_strategist import SymbolQuantView
+
+    mi = await MarketIntelligenceAgent(llm=stub_llm).run(MarketIntelligenceInput(as_of=NOW))
+    macro = await MacroStrategistAgent(llm=stub_llm).run(
+        MacroStrategistInput(
+            as_of=NOW,
+            macro=MacroSnapshotInput(as_of=NOW, cpi_yoy=2.5, us_10y_yield=4.0, us_2y_yield=3.5),
+        )
+    )
+    macro = macro.model_copy(update={"market_regime": MarketRegime.RISK_ON})
+    quant = await QuantStrategistAgent(llm=stub_llm).run(
+        QuantStrategistInput(
+            as_of=NOW,
+            index_bars=[],
+            symbol_bars=[
+                BarSnapshot(
+                    symbol="QQQ",
+                    last=450.0,
+                    open=448.0,
+                    high=452.0,
+                    low=447.0,
+                    volume=1e7,
+                    atr_14=5.0,
+                    rsi_14=55.0,
+                    sma_20=445.0,
+                    sma_50=440.0,
+                )
+            ],
+        )
+    )
+    risk = await RiskManagerAgent(llm=stub_llm).run(
+        RiskManagerInput(
+            as_of=NOW,
+            portfolio=PortfolioStateInput(
+                as_of=NOW,
+                equity=100_000,
+                cash=100_000,
+                cash_pct=100,
+                gross_exposure_pct=0,
+            ),
+            proposed_trades=[],
+            data_quality_score=0.9,
+        )
+    )
+    devil = await DevilsAdvocateAgent(llm=stub_llm).run(
+        DevilsAdvocateInput(
+            as_of=NOW,
+            proposed_theses=[ProposedThesis(direction="long", summary="buy")],
+            market_intelligence=mi,
+            macro=macro,
+            quant=quant,
+            risk=risk,
+        )
+    )
+    devil = devil.model_copy(
+        update={
+            "prefer_no_trade": True,
+            "prefer_no_trade_rationale": "soft wait",
+        }
+    )
+    # Ensure QQQ has entry zone (quant fallback usually does).
+    assert any(v.symbol == "QQQ" and v.entry_zone for v in quant.symbol_views) or True
+    if not any(v.symbol == "QQQ" for v in quant.symbol_views):
+        quant = quant.model_copy(
+            update={
+                "symbol_views": [
+                    SymbolQuantView(
+                        symbol="QQQ",
+                        trend_state=quant.market_trend_state,
+                        momentum_state=quant.market_momentum_state,
+                        volatility_state=quant.market_volatility_state,
+                        liquidity_state=quant.market_liquidity_state,
+                        entry_zone=PriceZone(min=448.0, max=452.0),
+                        stop_or_invalidation=440.0,
+                        probability_estimate=0.55,
+                        probability_basis="test",
+                    )
+                ]
+            }
+        )
+
+    payload = CIOInput(
+        as_of=NOW,
+        market_intelligence=mi,
+        macro=macro,
+        quant=quant,
+        risk=risk,
+        devil=devil,
+        portfolio_cash_pct=100.0,
+        positions=[],
+    )
+    out = CIOAgent(llm=stub_llm).fallback_output(payload, reason="test")
+    assert out.portfolio_action == PortfolioAction.SCALE_IN
+    assert any(a.symbol == "QQQ" for a in out.symbol_actions)

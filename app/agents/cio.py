@@ -88,7 +88,16 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
         } and not payload.risk.halt_new_trades
 
         regime = payload.macro.market_regime
-        prefer_no = payload.devil.prefer_no_trade or not risk_ok
+        flat = not payload.positions or all(abs(p.quantity or 0) < 1e-9 for p in payload.positions)
+        # Soft Devil prefer_no must not permanently park a flat book in RISK_ON —
+        # opportunity cost dominates when risk already approved.
+        soft_prefer_no = bool(payload.devil.prefer_no_trade)
+        if soft_prefer_no and risk_ok and flat and regime in {
+            MarketRegime.RISK_ON,
+            MarketRegime.STRONG_RISK_ON,
+        }:
+            soft_prefer_no = False
+        prefer_no = soft_prefer_no or not risk_ok
 
         symbol_actions: list[SymbolActionPlan] = []
         portfolio_action = PortfolioAction.NO_TRADE

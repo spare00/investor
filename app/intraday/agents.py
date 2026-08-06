@@ -6,20 +6,21 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.pipeline import AgentPipeline
 from app.core.config import Settings, get_settings
+from app.execution.position_manager import PositionManager
 from app.execution.safety_controls import TradingControls, trading_controls
 from app.intraday.events import IntradayEventBus
 from app.intraday.modes import IntradayOperationMode, ModeCapabilities, resolve_mode
 from app.models import IntradayAnalysisRun, IntradayDecisionRecord, PositionLifecycle
 from app.schemas.cio import CIODecision
 from app.schemas.common import PortfolioAction
-from app.schemas.risk_manager import PortfolioStateInput
 from app.services.collection import DataCollectionService
 from app.services.llm import FakeLLMProvider
-from sqlalchemy import select
+from app.universe.service import UniverseService
 
 
 # Existing-position priority order for symbol actions
@@ -77,11 +78,10 @@ class IntradayAgentService:
             .all()
         )
         open_syms = [p.symbol for p in open_rows]
+        univ = UniverseService(self.session, settings=self.settings)
         horizons: dict[str, str] = {}
         try:
-            from app.universe.service import UniverseService
-
-            horizons = await UniverseService(self.session, settings=self.settings).horizon_by_symbol()
+            horizons = await univ.horizon_by_symbol()
         except Exception:  # noqa: BLE001
             horizons = {}
         ok, why = self.bus.allow_reanalysis(
@@ -103,29 +103,52 @@ class IntradayAgentService:
         await self.session.flush()
 
         try:
+            pm = PositionManager(self.session, settings=self.settings)
+            try:
+                await pm.sync_from_broker()
+            except Exception:  # noqa: BLE001
+                pass
+            portfolio = await pm.portfolio_state_input()
+            held = [
+                p.symbol.upper()
+                for p in portfolio.positions
+                if abs(p.quantity or 0) > 1e-12
+            ] or [s.upper() for s in open_syms]
+
+            entry_universe = await univ.entry_universe()
+            horizons = await univ.horizon_by_symbol()
+            universe = await univ.collection_universe(holdings=held)
+
             collection = await DataCollectionService(self.session, persist=False).collect_premarket(
-                workflow_id=run.id
+                symbols=universe,
+                workflow_id=run.id,
+                horizon_by_symbol=horizons,
             )
             llm = FakeLLMProvider({}) if fake_llm else None
-            pipeline = AgentPipeline(settings=self.settings, llm=llm) if llm else AgentPipeline(settings=self.settings)
-            portfolio = PortfolioStateInput(
-                as_of=datetime.now(UTC),
-                equity=self.settings.starting_cash,
-                cash=self.settings.starting_cash,
-                cash_pct=100.0,
-                gross_exposure_pct=0.0,
+            pipeline = (
+                AgentPipeline(settings=self.settings, llm=llm)
+                if llm
+                else AgentPipeline(settings=self.settings)
             )
             analysis = await pipeline.run_from_collection(
-                collection, portfolio=portfolio, proposed_trades=[], workflow_id=run.id
+                collection,
+                portfolio=portfolio,
+                proposed_trades=[],
+                workflow_id=run.id,
+                entry_universe=sorted(entry_universe),
+                watchlist_context=[
+                    {"symbol": s, "horizon": horizons.get(s, "short")}
+                    for s in sorted(entry_universe)
+                ],
             )
             cio: CIODecision = analysis.cio
 
             # Prioritize existing positions: sort symbol_actions
-            held = set(open_syms)
+            held_set = set(held)
             actions = list(cio.symbol_actions)
             actions.sort(
                 key=lambda a: (
-                    0 if a.symbol.upper() in held else 1,
+                    0 if a.symbol.upper() in held_set else 1,
                     _ACTION_PRIORITY.get(a.action.value, 99),
                 )
             )
@@ -142,7 +165,7 @@ class IntradayAgentService:
             symbol_payload = []
             for a in actions:
                 act = a.action.value
-                if a.symbol.upper() not in held and act in {"BUY", "STRONG_BUY", "SCALE_IN", "ADD"}:
+                if a.symbol.upper() not in held_set and act in {"BUY", "STRONG_BUY", "SCALE_IN", "ADD"}:
                     if mode == IntradayOperationMode.OBSERVE_ONLY or not caps.can_create_intent:
                         act = "NO_ACTION"
                     elif not self.settings.allow_new_positions_in_closing_window and mode != IntradayOperationMode.PAPER_AUTOMATED:
@@ -157,7 +180,8 @@ class IntradayAgentService:
                         "thesis": a.thesis,
                         "stop_loss": a.stop_loss,
                         "thesis_status": thesis_status,
-                        "is_existing_position": a.symbol.upper() in held,
+                        "is_existing_position": a.symbol.upper() in held_set,
+                        "time_horizon": a.time_horizon.value if a.time_horizon else None,
                     }
                 )
 
@@ -199,6 +223,8 @@ class IntradayAgentService:
                     settings=self.settings,
                     create_intents=True,
                     allow_submit=caps.can_submit and mode == IntradayOperationMode.PAPER_AUTOMATED,
+                    entry_universe=entry_universe,
+                    horizon_by_symbol=horizons,
                 )
             elif caps.can_create_intent and caps.intents_are_draft_only:
                 execution = {"intent_count": 0, "broker_orders_submitted": False, "notes": ["draft_only_mode"]}
@@ -209,6 +235,8 @@ class IntradayAgentService:
                 "cio_action": portfolio_action,
                 "execution": execution,
                 "trading_actor": "cio_bottom_up",
+                "universe_size": len(universe),
+                "entry_universe_size": len(entry_universe),
             }
             self.bus.record_reanalysis(open_syms or ["PORTFOLIO"])
             await self.session.flush()

@@ -1118,12 +1118,37 @@ class DailyWorkflowService:
         end = close_t - timedelta(minutes=cfg.closing_window_minutes_before_close)
         session_mins = max(0.0, (end - open_t).total_seconds() / 60.0)
         try:
+            from app.models import PositionLifecycle
             from app.universe.reeval import planned_intraday_interval_minutes
             from app.universe.service import UniverseService
+            from sqlalchemy import select as sa_select
 
-            hz_map = await UniverseService(self.session, settings=cfg).horizon_by_symbol()
+            univ = UniverseService(self.session, settings=cfg)
+            hz_map = await univ.horizon_by_symbol()
+            open_syms = [
+                p.symbol.upper()
+                for p in (
+                    await self.session.execute(
+                        sa_select(PositionLifecycle).where(
+                            PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"])
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            ]
+            # Cadence follows open books when invested; otherwise focus/entry set —
+            # not the entire watchlist (one scalp name must not force dense ticks
+            # on a medium-only book).
+            if open_syms:
+                plan_horizons = [hz_map[s] for s in open_syms if s in hz_map]
+            else:
+                focus_syms = await univ.collection_universe(holdings=[])
+                plan_horizons = [hz_map[s] for s in focus_syms if s in hz_map]
+            if not plan_horizons:
+                plan_horizons = list(hz_map.values())
             interval_min = planned_intraday_interval_minutes(
-                list(hz_map.values()), cfg, session_minutes=session_mins
+                plan_horizons, cfg, session_minutes=session_mins
             )
         except Exception:  # noqa: BLE001
             interval_min = max(1, int(cfg.intraday_reevaluation_interval_minutes))
