@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -213,6 +213,30 @@ class UniverseService:
         result = await screen_candidates(self.session, self.settings, ranked)
         return result.passed, result.to_dict()
 
+    async def last_llm_refresh_at(self) -> datetime | None:
+        """Most recent focus snapshot produced by Universe Manager (LLM)."""
+        row = (
+            await self.session.execute(
+                select(FocusSetSnapshot)
+                .where(FocusSetSnapshot.source == "universe_manager")
+                .order_by(FocusSetSnapshot.as_of.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        return row.as_of if row is not None else None
+
+    def llm_refresh_interval(self) -> timedelta:
+        days = max(1, int(self.settings.universe_refresh_min_interval_days))
+        return timedelta(days=days)
+
+    async def llm_refresh_due(self, *, now: datetime | None = None) -> bool:
+        """True when Universe Manager LLM is allowed (weekly by default)."""
+        last = await self.last_llm_refresh_at()
+        if last is None:
+            return True
+        stamp = last if last.tzinfo is not None else last.replace(tzinfo=UTC)
+        return (now or utc_now()) - stamp >= self.llm_refresh_interval()
+
     async def refresh(
         self,
         *,
@@ -220,14 +244,39 @@ class UniverseService:
         market_regime: str | None = None,
         themes: list[str] | None = None,
         session_date: str | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
-        """Run Universe Manager and persist watchlist + focus."""
+        """Run Universe Manager and persist watchlist + focus.
+
+        LLM runs at most every ``universe_refresh_min_interval_days`` (default 7)
+        unless ``force=True``. Between LLM runs, rebuilds focus without the model
+        so premarket/scheduler do not burn daily trading budget.
+        """
         await self.ensure_seeded()
         if not self.settings.universe_manager_enabled:
             focus = await self.build_focus_without_llm(holdings=holdings or [], session_date=session_date)
             return {"skipped": True, "reason": "universe_manager_disabled", "focus": focus}
 
-        current = await self.list_active()
+        if not force and not await self.llm_refresh_due():
+            last = await self.last_llm_refresh_at()
+            focus = await self.build_focus_without_llm(
+                holdings=holdings or [], session_date=session_date
+            )
+            hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
+            logger.info(
+                "universe_refresh_deferred_weekly",
+                last_llm_at=last.isoformat() if last else None,
+                min_interval_days=int(self.settings.universe_refresh_min_interval_days),
+            )
+            return {
+                "skipped": True,
+                "reason": "min_interval",
+                "last_llm_at": last.isoformat() if last else None,
+                "min_interval_days": int(self.settings.universe_refresh_min_interval_days),
+                "focus": focus,
+                "hygiene": hygiene,
+            }
+
         paused = list(
             (
                 await self.session.execute(

@@ -53,6 +53,29 @@ def _universe_refresh_enabled(cfg: Settings) -> bool:
     )
 
 
+# Premarket through after-hours only — skip BEFORE_PREMARKET / non-trading overnight.
+_UNIVERSE_REFRESH_PHASES = frozenset(
+    {
+        "PREMARKET",
+        "REGULAR",
+        "FORCE_CLOSE_WINDOW",
+        "CLOSING_WINDOW",
+        "POSTMARKET",
+        "AFTER_HOURS",
+    }
+)
+
+
+def _universe_refresh_allowed_now(cfg: Settings, now: datetime | None = None) -> bool:
+    """Whether a periodic Universe Manager call should run at this clock time."""
+    if not bool(cfg.universe_refresh_session_only):
+        return True
+    from app.market.calendar import MarketCalendarService
+
+    status = MarketCalendarService(cfg).get_market_status(now)
+    return status.phase in _UNIVERSE_REFRESH_PHASES
+
+
 def _broker_recon_enabled(cfg: Settings) -> bool:
     """Periodic broker reconciliation when scheduler + broker connection/orders are on."""
     return _scheduler_enabled(cfg) and (
@@ -246,6 +269,12 @@ async def _refresh_universe() -> None:
 
     settings = get_settings()
     if not _universe_refresh_enabled(settings):
+        return
+    if not _universe_refresh_allowed_now(settings):
+        from app.market.calendar import MarketCalendarService
+
+        phase = MarketCalendarService(settings).get_market_status().phase
+        logger.info("universe_refresh_skip_off_session", phase=phase)
         return
 
     factory = get_session_factory()

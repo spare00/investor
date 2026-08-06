@@ -20,6 +20,8 @@ router = APIRouter(prefix="/universe", tags=["universe"])
 class UniverseRefreshRequest(BaseModel):
     themes: list[str] = Field(default_factory=list)
     market_regime: str | None = None
+    # Bypass weekly min-interval (manual ops only — burns LLM budget).
+    force: bool = False
 
 
 @router.get("")
@@ -42,6 +44,7 @@ async def universe_refresh(
         holdings=holdings,
         market_regime=req.market_regime,
         themes=req.themes,
+        force=bool(req.force),
     )
     replan: dict[str, Any] = {"skipped": True, "reason": "not_attempted"}
     try:

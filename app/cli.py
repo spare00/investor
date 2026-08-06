@@ -425,7 +425,12 @@ def main(argv: list[str] | None = None) -> int:
     universe_sub = universe.add_subparsers(dest="universe_cmd", required=True)
     universe_sub.add_parser("show")
     universe_sub.add_parser("horizons")
-    universe_sub.add_parser("refresh")
+    ur = universe_sub.add_parser("refresh")
+    ur.add_argument(
+        "--force",
+        action="store_true",
+        help="Bypass weekly LLM min-interval (burns budget)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -531,7 +536,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "security":
         result = _security_audit()
     elif args.cmd == "universe":
-        result = asyncio.run(_universe_cmd(args.universe_cmd))
+        result = asyncio.run(
+            _universe_cmd(args.universe_cmd, force=bool(getattr(args, "force", False)))
+        )
     else:
         return 1
 
@@ -791,7 +798,7 @@ async def _backup_cmd(args: argparse.Namespace) -> dict:
         raise SystemExit("unknown backup command")
 
 
-async def _universe_cmd(cmd: str) -> dict:
+async def _universe_cmd(cmd: str, *, force: bool = False) -> dict:
     from sqlalchemy import select
 
     from app.models import Position
@@ -812,7 +819,7 @@ async def _universe_cmd(cmd: str) -> dict:
             holdings = [
                 p.symbol for p in (await session.execute(select(Position))).scalars().all()
             ]
-            result = await svc.refresh(holdings=holdings)
+            result = await svc.refresh(holdings=holdings, force=force)
             await session.commit()
             return result
         raise SystemExit(f"unknown universe command: {cmd}")

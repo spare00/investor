@@ -222,12 +222,15 @@ class WorkflowService:
         # when enabled, run manager once per premarket with prior regime/themes.
         if self.settings.universe_manager_enabled and univ.is_dynamic():
             try:
-                await univ.refresh(
+                refreshed = await univ.refresh(
                     holdings=held,
                     market_regime=ctx.get("market_regime"),
                     themes=list(ctx.get("themes") or []),
                 )
-                notes.append("universe_refreshed")
+                if refreshed.get("skipped") and refreshed.get("reason") == "min_interval":
+                    notes.append("universe_refresh_deferred_weekly")
+                else:
+                    notes.append("universe_refreshed")
                 try:
                     from app.workflow.daily import DailyWorkflowService
 

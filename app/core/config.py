@@ -120,8 +120,15 @@ class Settings(BaseSettings):
     universe_focus_limit: int = 12
     universe_watchlist_limit: int = 40
     universe_manager_enabled: bool = True
-    # Periodic Universe Manager refresh when ENABLE_SCHEDULER=true (seconds).
-    universe_refresh_seconds: int = 900
+    # How often Universe Manager may call the LLM (days). Premarket/scheduler
+    # still run between — they rebuild focus without LLM until this elapses.
+    universe_refresh_min_interval_days: int = 7
+    # APScheduler poll interval (seconds). Actual LLM gated by min_interval_days.
+    # Default = 7d backup tick; premarket is the primary weekly opportunity.
+    universe_refresh_seconds: int = 604_800
+    # When true, skip periodic refresh outside premarket→after-hours (no overnight LLM).
+    universe_refresh_session_only: bool = True
+
     # Extra symbols AI may add beyond TRADE_ALLOWLIST (empty → built-in curated pool).
     universe_candidate_pool: Annotated[list[str], NoDecode] = Field(default_factory=list)
     universe_allow_candidate_adds: bool = True
