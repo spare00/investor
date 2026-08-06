@@ -217,6 +217,8 @@ class Settings(BaseSettings):
     order_submission_revalidation_max_age_seconds: int = 15
     max_order_slippage_bps: float = 30.0
     max_order_spread_bps: float = 50.0
+    # Reject limit entries whose limit is farther than this from the collected last.
+    max_entry_limit_drift_bps: float = 250.0
     cancel_open_orders_at_close: bool = True
     emergency_stop_cancel_open_orders: bool = True
     emergency_stop_close_positions: bool = False

@@ -280,6 +280,17 @@ class ExecutionValidator:
             else:
                 return f"{symbol}:limit_order_missing_price"
 
+        if (
+            plan.action in ENTRY_ACTIONS
+            and limit_price is not None
+            and price
+            and price > 0
+        ):
+            drift_bps = abs(float(limit_price) - float(price)) / float(price) * 10_000.0
+            max_drift = float(self.settings.max_entry_limit_drift_bps)
+            if drift_bps > max_drift:
+                return f"{symbol}:limit_too_far_from_last:{drift_bps:.0f}bps"
+
         key = f"{workflow_id or decision.decision_id}:{symbol}:{side}:{plan.action.value}"
         if key in seen:
             return f"{symbol}:duplicate_idempotency_key"

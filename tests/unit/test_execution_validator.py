@@ -285,6 +285,50 @@ def test_validator_exits_use_market_orders() -> None:
     assert result.intents[0].limit_price is None
 
 
+def test_validator_rejects_limit_far_from_last() -> None:
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.BUY,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="AAPL",
+                action=SymbolAction.BUY,
+                confidence=70,
+                target_position_pct=5,
+                order_type=OrderType.LIMIT,
+                entry_zone=PriceZone(min=219, max=221),
+                stop_loss=215,
+                thesis="stale stub zone",
+                invalidation="stop",
+            )
+        ],
+        cash_target_pct=50,
+        risk_approval=True,
+    )
+    from app.core.config import Settings
+
+    result = ExecutionValidator(
+        settings=Settings(max_entry_limit_drift_bps=250),
+        controls=TradingControls(),
+    ).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=100_000,
+            cash=100_000,
+            cash_pct=100,
+            gross_exposure_pct=0,
+            positions=[],
+        ),
+        latest_prices={"AAPL": 310.0},
+        data_quality_score=0.9,
+        entry_universe={"AAPL"},
+    )
+    assert result.approved is False
+    assert any("limit_too_far_from_last" in r for r in result.rejections)
+
+
 def test_validator_entries_without_zone_use_market() -> None:
     decision = CIODecision(
         decision_id=uuid4(),

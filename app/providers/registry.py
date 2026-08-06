@@ -177,36 +177,55 @@ class AlpacaMarketDataAdapter:
                 "APCA-API-SECRET-KEY": cfg.alpaca_api_secret.get_secret_value(),
             }
             syms = ",".join(s.upper() for s in symbols)
-            url = f"{cfg.alpaca_data_url.rstrip('/')}/v2/stocks/quotes/latest"
+            # Snapshots give last trade + NBBO; latest quotes alone often lack a print.
+            url = f"{cfg.alpaca_data_url.rstrip('/')}/v2/stocks/snapshots"
             async with httpx.AsyncClient(timeout=cfg.provider_request_timeout_seconds) as client:
                 resp = await client.get(url, params={"symbols": syms}, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()
             now = datetime.now(UTC)
+            snaps = payload.get("snapshots") if isinstance(payload.get("snapshots"), dict) else payload
             quotes: list[CanonicalQuote] = []
-            for sym, q in (payload.get("quotes") or {}).items():
-                bid = q.get("bp")
-                ask = q.get("ap")
-                last = ask or bid or q.get("p") or 0.0
-                ts = q.get("t")
+            if not isinstance(snaps, dict):
+                return quotes
+            for sym, snap in snaps.items():
+                if not isinstance(snap, dict):
+                    continue
+                trade = snap.get("latestTrade") or {}
+                quote = snap.get("latestQuote") or {}
+                daily = snap.get("dailyBar") or {}
+                bid = quote.get("bp")
+                ask = quote.get("ap")
+                last = trade.get("p") or ask or bid or daily.get("c") or 0.0
+                try:
+                    last_f = float(last)
+                except (TypeError, ValueError):
+                    continue
+                if last_f <= 0:
+                    continue
+                ts = trade.get("t") or quote.get("t")
                 as_of = datetime.fromisoformat(str(ts).replace("Z", "+00:00")) if ts else now
                 quotes.append(
                     CanonicalQuote(
                         as_of=as_of,
                         collected_at=now,
-                        symbol=sym.upper(),
-                        bid=bid,
-                        ask=ask,
-                        bid_size=q.get("bs"),
-                        ask_size=q.get("as"),
-                        last=float(last),
+                        symbol=str(sym).upper(),
+                        bid=float(bid) if bid is not None else None,
+                        ask=float(ask) if ask is not None else None,
+                        bid_size=quote.get("bs"),
+                        ask_size=quote.get("as"),
+                        last=last_f,
                         session="unknown",
-                        spread_bps=spread_bps(bid, ask, float(last) or 1.0),
+                        spread_bps=spread_bps(
+                            float(bid) if bid is not None else None,
+                            float(ask) if ask is not None else None,
+                            last_f,
+                        ),
                         source_ids=[f"alpaca:{sym}"],
                         provenance=Provenance(
                             provider_name=self.name,
                             provider_record_id=str(ts),
-                            raw_payload_reference=f"alpaca:quote:{sym}:{ts}",
+                            raw_payload_reference=f"alpaca:snapshot:{sym}:{ts}",
                             source_timestamp=as_of,
                             collection_timestamp=now,
                         ),

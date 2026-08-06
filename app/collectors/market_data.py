@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import httpx
+
 from app.collectors.base import MarketDataProvider, RawMarketQuote
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -52,49 +54,124 @@ class StubMarketDataProvider:
                     symbol=sym,
                     as_of=now,
                     provider=self.name,
-                    last=last,
-                    open=last * 0.998,
-                    high=last * 1.01,
-                    low=last * 0.99,
-                    volume=25_000_000,
-                    avg_volume_20d=30_000_000,
-                    atr_14=round(last * 0.015, 4),
-                    rsi_14=55.0,
-                    sma_20=last * 0.99,
-                    sma_50=last * 0.97,
-                    sma_200=last * 0.92,
+                    last=float(last),
                     bid=bid,
                     ask=ask,
-                    premarket_change_pct=0.35,
-                    gap_pct=0.2,
-                    vix=16.5 if sym == "SPY" else None,
-                    raw_payload={"stub": True},
+                    volume=25_000_000.0,
+                    raw_payload={"stub": True, "last": last},
                 )
             )
         return out
 
 
 class AlpacaMarketDataProvider:
-    """Scaffold — real Alpaca data client in Phase 6; fail-closed without keys."""
+    """Live Alpaca Market Data API quotes (snapshots → last trade / NBBO)."""
 
     name = "alpaca"
 
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or get_settings()
+
     async def fetch_quotes(self, symbols: list[str]) -> list[RawMarketQuote]:
-        settings = get_settings()
+        settings = self.settings
+        if not settings.enable_external_data or not settings.enable_market_data_collection:
+            logger.warning("alpaca_market_disabled", action="empty")
+            return []
         if not settings.alpaca_api_key or not settings.alpaca_api_secret:
             logger.warning("alpaca_market_missing_keys", action="fail_closed_empty")
             return []
-        logger.warning("alpaca_market_not_wired", symbols=symbols)
-        return []
+
+        headers = {
+            "APCA-API-KEY-ID": settings.alpaca_api_key.get_secret_value(),
+            "APCA-API-SECRET-KEY": settings.alpaca_api_secret.get_secret_value(),
+        }
+        syms = sorted({s.upper() for s in symbols if s})
+        if not syms:
+            return []
+
+        url = f"{settings.alpaca_data_url.rstrip('/')}/v2/stocks/snapshots"
+        timeout = float(settings.provider_request_timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, params={"symbols": ",".join(syms)}, headers=headers)
+            resp.raise_for_status()
+            payload = resp.json()
+
+        now = datetime.now(UTC)
+        out: list[RawMarketQuote] = []
+        # Alpaca may return a top-level map of symbol → snapshot, or {"snapshots": {...}}
+        snaps = payload.get("snapshots") if isinstance(payload.get("snapshots"), dict) else payload
+        if not isinstance(snaps, dict):
+            logger.warning("alpaca_snapshots_unexpected_shape", keys=list(payload.keys())[:8])
+            return []
+
+        for sym in syms:
+            snap = snaps.get(sym) or snaps.get(sym.upper())
+            if not isinstance(snap, dict):
+                logger.warning("alpaca_snapshot_missing", symbol=sym)
+                continue
+            trade = snap.get("latestTrade") or {}
+            quote = snap.get("latestQuote") or {}
+            daily = snap.get("dailyBar") or snap.get("prevDailyBar") or {}
+            last = (
+                trade.get("p")
+                or quote.get("ap")
+                or quote.get("bp")
+                or daily.get("c")
+                or 0.0
+            )
+            try:
+                last_f = float(last)
+            except (TypeError, ValueError):
+                last_f = 0.0
+            if last_f <= 0:
+                logger.warning("alpaca_snapshot_no_price", symbol=sym)
+                continue
+            bid = quote.get("bp")
+            ask = quote.get("ap")
+            try:
+                bid_f = float(bid) if bid is not None else None
+                ask_f = float(ask) if ask is not None else None
+            except (TypeError, ValueError):
+                bid_f, ask_f = None, None
+            ts = trade.get("t") or quote.get("t")
+            as_of = now
+            if ts:
+                try:
+                    as_of = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                except ValueError:
+                    as_of = now
+            out.append(
+                RawMarketQuote(
+                    symbol=sym,
+                    as_of=as_of,
+                    provider=self.name,
+                    last=last_f,
+                    open=float(daily["o"]) if daily.get("o") is not None else None,
+                    high=float(daily["h"]) if daily.get("h") is not None else None,
+                    low=float(daily["l"]) if daily.get("l") is not None else None,
+                    volume=float(daily["v"]) if daily.get("v") is not None else None,
+                    bid=bid_f,
+                    ask=ask_f,
+                    raw_payload={"snapshot": snap},
+                )
+            )
+        logger.info("alpaca_quotes_fetched", requested=len(syms), returned=len(out))
+        return out
 
 
 def get_market_data_provider(name: str | None = None) -> MarketDataProvider:
     settings = get_settings()
     provider_name = (name or settings.market_data_provider).lower()
     if provider_name == "alpaca":
-        # Until wired, fall back to stub in non-production so local/dev works.
-        if settings.app_env.value == "production":
-            return AlpacaMarketDataProvider()
-        logger.info("market_provider_fallback_stub", requested=provider_name)
+        if settings.enable_external_data and settings.enable_market_data_collection:
+            return AlpacaMarketDataProvider(settings)
+        logger.info(
+            "market_provider_fallback_stub",
+            requested=provider_name,
+            reason="external_market_data_disabled",
+        )
         return StubMarketDataProvider()
+    if provider_name in {"stub", "fixture"}:
+        return StubMarketDataProvider()
+    logger.info("market_provider_unknown_using_stub", requested=provider_name)
     return StubMarketDataProvider()
