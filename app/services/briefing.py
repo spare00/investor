@@ -18,6 +18,7 @@ from app.models import (
     DailyWorkflowRun,
     IntradayAnalysisRun,
     IntradayDecisionRecord,
+    Order,
 )
 from app.schemas.common import AgentName
 
@@ -273,6 +274,9 @@ class BriefingService:
             (a["summary"].get("portfolio_action") for a in premarket_agents if a["agent"] == AgentName.CIO.value and a["present"]),
             None,
         ) or meta.get("cio_action")
+        intent_count = meta.get("intent_count")
+        if not intent_count and wf_id is not None:
+            intent_count = await self._order_count_for_workflow(wf_id)
         return {
             "available": True,
             "session_date": run.session_date,
@@ -286,7 +290,7 @@ class BriefingService:
                 "risk_verdict": meta.get("risk_verdict"),
                 "no_trade_reason": meta.get("no_trade_reason"),
                 "analysis_completed_at": meta.get("analysis_completed_at"),
-                "intent_count": meta.get("intent_count"),
+                "intent_count": intent_count,
                 "last_briefing_workflow_id": meta.get("last_briefing_workflow_id"),
                 "last_briefing_kind": meta.get("last_briefing_kind"),
             },
@@ -398,6 +402,20 @@ class BriefingService:
             if len(best_map) >= 6:
                 break
         return best_wf, best_map
+
+    async def _order_count_for_workflow(self, workflow_id: UUID) -> int:
+        """Count local orders keyed by workflow idempotency prefix."""
+        prefix = f"{workflow_id}:"
+        rows = list(
+            (
+                await self.session.execute(
+                    select(Order).where(Order.idempotency_key.startswith(prefix))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return len(rows)
 
     async def _session_analyses(
         self, session_date: str, *, include_raw: bool

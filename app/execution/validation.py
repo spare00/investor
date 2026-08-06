@@ -267,6 +267,13 @@ class ExecutionValidator:
         if plan.action not in ENTRY_ACTIONS:
             order_type = "market"
             limit_price = None
+        elif plan.action in ENTRY_ACTIONS and plan.entry_zone is None and order_type in {
+            "limit",
+            "stop_limit",
+        }:
+            # CIO often omits entry_zone; a last-print limit sits unfilled through RTH.
+            order_type = "market"
+            limit_price = None
         elif order_type in {"limit", "stop_limit"} and limit_price is None:
             if price and price > 0:
                 limit_price = float(price)

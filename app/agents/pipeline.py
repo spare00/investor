@@ -108,39 +108,45 @@ def enrich_cio_entry_stops(
     *,
     latest_prices: dict[str, float] | None = None,
 ) -> CIODecision:
-    """Fill missing numeric stops so execution sizing can approve BUY/SCALE_IN."""
+    """Fill missing stops/entry zones so execution can size and place entries."""
     prices = {k.upper(): float(v) for k, v in (latest_prices or {}).items() if v}
     by_sym = {str(v.symbol).upper(): v for v in (quant.symbol_views or []) if v.symbol}
     updated: list[SymbolActionPlan] = []
     changed = False
     for plan in decision.symbol_actions:
-        if plan.action not in _ENTRY_ACTIONS or plan.stop_loss is not None:
+        if plan.action not in _ENTRY_ACTIONS:
             updated.append(plan)
             continue
         sym = plan.symbol.upper()
         view = by_sym.get(sym)
-        stop = float(view.stop_or_invalidation) if view and view.stop_or_invalidation else None
-        if stop is None and plan.entry_zone is not None:
-            try:
-                stop = float(plan.entry_zone.min) * 0.99
-            except (TypeError, ValueError):
-                stop = None
-        if stop is None and sym in prices:
-            stop = round(prices[sym] * 0.98, 4)
-        if stop is None:
+        patch: dict = {}
+        if plan.entry_zone is None and view and view.entry_zone is not None:
+            patch["entry_zone"] = view.entry_zone
+        if plan.stop_loss is None:
+            stop = float(view.stop_or_invalidation) if view and view.stop_or_invalidation else None
+            zone = patch.get("entry_zone") or plan.entry_zone
+            if stop is None and zone is not None:
+                try:
+                    stop = float(zone.min) * 0.99
+                except (TypeError, ValueError):
+                    stop = None
+            if stop is None and sym in prices:
+                stop = round(prices[sym] * 0.98, 4)
+            if stop is not None:
+                patch["stop_loss"] = stop
+                if not plan.invalidation or plan.invalidation.strip() in {"", "n/a"}:
+                    patch["invalidation"] = f"Stop {stop}"
+        if patch:
+            changed = True
+            updated.append(plan.model_copy(update=patch))
+        else:
             updated.append(plan)
-            continue
-        changed = True
-        inv = plan.invalidation if plan.invalidation and plan.invalidation.strip() not in {"", "n/a"} else (
-            f"Stop {stop}"
-        )
-        updated.append(plan.model_copy(update={"stop_loss": stop, "invalidation": inv}))
     if not changed:
         return decision
-    filled = sum(1 for p in updated if p.stop_loss is not None) - sum(
+    filled_stops = sum(1 for p in updated if p.stop_loss is not None) - sum(
         1 for p in decision.symbol_actions if p.stop_loss is not None
     )
-    logger.info("cio_entry_stops_enriched", filled=filled)
+    logger.info("cio_entry_stops_enriched", filled=filled_stops)
     return decision.model_copy(update={"symbol_actions": updated})
 
 

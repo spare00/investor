@@ -174,7 +174,7 @@ class WorkflowService:
             from app.workflow.daily import DailyWorkflowService
 
             status = MarketCalendarService(self.settings).get_market_status(now)
-            session_date = status.session_date.isoformat()
+            session_date = status.session.session_date.isoformat()
             daily = await DailyWorkflowService(self.session, settings=self.settings).get_current(
                 session_date
             )

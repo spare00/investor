@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.brokers.alpaca import get_broker
 from app.brokers.base import BrokerClient, OrderRequest, OrderSide, OrderStatus
 from app.brokers.errors import BrokerError
+from app.brokers.models import InternalOrderState
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.execution.safety_controls import TradingControls, trading_controls
@@ -20,6 +21,19 @@ from app.models import Execution, Order
 from app.storage.repositories import SystemEventRepository
 
 logger = get_logger(__name__)
+
+_BROKER_STATUS_TO_INTERNAL = {
+    OrderStatus.NEW: InternalOrderState.ACCEPTED,
+    OrderStatus.ACCEPTED: InternalOrderState.ACCEPTED,
+    OrderStatus.PARTIAL: InternalOrderState.PARTIALLY_FILLED,
+    OrderStatus.FILLED: InternalOrderState.FILLED,
+    OrderStatus.CANCELED: InternalOrderState.CANCELLED,
+    OrderStatus.REJECTED: InternalOrderState.REJECTED,
+}
+
+
+def _internal_status(broker_status: OrderStatus) -> str:
+    return _BROKER_STATUS_TO_INTERNAL.get(broker_status, InternalOrderState.UNKNOWN).value
 
 
 class OrderManager:
@@ -170,11 +184,11 @@ class OrderManager:
                 remote = await self.broker.get_order_by_client_id(intent.idempotency_key)
                 if remote is not None:
                     row.broker_order_id = remote.broker_order_id
-                    row.status = remote.status.value
+                    row.status = _internal_status(remote.status)
                     row.submitted_at = remote.submitted_at
             return row
         except BrokerError as exc:
-            row.status = "rejected"
+            row.status = InternalOrderState.REJECTED.value
             row.raw_payload = {**row.raw_payload, "error": str(exc)}
             await self.events.record(
                 level="error",
@@ -189,7 +203,7 @@ class OrderManager:
             return row
 
         row.broker_order_id = result.broker_order_id
-        row.status = result.status.value
+        row.status = _internal_status(result.status)
         row.submitted_at = result.submitted_at
         row.raw_payload = {**row.raw_payload, "broker": result.raw or {}}
 
