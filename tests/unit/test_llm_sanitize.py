@@ -350,3 +350,62 @@ def test_sanitize_live_log_failures_v3() -> None:
     )
     assert cio.market_regime.value == "NEUTRAL"
     assert cio.portfolio_action.value == "HOLD"
+
+
+def test_sanitize_mi_null_lists_and_headline_from_facts() -> None:
+    from app.agents.llm_sanitize import sanitize_for_model
+
+    mi = MarketIntelligenceOutput.model_validate(
+        sanitize_for_model(
+            {
+                "timestamp": "2026-08-06T15:09:00Z",
+                "top_market_themes": ["rates"],
+                "data_quality_score": 0.8,
+                "market_events": [
+                    {
+                        "source": "Reuters",
+                        "published_at": "2026-08-06T14:00:00Z",
+                        "category": "fed",
+                        "sentiment": "neutral",
+                        "importance": 4,
+                        "facts": ["Fed officials signal patience on rate cuts."],
+                    }
+                ],
+                "missing_information": None,
+                "conflicts": None,
+            },
+            MarketIntelligenceOutput,
+        )
+    )
+    assert mi.missing_information == []
+    assert mi.conflicts == []
+    assert mi.market_events[0].headline.startswith("Fed officials")
+
+
+def test_sanitize_quant_defaults_missing_states() -> None:
+    from app.agents.llm_sanitize import sanitize_for_model
+
+    quant = QuantStrategistOutput.model_validate(
+        sanitize_for_model(
+            {
+                "timestamp": "2026-08-06T15:09:00Z",
+                "market_trend_state": "up",
+                "market_momentum_state": "steady",
+                "market_volatility_state": "normal",
+                "market_breadth_state": "mixed",
+                "market_liquidity_state": "normal",
+                "symbol_views": [
+                    {
+                        "symbol": "AAPL",
+                        "entry_zone": {"min": 1.0, "max": 2.0},
+                        "probability_estimate": 0.5,
+                        "probability_basis": "llm",
+                        "notes": [],
+                    }
+                ],
+            },
+            QuantStrategistOutput,
+        )
+    )
+    assert quant.data_quality_score == 0.6
+    assert quant.symbol_views[0].trend_state.value == "up"

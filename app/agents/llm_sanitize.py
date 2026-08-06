@@ -405,6 +405,11 @@ def _clamp_importance(value: Any) -> Any:
 
 
 def _normalize_market_event(ev: dict[str, Any]) -> dict[str, Any]:
+    if "headline" not in ev or not str(ev.get("headline") or "").strip():
+        for alt in ("title", "summary", "text", "name", "event", "description"):
+            if ev.get(alt):
+                ev["headline"] = _as_text(ev.get(alt))
+                break
     if "interpretations" in ev:
         interps = ev.pop("interpretations")
         if "interpretation" not in ev and interps:
@@ -412,15 +417,54 @@ def _normalize_market_event(ev: dict[str, Any]) -> dict[str, Any]:
                 ev["interpretation"] = _as_text(interps[0])
             else:
                 ev["interpretation"] = _as_text(interps)
-    for junk in ("themes", "conflicts", "missing_information", "data_quality_score", "as_of"):
+    # facts may be list[str] or list[dict]
+    if isinstance(ev.get("facts"), list):
+        cleaned_facts: list[str] = []
+        for item in ev["facts"]:
+            if isinstance(item, str):
+                cleaned_facts.append(item)
+            elif isinstance(item, dict):
+                cleaned_facts.append(
+                    str(
+                        item.get("headline")
+                        or item.get("text")
+                        or item.get("fact")
+                        or _as_text(item)
+                    )
+                )
+            elif item is not None:
+                cleaned_facts.append(str(item))
+        ev["facts"] = cleaned_facts
+        if "headline" not in ev or not str(ev.get("headline") or "").strip():
+            if cleaned_facts:
+                ev["headline"] = cleaned_facts[0]
+    if "headline" not in ev or not str(ev.get("headline") or "").strip():
+        ev["headline"] = "Untitled market event"
+    for junk in ("themes", "conflicts", "missing_information", "data_quality_score", "as_of", "title", "summary", "text"):
+        if junk == "headline":
+            continue
         ev.pop(junk, None)
     if "importance" in ev:
         ev["importance"] = _clamp_importance(ev["importance"])
-    if isinstance(ev.get("facts"), str):
-        ev["facts"] = [ev["facts"]]
+    else:
+        ev["importance"] = 3
     if isinstance(ev.get("uncertainties"), str):
         ev["uncertainties"] = [ev["uncertainties"]]
+    ev.setdefault("source", "unknown")
+    ev.setdefault("symbols", [])
+    ev.setdefault("facts", [])
+    ev.setdefault("uncertainties", [])
+    ev.setdefault("category", "other")
+    ev.setdefault("sentiment", "neutral")
+    if "published_at" not in ev:
+        ev["published_at"] = datetime.now(UTC).isoformat()
     return ev
+
+
+def _none_to_empty_list(out: dict[str, Any], *keys: str) -> None:
+    for key in keys:
+        if key in out and out[key] is None:
+            out[key] = []
 
 
 def _normalize_sector_impact(value: Any) -> Any:
@@ -495,6 +539,9 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
             ]
         if isinstance(out.get("top_market_themes"), str):
             out["top_market_themes"] = [out["top_market_themes"]]
+        _none_to_empty_list(
+            out, "market_events", "top_market_themes", "conflicts", "missing_information"
+        )
 
     if "expected_sector_impact" in out:
         out["expected_sector_impact"] = _normalize_sector_impact(out["expected_sector_impact"])
@@ -502,8 +549,15 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
     if looks_quant:
         for key in _CROSS_AGENT_EXTRAS:
             out.pop(key, None)
-        if "data_quality_score" not in out:
+        if "data_quality_score" not in out or out.get("data_quality_score") is None:
             out["data_quality_score"] = 0.6
+        _none_to_empty_list(out, "symbol_views", "conflicts")
+        market_defaults = {
+            "trend_state": out.get("market_trend_state") or "sideways",
+            "momentum_state": out.get("market_momentum_state") or "steady",
+            "volatility_state": out.get("market_volatility_state") or "normal",
+            "liquidity_state": out.get("market_liquidity_state") or "normal",
+        }
         if isinstance(out.get("symbol_views"), list):
             for view in out["symbol_views"]:
                 if not isinstance(view, dict):
@@ -517,10 +571,14 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
                         view["probability_estimate"] = c / 100.0 if c > 1.0 else c
                     except (TypeError, ValueError):
                         view["probability_estimate"] = 0.5
+                view.setdefault("probability_estimate", 0.5)
                 view.setdefault("probability_basis", "llm")
                 view.setdefault("notes", [])
                 if isinstance(view.get("notes"), str):
                     view["notes"] = [view["notes"]]
+                for state_key, default in market_defaults.items():
+                    if view.get(state_key) is None:
+                        view[state_key] = default
                 for scen_key in ("upside_scenario", "downside_scenario"):
                     if scen_key in view:
                         view[scen_key] = _normalize_scenario(view[scen_key])
@@ -632,8 +690,12 @@ def prune_to_model(data: dict[str, Any], model: type[Any]) -> dict[str, Any]:
         if name not in data:
             continue
         val = data[name]
+        # Explicit nulls for list fields → empty list (LLM loves null).
         ann = _unwrap_annotation(field.annotation)
         origin = get_origin(ann)
+        if val is None and origin is list:
+            out[name] = []
+            continue
         if origin is list:
             inner = get_args(ann)[0] if get_args(ann) else None
             inner = _unwrap_annotation(inner) if inner is not None else None
