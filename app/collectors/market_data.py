@@ -38,6 +38,15 @@ class StubMarketDataProvider:
         self._quotes = quotes or _STUB_LAST
 
     async def fetch_quotes(self, symbols: list[str]) -> list[RawMarketQuote]:
+        from app.market.live_prices import requires_live_market_prices
+
+        if requires_live_market_prices():
+            logger.error(
+                "stub_quotes_blocked",
+                reason="live_market_prices_required",
+                symbols=len(symbols),
+            )
+            return []
         now = datetime.now(UTC)
         out: list[RawMarketQuote] = []
         for symbol in symbols:
@@ -161,7 +170,21 @@ class AlpacaMarketDataProvider:
 
 def get_market_data_provider(name: str | None = None) -> MarketDataProvider:
     settings = get_settings()
+    from app.market.live_prices import requires_live_market_prices
+
     provider_name = (name or settings.market_data_provider).lower()
+    live_required = requires_live_market_prices(settings)
+
+    if live_required:
+        # Never hand callers a stub/fixture provider on the live/order path.
+        if provider_name in {"stub", "fixture"}:
+            logger.error(
+                "stub_market_provider_forbidden",
+                requested=provider_name,
+                action="force_alpaca",
+            )
+        return AlpacaMarketDataProvider(settings)
+
     if provider_name == "alpaca":
         if settings.enable_external_data and settings.enable_market_data_collection:
             return AlpacaMarketDataProvider(settings)

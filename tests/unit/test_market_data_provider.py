@@ -68,8 +68,13 @@ def test_get_market_data_provider_falls_back_to_stub_when_disabled() -> None:
         return_value=Settings(
             enable_external_data=False,
             enable_market_data_collection=False,
+            enable_broker_orders=False,
+            enable_automated_execution=False,
             market_data_provider="alpaca",
         ),
+    ), patch(
+        "app.market.live_prices.requires_live_market_prices",
+        return_value=False,
     ):
         provider = get_market_data_provider()
     assert isinstance(provider, StubMarketDataProvider)

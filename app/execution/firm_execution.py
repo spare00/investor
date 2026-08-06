@@ -20,6 +20,7 @@ from app.core.metrics import ORDERS_BLOCKED
 from app.execution.order_manager import OrderManager
 from app.execution.service import ExecutionService
 from app.execution.validation import ExecutionValidator
+from app.market.live_prices import requires_live_market_prices, resolve_execution_prices
 from app.risk import PortfolioRiskView, PositionRiskView
 from app.schemas.cio import CIODecision
 from app.schemas.risk_manager import PortfolioStateInput
@@ -93,6 +94,10 @@ async def materialize_cio_decision(
     Always fail-closed on Live. Intent creation is the firm acting; submit is gated
     by paper automation flags. Manual approval (when enabled) parks intents for an
     operator brake — it is not the primary trading model.
+
+    When the live/broker path is enabled, prices are always refreshed from Alpaca at
+    materialize time — collection leftovers and stub quotes are never used to size
+    or submit orders.
     """
     cfg = settings or get_settings()
     notes: list[str] = []
@@ -102,11 +107,39 @@ async def materialize_cio_decision(
         else portfolio_to_risk_view(portfolio)
     )
 
+    needed = {str(a.symbol).upper() for a in (decision.symbol_actions or []) if a.symbol}
+    needed |= {str(k).upper() for k in (latest_prices or {})}
+    prices, price_notes = await resolve_execution_prices(
+        needed, candidate_prices=latest_prices, settings=cfg
+    )
+    notes.extend(price_notes)
+    if requires_live_market_prices(cfg) and not prices:
+        notes.append("orders_blocked_live_prices_unavailable")
+        ORDERS_BLOCKED.labels(reason="live_prices_unavailable").inc()
+        logger.error(
+            "materialize_blocked_no_live_prices",
+            workflow_id=str(workflow_id) if workflow_id else None,
+            symbols=sorted(needed)[:20],
+        )
+        return {
+            "validation_approved": False,
+            "validation_rejections": ["live_prices_unavailable"],
+            "intent_ids": [],
+            "intent_count": 0,
+            "broker_orders_submitted": False,
+            "orders_submitted": 0,
+            "paper_auto_submit_allowed": paper_auto_submit_allowed(cfg),
+            "notes": notes,
+            "actor": "cio_bottom_up",
+            "live_trading_blocked": True,
+            "prices_used": {},
+        }
+
     seen_keys = await OrderManager(session, settings=cfg).seen_idempotency_keys()
     validation = ExecutionValidator(settings=cfg).validate(
         decision,
         portfolio=risk_view,
-        latest_prices=latest_prices,
+        latest_prices=prices,
         data_quality_score=data_quality_score,
         market_session_clear=market_session_clear,
         broker_data_consistent=True,
@@ -123,7 +156,7 @@ async def materialize_cio_decision(
             intents = await ExecutionService(session, settings=cfg).build_intents_from_decision(
                 decision,
                 portfolio=risk_view,
-                latest_prices=latest_prices,
+                latest_prices=prices,
                 data_quality_score=data_quality_score,
                 workflow_id=workflow_id,
             )
@@ -134,7 +167,12 @@ async def materialize_cio_decision(
             logger.exception("firm_intent_build_failed", workflow_id=str(workflow_id))
 
     orders_submitted = 0
-    auto = allow_submit and paper_auto_submit_allowed(cfg) and validation.approved and bool(validation.intents)
+    auto = (
+        allow_submit
+        and paper_auto_submit_allowed(cfg)
+        and validation.approved
+        and bool(validation.intents)
+    )
     if auto:
         try:
             orders = await OrderManager(session, settings=cfg).submit_validated_intents(
@@ -184,4 +222,5 @@ async def materialize_cio_decision(
         "notes": notes,
         "actor": "cio_bottom_up",
         "live_trading_blocked": True,
+        "prices_used": prices,
     }

@@ -50,7 +50,21 @@ class FixtureMarketDataProvider:
     async def fetch_quotes(
         self, symbols: list[str], *, settings: Settings | None = None
     ) -> tuple[list[CanonicalQuote], ProviderRequestMeta]:
+        from app.market.live_prices import requires_live_market_prices
+
         cfg = settings or get_settings()
+        if requires_live_market_prices(cfg):
+            meta = ProviderRequestMeta(
+                provider_name=self.name,
+                provider_version=self.version,
+                request_id=str(uuid4()),
+                request_started_at=datetime.now(UTC),
+                request_completed_at=datetime.now(UTC),
+                status=__import__("app.providers.base", fromlist=["ProviderStatus"]).ProviderStatus.ERROR,
+                error_code="fixture_forbidden",
+                error_message="fixture quotes blocked while live market prices required",
+            )
+            return [], meta
         raw_list, meta = await run_with_retry(
             provider_name=self.name,
             provider_version=self.version,

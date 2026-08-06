@@ -197,6 +197,11 @@ class ExecutionValidator:
         if price is None or price <= 0:
             return f"{symbol}:missing_latest_price"
 
+        from app.market.live_prices import looks_like_stub_last, requires_live_market_prices
+
+        if requires_live_market_prices(self.settings) and looks_like_stub_last(symbol, float(price)):
+            return f"{symbol}:stub_price_forbidden_for_orders"
+
         if plan.action in {SymbolAction.HOLD, SymbolAction.NO_TRADE, SymbolAction.STAY_CASH}:
             return f"{symbol}:non_executable_action"
 

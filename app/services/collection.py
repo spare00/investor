@@ -189,13 +189,18 @@ class DataCollectionService:
         macro_score = bundle.macro.quality_score if bundle.macro else None
         bundle.aggregate_quality = aggregate_data_quality(news_scores, market_scores, macro_score)
 
-        # Never size/submit broker orders off stub prints when live trading path is on.
-        if self.settings.enable_broker_orders and any(
-            (m.provider or "").lower() in {"stub", "fixture"} for m in bundle.markets
-        ):
-            msg = "stub_quotes_blocked_while_broker_orders_enabled"
-            bundle.errors.append(msg)
-            logger.error(msg, workflow_id=str(wf), markets=len(bundle.markets))
+        # Never collect stub/fixture prints when the live/order path is on.
+        from app.market.live_prices import is_simulation_price_provider, requires_live_market_prices
+
+        if requires_live_market_prices(self.settings):
+            if any(is_simulation_price_provider(m.provider) for m in bundle.markets):
+                msg = "stub_quotes_blocked_while_live_prices_required"
+                bundle.errors.append(msg)
+                logger.error(msg, workflow_id=str(wf), markets=len(bundle.markets))
+            if not bundle.markets:
+                msg = "live_market_quotes_missing"
+                bundle.errors.append(msg)
+                logger.error(msg, workflow_id=str(wf))
 
         if bundle.fail_closed and self.persist:
             await self.events.record(
