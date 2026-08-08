@@ -21,7 +21,12 @@ from app.models import (
     PositionLifecycle,
     TradePnL,
 )
-from app.performance.agent_eval import AgentPrediction, Direction, evaluate_agents
+from app.performance.agent_eval import (
+    AgentPrediction,
+    Direction,
+    evaluate_agents,
+    evaluate_agents_grouped,
+)
 from app.performance.benchmarks import load_and_align
 from app.performance.calibration import calibration_gap, expected_calibration_error
 from app.performance.decision_eval import DecisionAction, evaluate_decision
@@ -334,24 +339,55 @@ class PerformanceService:
         for row in rows:
             if row.evaluated_at and not (period_start <= row.evaluated_at <= period_end):
                 continue
-            payload = row.payload or {}
-            actual = payload.get("actual_return")
+            payload = dict(row.payload or {})
+            actual = _actual_return_from_payload(payload)
             abstained = row.directional_view in (None, "ABSTAIN", "NEUTRAL")
+            hz = payload.get("universe_horizon")
+            if hz is not None:
+                hz = str(hz).lower()
             predictions.append(
                 AgentPrediction(
                     predicted_direction=row.directional_view or Direction.ABSTAIN,
                     confidence=row.confidence,
                     actual_return=actual,
                     abstained=abstained,
+                    universe_horizon=hz,
+                    agent_name=str(row.agent_name or "unknown"),
                 )
             )
-        return evaluate_agents(predictions)
+        firm = evaluate_agents(predictions)
+        firm["by_horizon"] = evaluate_agents_grouped(predictions, by="universe_horizon")
+        firm["by_agent"] = evaluate_agents_grouped(predictions, by="agent_name")
+        firm["horizon_note"] = (
+            "by_horizon uses AgentOutcomeEvaluation.payload.universe_horizon "
+            "(from lifecycle exit_policy at post-trade)"
+        )
+        return firm
 
-    def calibration(self, samples: list[tuple[float, float]], *, min_sample_size: int = 5) -> dict[str, Any]:
-        return {
+    def calibration(
+        self,
+        samples: list[tuple[float, float]],
+        *,
+        min_sample_size: int = 5,
+        by_horizon: dict[str, list[tuple[float, float]]] | None = None,
+    ) -> dict[str, Any]:
+        out: dict[str, Any] = {
             "calibration_gap": calibration_gap(samples, min_sample_size=min_sample_size),
             "ece": expected_calibration_error(samples, min_sample_size=min_sample_size),
+            "sample_count": len(samples),
+            "min_sample_size": min_sample_size,
         }
+        if by_horizon is not None:
+            out["by_horizon"] = {
+                book: {
+                    "calibration_gap": calibration_gap(items, min_sample_size=min_sample_size),
+                    "ece": expected_calibration_error(items, min_sample_size=min_sample_size),
+                    "sample_count": len(items),
+                    "min_sample_size": min_sample_size,
+                }
+                for book, items in by_horizon.items()
+            }
+        return out
 
     def providers(self, stats: dict[str, Any]) -> dict[str, Any]:
         return compute_provider_reliability(stats)
@@ -360,17 +396,32 @@ class PerformanceService:
         return aggregate_operational_kpis(counters)
 
     async def calibration_samples(self) -> list[tuple[float, float]]:
+        grouped = await self.calibration_samples_by_horizon()
+        return list(grouped.get("_all") or [])
+
+    async def calibration_samples_by_horizon(self) -> dict[str, list[tuple[float, float]]]:
         result = await self.session.execute(select(AgentOutcomeEvaluation))
-        samples: list[tuple[float, float]] = []
+        books = ("scalp", "day", "short", "medium", "unknown")
+        by_horizon: dict[str, list[tuple[float, float]]] = {b: [] for b in books}
+        all_samples: list[tuple[float, float]] = []
         for row in result.scalars().all():
             if row.confidence is None:
                 continue
-            payload = row.payload or {}
+            payload = dict(row.payload or {})
             actual = payload.get("direction_correct")
             if actual is None:
-                actual = payload.get("actual_return", 0) > 0
-            samples.append((float(row.confidence), 1.0 if actual else 0.0))
-        return samples
+                ret = _actual_return_from_payload(payload)
+                if ret is None:
+                    continue
+                actual = ret > 0
+            sample = (float(row.confidence), 1.0 if actual else 0.0)
+            all_samples.append(sample)
+            hz = str(payload.get("universe_horizon") or "unknown").lower()
+            if hz not in by_horizon:
+                hz = "unknown"
+            by_horizon[hz].append(sample)
+        by_horizon["_all"] = all_samples
+        return by_horizon
 
     async def evaluate_decisions_batch(
         self,
@@ -435,7 +486,20 @@ class PerformanceService:
             for row in result.scalars().all():
                 if row.evaluated_at and not (period_start <= row.evaluated_at <= period_end):
                     continue
-                payload = row.payload or {}
+                payload = dict(row.payload or {})
+                actual = _actual_return_from_payload(payload)
+                if payload.get("direction_correct") is None and actual is not None:
+                    view = row.directional_view
+                    if view in {None, "ABSTAIN", "NEUTRAL"}:
+                        payload["direction_correct"] = None
+                    elif view == "BULLISH":
+                        payload["direction_correct"] = actual > 0
+                    elif view == "BEARISH":
+                        payload["direction_correct"] = actual < 0
+                if payload.get("actual_return") is None and actual is not None:
+                    payload["actual_return"] = actual
+                if "universe_horizon" not in payload:
+                    payload["universe_horizon"] = None
                 self.session.add(
                     AgentEvaluationRecord(
                         agent_name=row.agent_name,
@@ -456,3 +520,18 @@ class PerformanceService:
                 )
             await self.session.flush()
         return summary
+
+
+def _actual_return_from_payload(payload: dict[str, Any]) -> float | None:
+    """Prefer explicit actual_return; fall back to signed PnL as directional proxy."""
+    if payload.get("actual_return") is not None:
+        try:
+            return float(payload["actual_return"])
+        except (TypeError, ValueError):
+            pass
+    if payload.get("pnl") is not None:
+        try:
+            return float(payload["pnl"])
+        except (TypeError, ValueError):
+            return None
+    return None

@@ -24,6 +24,8 @@ class AgentPrediction:
     confidence: float | None  # 0-1
     actual_return: float | None
     abstained: bool = False
+    universe_horizon: str | None = None
+    agent_name: str | None = None
 
 
 def _dir_correct(pred: Direction, actual_return: float) -> bool | None:
@@ -173,4 +175,39 @@ def evaluate_agents(predictions: Sequence[AgentPrediction]) -> dict[str, Any]:
             status=MetricStatus.AVAILABLE if predictions else MetricStatus.INSUFFICIENT_DATA,
             method="agent_eval",
         ),
+        "prediction_count": len(predictions),
     }
+
+
+def _bucket_key(value: str | None, *, allowed: tuple[str, ...], fallback: str = "unknown") -> str:
+    key = (value or fallback).lower()
+    return key if key in allowed else fallback
+
+
+def group_predictions(
+    predictions: Sequence[AgentPrediction],
+    *,
+    by: str,
+) -> dict[str, list[AgentPrediction]]:
+    """Group predictions by universe_horizon or agent_name."""
+    if by == "universe_horizon":
+        books = ("scalp", "day", "short", "medium", "unknown")
+        buckets: dict[str, list[AgentPrediction]] = {b: [] for b in books}
+        for p in predictions:
+            buckets[_bucket_key(p.universe_horizon, allowed=books)].append(p)
+        return buckets
+    if by == "agent_name":
+        buckets = {}
+        for p in predictions:
+            key = (p.agent_name or "unknown").lower()
+            buckets.setdefault(key, []).append(p)
+        return buckets
+    raise ValueError(f"unsupported_group_by:{by}")
+
+
+def evaluate_agents_grouped(
+    predictions: Sequence[AgentPrediction],
+    *,
+    by: str,
+) -> dict[str, dict[str, Any]]:
+    return {key: evaluate_agents(items) for key, items in group_predictions(predictions, by=by).items()}

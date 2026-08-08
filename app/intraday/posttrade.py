@@ -64,23 +64,33 @@ class PostTradeReviewService:
 
         assessment_ids: list[str] = []
         for run in agent_runs or []:
+            view = run.get("directional_view")
+            actual_return = float(pnl) if pnl is not None else None
+            direction_correct = None
+            if actual_return is not None and view not in (None, "ABSTAIN", "NEUTRAL"):
+                if view == "BULLISH":
+                    direction_correct = actual_return > 0
+                elif view == "BEARISH":
+                    direction_correct = actual_return < 0
             ev = AgentOutcomeEvaluation(
                 id=uuid4(),
                 agent_name=str(run.get("agent_name") or "unknown"),
                 agent_run_id=UUID(str(run["agent_run_id"])) if run.get("agent_run_id") else None,
                 report_id=UUID(str(run["report_id"])) if run.get("report_id") else None,
                 prediction_horizon=run.get("prediction_horizon"),
-                directional_view=run.get("directional_view"),
+                directional_view=view,
                 confidence=run.get("confidence"),
                 key_claims=run.get("key_claims") or [],
                 invalidation_conditions=run.get("invalidation_conditions") or [],
                 actual_outcome_reference=str(review.id),
-                evaluated_at=None,  # Phase 7 scores
+                evaluated_at=datetime.now(UTC) if actual_return is not None else None,
                 payload={
                     "universe_horizon": universe_horizon,
                     "symbol": symbol.upper(),
                     "pnl": pnl,
                     "outcome": outcome,
+                    "actual_return": actual_return,
+                    "direction_correct": direction_correct,
                 },
             )
             self.session.add(ev)

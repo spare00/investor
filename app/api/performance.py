@@ -162,8 +162,13 @@ async def performance_calibration(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     svc = _svc(session)
-    samples = await svc.calibration_samples()
-    return svc.calibration(samples, min_sample_size=get_settings().min_calibration_sample_size)
+    grouped = await svc.calibration_samples_by_horizon()
+    samples = list(grouped.pop("_all", []))
+    return svc.calibration(
+        samples,
+        min_sample_size=get_settings().min_calibration_sample_size,
+        by_horizon=grouped,
+    )
 
 
 @router.get("/performance/providers")

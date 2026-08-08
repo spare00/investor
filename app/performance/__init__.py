@@ -4,6 +4,7 @@ from app.performance.agent_eval import (
     AgentPrediction,
     Direction,
     evaluate_agents,
+    evaluate_agents_grouped,
     score_devil_advocate,
     score_risk_manager,
 )
@@ -110,6 +111,7 @@ __all__ = [
     "daily_returns",
     "downside_deviation",
     "evaluate_agents",
+    "evaluate_agents_grouped",
     "evaluate_decision",
     "excess_return",
     "expected_calibration_error",

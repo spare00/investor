@@ -1758,6 +1758,27 @@
           kpiFromMetric("Calib. gap", agents.calibration?.calibration_gap, { digits: 3 }),
           kpiFromMetric("ECE", agents.calibration?.ece, { digits: 3, higherGood: false }),
         ])}
+        <div class="muted" style="margin:0.85rem 0 0.35rem">By horizon book</div>
+        ${(() => {
+          const books = agents.by_horizon || {};
+          const order = ["scalp", "day", "short", "medium", "unknown"];
+          const cards = order.filter((h) => books[h]).map((h) => {
+            const b = books[h];
+            const n = b.prediction_count ?? b.directional_accuracy?.observation_count ?? 0;
+            const wr = metricVal(b.directional_accuracy);
+            const st = metricStatus(b.directional_accuracy);
+            return kpiCard(
+              h,
+              `${fmtNum(n, 0)} · ${wr != null && st === "AVAILABLE" ? fmtPct(wr) : "—"} dir`,
+              {
+                sub: b.calibration?.ece && metricStatus(b.calibration.ece) === "AVAILABLE"
+                  ? `ECE ${fmtNum(metricVal(b.calibration.ece), 3)}`
+                  : (st && st !== "AVAILABLE" ? st.toLowerCase().replaceAll("_", " ") : "no scored preds"),
+              }
+            );
+          });
+          return cards.length ? kpiGrid(cards) : `<div class="muted">No agent outcomes yet</div>`;
+        })()}
         <div style="margin-top:0.75rem">${calibBars(buckets)}</div>
         ${rawBlock(agents)}`);
 
@@ -1765,8 +1786,25 @@
         ${kpiGrid([
           kpiFromMetric("Calib. gap", calibration.calibration_gap, { digits: 3 }),
           kpiFromMetric("ECE", calibration.ece, { digits: 3, higherGood: false }),
+          kpiCard("Samples", fmtNum(calibration.sample_count, 0)),
         ])}
-        <div class="muted" style="margin-top:0.5rem">Gap &gt; 0 → overconfident · ECE lower is better · min sample ${esc(String(calibration.min_sample_size || 30))}</div>
+        <div class="muted" style="margin:0.85rem 0 0.35rem">ECE by horizon · min sample ${esc(String(calibration.min_sample_size || 30))}</div>
+        ${(() => {
+          const books = calibration.by_horizon || {};
+          const order = ["scalp", "day", "short", "medium", "unknown"];
+          const cards = order.filter((h) => books[h]).map((h) => {
+            const b = books[h];
+            const ece = metricVal(b.ece);
+            const st = metricStatus(b.ece);
+            return kpiCard(
+              h,
+              ece != null && st === "AVAILABLE" ? fmtNum(ece, 3) : "—",
+              { sub: `${fmtNum(b.sample_count, 0)} samples` }
+            );
+          });
+          return cards.length ? kpiGrid(cards) : "";
+        })()}
+        <div class="muted" style="margin-top:0.5rem">Gap &gt; 0 → overconfident · ECE lower is better</div>
         ${rawBlock(calibration)}`);
 
       const evals = decisions.evaluations || [];

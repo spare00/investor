@@ -209,6 +209,49 @@ def test_agent_calibration_and_roles() -> None:
     assert da.value == pytest.approx(1.0)
 
 
+def test_agent_eval_by_horizon_and_agent() -> None:
+    from app.performance.agent_eval import evaluate_agents_grouped
+
+    preds = [
+        AgentPrediction(
+            predicted_direction=Direction.BULLISH,
+            confidence=0.8,
+            actual_return=0.02,
+            universe_horizon="scalp",
+            agent_name="cio",
+        ),
+        AgentPrediction(
+            predicted_direction=Direction.BULLISH,
+            confidence=0.7,
+            actual_return=-0.01,
+            universe_horizon="scalp",
+            agent_name="quant_strategist",
+        ),
+        AgentPrediction(
+            predicted_direction=Direction.BEARISH,
+            confidence=0.6,
+            actual_return=-0.02,
+            universe_horizon="medium",
+            agent_name="cio",
+        ),
+        AgentPrediction(
+            predicted_direction=Direction.BULLISH,
+            confidence=0.9,
+            actual_return=0.05,
+            universe_horizon=None,
+            agent_name="cio",
+        ),
+    ]
+    by_h = evaluate_agents_grouped(preds, by="universe_horizon")
+    assert by_h["scalp"]["prediction_count"] == 2
+    assert by_h["medium"]["prediction_count"] == 1
+    assert by_h["unknown"]["prediction_count"] == 1
+    assert by_h["day"]["prediction_count"] == 0
+    by_a = evaluate_agents_grouped(preds, by="agent_name")
+    assert by_a["cio"]["prediction_count"] == 3
+    assert by_a["quant_strategist"]["prediction_count"] == 1
+
+
 def test_calibration_min_sample() -> None:
     pairs = [(0.9, 1.0)] * 5
     ece = expected_calibration_error(pairs, min_sample_size=30)

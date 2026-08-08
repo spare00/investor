@@ -11,7 +11,7 @@
 |-----|----------------|-----|
 | Overview | `/dashboard/summary` | Session, portfolio, risk, CIO, positions/orders, jobs, compact universe + ops strip (hard/force/alerts) |
 | Performance | `/performance/*` | Portfolio / returns / risk / drawdown / trades |
-| Agents | `/performance/agents`, `/calibration`, `/decisions` | Attribution KPIs (needs scored BUY/SELL), calibration, decision evals |
+| Agents | `/performance/agents`, `/calibration`, `/decisions` | Attribution KPIs (needs scored BUY/SELL), horizon/agent slices, calibration, decision evals |
 | Operations | `/dashboard/summary` + `/operations/*` | Monitor, force-close, settlement/recon/overnight, recovery, alerts, LLM budget, universe horizons, ops KPIs |
 | Audit | `/status`, `/health`, `/decisions` | Status pills, risk caps, decision audit table |
 
