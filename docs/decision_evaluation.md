@@ -10,8 +10,14 @@ Score CIO/intraday decisions **after the fact** using only prices available at t
 
 ## API
 
-- `GET /performance/decisions` — read evaluations for period
+- `GET /performance/decisions` — evaluations for period plus `summary.by_horizon`
 - `POST /performance/evaluate-decisions` — batch evaluate + optional persist to `decision_evaluations`
+
+## Horizon attribution
+
+- Portfolio-level rows get a dominant `universe_horizon` from symbol plans
+- Symbol-level rows expand from `symbol_actions` with horizon from plan stamp / watchlist / CIO `time_horizon` map
+- `summary.by_horizon` reports directional hit-rate and avg quality per book
 
 ## Limitations
 

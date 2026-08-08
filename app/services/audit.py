@@ -84,6 +84,19 @@ class AuditService:
         )
 
         cio = analysis.cio
+        payload = cio.model_dump(mode="json")
+        try:
+            from app.universe.service import UniverseService
+
+            hz_map = await UniverseService(self.session).horizon_by_symbol()
+            for plan in payload.get("symbol_actions") or []:
+                if not isinstance(plan, dict):
+                    continue
+                sym = str(plan.get("symbol") or "").upper()
+                if sym and sym in hz_map:
+                    plan["universe_horizon"] = hz_map[sym]
+        except Exception:  # noqa: BLE001 — audit must not fail closed on horizon stamp
+            pass
         self.session.add(
             CIODecisionRecord(
                 id=uuid4(),
@@ -92,7 +105,7 @@ class AuditService:
                 decision_timestamp=cio.timestamp,
                 market_regime=cio.market_regime.value,
                 portfolio_action=cio.portfolio_action.value,
-                payload=cio.model_dump(mode="json"),
+                payload=payload,
                 risk_approval=cio.risk_approval,
                 risk_conditions=list(cio.risk_conditions),
                 reason_not_to_trade=cio.reason_not_to_trade,

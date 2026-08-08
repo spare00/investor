@@ -19,7 +19,12 @@ from app.performance.calibration import (
     calibration_gap,
     expected_calibration_error,
 )
-from app.performance.decision_eval import DecisionAction, evaluate_decision
+from app.performance.decision_eval import (
+    DecisionAction,
+    evaluate_decision,
+    summarize_decision_evaluations,
+    universe_horizon_for_plan,
+)
 from app.performance.drawdown import (
     DrawdownPeriod,
     DrawdownStatus,
@@ -113,6 +118,8 @@ __all__ = [
     "evaluate_agents",
     "evaluate_agents_grouped",
     "evaluate_decision",
+    "summarize_decision_evaluations",
+    "universe_horizon_for_plan",
     "excess_return",
     "expected_calibration_error",
     "expected_shortfall",

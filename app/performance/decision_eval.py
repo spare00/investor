@@ -39,6 +39,15 @@ _ACTION_ALIASES: dict[str, DecisionAction] = {
     "NO_ACTION": DecisionAction.NO_TRADE,
 }
 
+# Coarse CIO time_horizon → universe book when watchlist stamp missing.
+_CIO_TIME_TO_BOOK: dict[str, str] = {
+    "intraday": "day",
+    "swing": "short",
+    "position": "medium",
+}
+
+_BOOKS = ("scalp", "day", "short", "medium", "unknown")
+
 
 def normalize_decision_action(action: DecisionAction | str | None) -> DecisionAction:
     if isinstance(action, DecisionAction):
@@ -53,6 +62,27 @@ def normalize_decision_action(action: DecisionAction | str | None) -> DecisionAc
     except ValueError:
         # Unknown CIO action → treat as abstention rather than 500
         return DecisionAction.NO_TRADE
+
+
+def universe_horizon_for_plan(
+    plan: dict[str, Any] | None,
+    *,
+    watchlist_horizon: dict[str, str] | None = None,
+) -> str:
+    """Resolve scalp/day/short/medium/unknown for a symbol plan."""
+    plan = plan or {}
+    raw = plan.get("universe_horizon") or plan.get("horizon")
+    if raw:
+        key = str(raw).strip().lower()
+        if key in _BOOKS:
+            return key
+    sym = str(plan.get("symbol") or "").upper()
+    if sym and watchlist_horizon and sym in watchlist_horizon:
+        key = str(watchlist_horizon[sym]).strip().lower()
+        if key in _BOOKS:
+            return key
+    th = str(plan.get("time_horizon") or "").strip().lower()
+    return _CIO_TIME_TO_BOOK.get(th, "unknown")
 
 
 def evaluate_decision(
@@ -139,4 +169,73 @@ def evaluate_decision(
         "directional_correct": directional,
         "abstention_quality": abstention,
         "quality_score": metric_result("quality_score", score, method="decision_eval"),
+    }
+
+
+def _metric_value(metrics: dict[str, Any], key: str) -> float | None:
+    m = metrics.get(key)
+    if m is None:
+        return None
+    if isinstance(m, MetricResult):
+        if m.status != MetricStatus.AVAILABLE or m.value is None:
+            return None
+        return float(m.value)
+    if isinstance(m, dict):
+        if m.get("status") not in (None, "AVAILABLE", MetricStatus.AVAILABLE.value):
+            return None
+        v = m.get("value")
+        return float(v) if v is not None else None
+    try:
+        return float(m)
+    except (TypeError, ValueError):
+        return None
+
+
+def summarize_decision_evaluations(
+    evaluations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Aggregate directional hit-rate / quality by universe horizon book."""
+    books = {
+        b: {"count": 0, "scored": 0, "directional_hits": 0, "quality_sum": 0.0, "quality_n": 0}
+        for b in _BOOKS
+    }
+    firm = {"count": 0, "scored": 0, "directional_hits": 0, "quality_sum": 0.0, "quality_n": 0}
+
+    def _bump(bucket: dict[str, Any], metrics: dict[str, Any]) -> None:
+        bucket["count"] += 1
+        firm["count"] += 1
+        dir_v = _metric_value(metrics, "directional_correct")
+        if dir_v is not None:
+            bucket["scored"] += 1
+            firm["scored"] += 1
+            if dir_v >= 0.5:
+                bucket["directional_hits"] += 1
+                firm["directional_hits"] += 1
+        q = _metric_value(metrics, "quality_score")
+        if q is not None:
+            bucket["quality_sum"] += q
+            bucket["quality_n"] += 1
+            firm["quality_sum"] += q
+            firm["quality_n"] += 1
+
+    for item in evaluations:
+        hz = str(item.get("universe_horizon") or "unknown").lower()
+        if hz not in books:
+            hz = "unknown"
+        metrics = item.get("metrics") or {}
+        _bump(books[hz], metrics)
+
+    def _pack(bucket: dict[str, Any]) -> dict[str, Any]:
+        scored = int(bucket["scored"])
+        qn = int(bucket["quality_n"])
+        return {
+            "count": int(bucket["count"]),
+            "scored": scored,
+            "directional_hit_rate": (bucket["directional_hits"] / scored) if scored else None,
+            "avg_quality_score": (bucket["quality_sum"] / qn) if qn else None,
+        }
+
+    return {
+        "firm": _pack(firm),
+        "by_horizon": {b: _pack(books[b]) for b in _BOOKS},
     }

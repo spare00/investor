@@ -29,7 +29,12 @@ from app.performance.agent_eval import (
 )
 from app.performance.benchmarks import load_and_align
 from app.performance.calibration import calibration_gap, expected_calibration_error
-from app.performance.decision_eval import DecisionAction, evaluate_decision
+from app.performance.decision_eval import (
+    DecisionAction,
+    evaluate_decision,
+    summarize_decision_evaluations,
+    universe_horizon_for_plan,
+)
 from app.performance.drawdown import compute_drawdowns, current_drawdown, max_drawdown
 from app.performance.execution_quality import compute_execution_quality
 from app.performance.operational import aggregate_operational_kpis
@@ -431,6 +436,8 @@ class PerformanceService:
         limit: int = 50,
         persist: bool = False,
     ) -> dict[str, Any]:
+        from app.models import WatchlistSymbol
+
         result = await self.session.execute(
             select(CIODecisionRecord)
             .where(CIODecisionRecord.decision_timestamp >= period_start)
@@ -438,9 +445,26 @@ class PerformanceService:
             .limit(limit)
         )
         rows = list(result.scalars().all())
+        wl = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
+        watchlist_hz = {r.symbol.upper(): str(r.horizon) for r in wl if r.symbol}
+
         evaluations: list[dict[str, Any]] = []
         for row in rows:
-            payload = row.payload or {}
+            payload = dict(row.payload or {})
+            plans = list(payload.get("symbol_actions") or [])
+            plan_horizons = [
+                universe_horizon_for_plan(p if isinstance(p, dict) else {}, watchlist_horizon=watchlist_hz)
+                for p in plans
+                if isinstance(p, dict)
+            ]
+            # Portfolio-level row: dominant book among symbol plans, else unknown.
+            primary = "unknown"
+            if plan_horizons:
+                # Prefer most common non-unknown, else first
+                non_unk = [h for h in plan_horizons if h != "unknown"]
+                pick_from = non_unk or plan_horizons
+                primary = max(set(pick_from), key=pick_from.count)
+
             price = float(payload.get("reference_price") or payload.get("decision_price") or 0.0)
             horizon_price = payload.get("horizon_price")
             bench_ret = payload.get("benchmark_return")
@@ -453,10 +477,67 @@ class PerformanceService:
             item = {
                 "decision_id": str(row.decision_id),
                 "action": row.portfolio_action,
+                "symbol": None,
+                "scope": "portfolio",
+                "universe_horizon": primary,
+                "horizons": sorted(set(plan_horizons)) if plan_horizons else [],
                 "evaluated_at": row.decision_timestamp.isoformat(),
                 "metrics": _jsonable(ev),
             }
             evaluations.append(item)
+
+            # Per-symbol expansions when plans carry usable prices.
+            sym_prices = dict(payload.get("symbol_horizon_prices") or {})
+            for plan in plans:
+                if not isinstance(plan, dict):
+                    continue
+                sym = str(plan.get("symbol") or "").upper()
+                if not sym:
+                    continue
+                hz = universe_horizon_for_plan(plan, watchlist_horizon=watchlist_hz)
+                zone = plan.get("entry_zone") if isinstance(plan.get("entry_zone"), dict) else {}
+                try:
+                    plan_price = float(
+                        plan.get("decision_price")
+                        or (zone or {}).get("min")
+                        or (zone or {}).get("max")
+                        or price
+                        or 0.0
+                    )
+                except (TypeError, ValueError):
+                    plan_price = price
+                plan_hp = plan.get("horizon_price")
+                if plan_hp is None:
+                    plan_hp = sym_prices.get(sym)
+                plan_ev = evaluate_decision(
+                    decision_price=plan_price,
+                    action=plan.get("action"),
+                    horizon_price=float(plan_hp) if plan_hp is not None else None,
+                    benchmark_return=bench_ret,
+                )
+                sym_item = {
+                    "decision_id": str(row.decision_id),
+                    "action": plan.get("action"),
+                    "symbol": sym,
+                    "scope": "symbol",
+                    "universe_horizon": hz,
+                    "evaluated_at": row.decision_timestamp.isoformat(),
+                    "metrics": _jsonable(plan_ev),
+                }
+                evaluations.append(sym_item)
+                if persist:
+                    self.session.add(
+                        DecisionEvaluationRecord(
+                            decision_id=row.decision_id,
+                            decision_type="cio_symbol",
+                            action=str(plan.get("action") or row.portfolio_action),
+                            decision_price=plan_price,
+                            evaluated_at=datetime.now(UTC),
+                            payload=sym_item,
+                            status="AVAILABLE",
+                        )
+                    )
+
             if persist:
                 self.session.add(
                     DecisionEvaluationRecord(
@@ -471,7 +552,16 @@ class PerformanceService:
                 )
         if persist:
             await self.session.flush()
-        return {"count": len(evaluations), "evaluations": evaluations}
+        summary = summarize_decision_evaluations(evaluations)
+        return {
+            "count": len(evaluations),
+            "evaluations": evaluations,
+            "summary": summary,
+            "horizon_note": (
+                "universe_horizon from symbol_actions.universe_horizon / watchlist / "
+                "CIO time_horizon map (intraday→day, swing→short, position→medium)"
+            ),
+        }
 
     async def evaluate_agents_batch(
         self,

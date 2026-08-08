@@ -433,6 +433,7 @@
         <h2>Universe <button id="btnUniverse" type="button" style="float:right;font-size:0.8rem;padding:0.25rem 0.55rem" onclick="refreshUniverseNow()">Refresh</button></h2>
         <div id="universeMeta" class="muted">Loading…</div>
         <div id="universeBook" style="margin-top:0.5rem"></div>
+        <div id="universeOutcomes" style="margin-top:0.5rem"></div>
         <div id="universePaused" style="margin-top:0.5rem"></div>
         <div id="universeFocus" style="margin-top:0.5rem"></div>
         <div class="muted" style="margin-top:0.45rem">Horizon book → Operations tab</div>
@@ -1079,13 +1080,15 @@
       const byEl = document.getElementById("universeByHorizon");
       const bookEl = document.getElementById("universeBook");
       const pausedEl = document.getElementById("universePaused");
-      if (!meta || !focusEl || !byEl) return;
+      const outcomesEl = document.getElementById("universeOutcomes");
+      if (!meta || !focusEl) return;
       if (!u) {
         meta.textContent = "Universe unavailable";
         focusEl.innerHTML = "";
-        byEl.innerHTML = "";
+        if (byEl) byEl.innerHTML = "";
         if (bookEl) bookEl.innerHTML = "";
         if (pausedEl) pausedEl.innerHTML = "";
+        if (outcomesEl) outcomesEl.innerHTML = "";
         return;
       }
       const mode = u.mode || "—";
@@ -1143,6 +1146,39 @@
           return pill(`${label} ${open}/${max}`, b.full ? "bad" : open ? "good" : "");
         }).join(" ");
       }
+      if (outcomesEl) {
+        const oc = u.recent_outcomes || {};
+        const byH = oc.by_horizon || {};
+        const order = ["scalp", "day", "short", "medium"];
+        const bookPills = order.map((h) => {
+          const b = byH[h];
+          if (!b || !(b.trade_count > 0)) return pill(`${h} —`, "");
+          const wr = b.win_rate != null ? fmtPct(b.win_rate, 0) : "—";
+          const exp = b.expectancy != null ? fmtMoney(b.expectancy) : "—";
+          const tone = (b.expectancy != null && b.expectancy < 0) ? "bad"
+            : (b.expectancy != null && b.expectancy > 0) ? "good" : "";
+          return pill(`${h} ${b.trade_count}·${wr}·E ${exp}`, tone);
+        }).join(" ");
+        const neg = oc.negative_signals || [];
+        const negHtml = neg.length
+          ? `<div style="margin-top:0.35rem">${neg.slice(0, 8).map((s) =>
+              pill(`${s.symbol} ${s.horizon || ""} n=${s.trade_count}`, "bad")
+            ).join(" ")}</div>`
+          : "";
+        const src = oc.by_source || {};
+        const srcPills = Object.keys(src).length
+          ? Object.entries(src).map(([k, v]) =>
+              pill(`${k} ${v.trade_count || 0}`, (v.expectancy != null && v.expectancy < 0) ? "warn" : "")
+            ).join(" ")
+          : "";
+        outcomesEl.innerHTML =
+          `<div class="muted" style="margin-bottom:0.35rem">90d outcomes` +
+          (oc.symbols_with_trades != null ? ` · ${esc(String(oc.symbols_with_trades))} symbols` : "") +
+          `</div>` +
+          (bookPills || `<span class="muted">No closed trades yet</span>`) +
+          (srcPills ? `<div style="margin-top:0.35rem">${srcPills}</div>` : "") +
+          (negHtml ? `<div class="muted" style="margin-top:0.35rem">Negative signals</div>${negHtml}` : "");
+      }
       const focus = u.focus;
       if (focus && (focus.symbols || []).length) {
         focusEl.innerHTML =
@@ -1159,6 +1195,7 @@
       );
       const order = ["scalp", "day", "short", "medium"];
       const by = u.by_horizon || {};
+      if (byEl) {
       byEl.innerHTML = order.map((h) => {
         const pol = policies[h] || {};
         const label = pol.label_ko
@@ -1166,20 +1203,30 @@
           : h;
         const rows = (by[h] || []).filter((r) => (r.status || "active") === "active");
         const body = rows.length
-          ? rows.map((r) => `<tr>
+          ? rows.map((r) => {
+              const oc = r.last_outcome_stats || {};
+              const sig = oc.signal || "";
+              const sigPill = sig === "negative" ? pill("neg", "bad")
+                : sig === "positive" ? pill("pos", "good")
+                : sig === "insufficient" ? pill("n<", "")
+                : "";
+              return `<tr>
               <td class="mono">${esc(r.symbol)}</td>
               <td>${esc(r.priority ?? "—")}</td>
+              <td>${sigPill || "—"}</td>
               <td class="muted">${esc(r.thesis || r.notes || "")}</td>
-            </tr>`).join("")
+            </tr>`;
+            }).join("")
           : "";
         return `<div style="margin-bottom:0.85rem">
           <div style="margin-bottom:0.35rem">${pill(label, "")}
             ${pill(`max ${pol.max_positions ?? "—"}`, "")}
             ${pill(`${rows.length} active`, rows.length ? "good" : "")}
           </div>
-          ${dataTable(["Symbol", "Pri", "Thesis"], body, 3)}
+          ${dataTable(["Symbol", "Pri", "Out", "Thesis"], body, 4)}
         </div>`;
       }).join("");
+      }
     }
 
     function renderSettlement(data) {
@@ -1808,8 +1855,11 @@
         ${rawBlock(calibration)}`);
 
       const evals = decisions.evaluations || [];
+      const summary = decisions.summary || {};
+      const byH = summary.by_horizon || {};
+      const firm = summary.firm || {};
       const evalRows = evals.length
-        ? evals.slice(0, 25).map((e) => {
+        ? evals.slice(0, 40).map((e) => {
             const m = e.metrics || {};
             const dir = m.directional_correct;
             const dirVal = metricVal(dir);
@@ -1821,6 +1871,8 @@
                 : pill(dirSt === "UNAVAILABLE" ? "n/a" : "—", "");
             return `<tr>
               <td class="mono">${esc(fmtWhen(e.evaluated_at))}</td>
+              <td>${esc(e.universe_horizon || "—")}</td>
+              <td>${esc(e.symbol || (e.scope === "portfolio" ? "book" : "—"))}</td>
               <td>${esc(e.action || m.action || m.raw_action || "—")}</td>
               <td>${okPill}</td>
               <td>${esc(fmtPct(metricVal(m.realized_return)))}</td>
@@ -1829,9 +1881,26 @@
             </tr>`;
           }).join("")
         : "";
+      const hzCards = ["scalp", "day", "short", "medium", "unknown"].filter((h) => byH[h]).map((h) => {
+        const b = byH[h];
+        const hit = b.directional_hit_rate;
+        return kpiCard(
+          h,
+          hit != null ? fmtPct(hit) : "—",
+          { sub: `${fmtNum(b.scored, 0)}/${fmtNum(b.count, 0)} scored` }
+        );
+      });
       renderMount("decisionEval", `
-        <div class="muted" style="margin-bottom:0.5rem">${esc(fmtNum(decisions.count ?? evals.length, 0))} evaluations · Dir/Return stay empty for abstentions until a horizon resolves</div>
-        ${dataTable(["When", "Action", "Dir.", "Return", "vs Bench", "Quality"], evalRows)}
+        ${kpiGrid([
+          kpiCard("Evals", fmtNum(decisions.count ?? evals.length, 0)),
+          kpiCard("Firm hit", firm.directional_hit_rate != null ? fmtPct(firm.directional_hit_rate) : "—",
+            { sub: `${fmtNum(firm.scored, 0)} scored` }),
+          kpiCard("Avg quality", firm.avg_quality_score != null ? fmtNum(firm.avg_quality_score, 3) : "—"),
+        ])}
+        <div class="muted" style="margin:0.85rem 0 0.35rem">Hit rate by horizon</div>
+        ${hzCards.length ? kpiGrid(hzCards) : ""}
+        <div class="muted" style="margin:0.65rem 0 0.5rem">Dir/Return stay empty for abstentions until a horizon price resolves</div>
+        ${dataTable(["When", "Book", "Sym", "Action", "Dir.", "Return", "vs Bench", "Quality"], evalRows)}
         ${rawBlock(decisions)}`);
     }
 

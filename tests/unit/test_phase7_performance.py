@@ -185,6 +185,35 @@ def test_decision_eval_buy_and_no_trade() -> None:
     assert "abstention_quality" in nt
 
 
+def test_decision_horizon_summary() -> None:
+    from app.performance.decision_eval import (
+        summarize_decision_evaluations,
+        universe_horizon_for_plan,
+    )
+
+    assert universe_horizon_for_plan({"symbol": "MSFT", "time_horizon": "position"}) == "medium"
+    assert universe_horizon_for_plan(
+        {"symbol": "QQQ"}, watchlist_horizon={"QQQ": "scalp"}
+    ) == "scalp"
+    assert universe_horizon_for_plan({"universe_horizon": "day"}) == "day"
+
+    buy = evaluate_decision(decision_price=100.0, action="BUY", horizon_price=110.0)
+    miss = evaluate_decision(decision_price=100.0, action="BUY", horizon_price=90.0)
+    evals = [
+        {"universe_horizon": "scalp", "metrics": buy},
+        {"universe_horizon": "scalp", "metrics": miss},
+        {"universe_horizon": "medium", "metrics": buy},
+        {"universe_horizon": "unknown", "metrics": evaluate_decision(
+            decision_price=100.0, action="HOLD", horizon_price=None
+        )},
+    ]
+    summary = summarize_decision_evaluations(evals)
+    assert summary["by_horizon"]["scalp"]["scored"] == 2
+    assert summary["by_horizon"]["scalp"]["directional_hit_rate"] == pytest.approx(0.5)
+    assert summary["by_horizon"]["medium"]["directional_hit_rate"] == pytest.approx(1.0)
+    assert summary["firm"]["count"] == 4
+
+
 def test_agent_calibration_and_roles() -> None:
     preds = [
         AgentPrediction(predicted_direction=Direction.BULLISH, confidence=0.8, actual_return=0.02, abstained=False),
