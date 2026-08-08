@@ -23,7 +23,7 @@ from app.intraday.posttrade import PostTradeReviewService
 from app.intraday.recovery import IntradayRecoveryService
 from app.intraday.risk import DynamicRiskRevalidator
 from app.intraday.settlement import SettlementService
-from app.models import OrderIntent, PortfolioSnapshot, PositionLifecycle, PositionSnapshotRecord
+from app.models import OrderIntent, PositionLifecycle, PositionSnapshotRecord
 
 
 class IntradayService:
@@ -73,19 +73,12 @@ class IntradayService:
         if not self.settings.enable_intraday_monitoring:
             return [{"skipped": True, "reason": "enable_intraday_monitoring_false"}]
         prices = prices or {}
-        equity = float(self.settings.starting_cash)
-        daily_pnl_pct = 0.0
-        drawdown_pct = 0.0
+        from app.execution.position_manager import PositionManager
 
-        snap = (
-            await self.session.execute(
-                select(PortfolioSnapshot).order_by(PortfolioSnapshot.as_of.desc()).limit(1)
-            )
-        ).scalar_one_or_none()
-        if snap is not None:
-            equity = float(snap.equity or equity)
-            daily_pnl_pct = float(snap.daily_pnl_pct or 0.0)
-            drawdown_pct = float(snap.drawdown_pct or 0.0)
+        port = await PositionManager(self.session, settings=self.settings).portfolio_state_input()
+        equity = float(port.equity or self.settings.starting_cash)
+        daily_pnl_pct = float(port.daily_pnl_pct or 0.0)
+        drawdown_pct = float(port.drawdown_pct or 0.0)
         mode = resolve_mode(
             self.settings, emergency=self.controls.snapshot().state.value == "emergency_stop"
         )

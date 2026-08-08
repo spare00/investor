@@ -20,7 +20,6 @@ from app.core.logging import get_logger
 from app.execution.safety_controls import TradingControls, trading_controls
 from app.market.calendar import MarketCalendarService
 from app.models import DailyWorkflowRun, ScheduledJobRecord, WorkflowStateTransition
-from app.schemas.risk_manager import PortfolioStateInput
 from app.ingestion.pipeline import DataCollectionPipeline
 from app.services.collection import DataCollectionService
 from app.services.llm import FakeLLMProvider, get_llm_client
@@ -198,13 +197,14 @@ class DailyWorkflowService:
                 meta["data_fail_closed_reasons"] = data.fail_closed_reasons
                 meta["collection_run_id"] = str(data.collection_run_id)
                 run.metadata_json = meta
-            portfolio = PortfolioStateInput(
-                as_of=now,
-                equity=self.settings.starting_cash,
-                cash=self.settings.starting_cash,
-                cash_pct=100.0,
-                gross_exposure_pct=0.0,
-            )
+            from app.execution.position_manager import PositionManager
+
+            try:
+                portfolio, portfolio_note = await PositionManager(
+                    self.session, settings=self.settings
+                ).load_for_risk()
+            except Exception as exc:  # noqa: BLE001
+                raise DailyWorkflowError(f"portfolio_sync_failed:{exc}") from exc
             analysis = await AgentPipeline(settings=self.settings, llm=llm).run_from_collection(
                 collection,
                 portfolio=portfolio,
@@ -243,6 +243,10 @@ class DailyWorkflowService:
                     "intent_count": execution.get("intent_count", 0),
                     "intent_ids": execution.get("intent_ids", []),
                     "execution_notes": execution.get("notes", []),
+                    "portfolio_source": portfolio_note,
+                    "portfolio_equity": portfolio.equity,
+                    "portfolio_cash": portfolio.cash,
+                    "portfolio_positions": len(portfolio.positions),
                     "trading_actor": "cio_bottom_up",
                     "collection_run_id": str(data.collection_run_id),
                     "data_quality_summary": data.quality_summary,

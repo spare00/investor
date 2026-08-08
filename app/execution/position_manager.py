@@ -228,6 +228,44 @@ class PositionManager:
             drawdown_pct=snap.drawdown_pct,
         )
 
+    async def load_for_risk(
+        self,
+        *,
+        require_broker: bool | None = None,
+    ) -> tuple[PortfolioStateInput, str]:
+        """Load portfolio for risk/agents — prefer broker sync when connected.
+
+        When paper orders or automation are armed, broker sync failure fails closed
+        (raises) instead of silently sizing against ``starting_cash``.
+        """
+        if require_broker is None:
+            require_broker = bool(
+                self.settings.enable_broker_orders or self.settings.enable_automated_execution
+            )
+        want_sync = bool(
+            self.settings.enable_broker_connection
+            or self.settings.enable_broker_orders
+            or require_broker
+        )
+        if want_sync:
+            try:
+                await self.sync_from_broker()
+                return await self.portfolio_state_input(), "portfolio_from_broker"
+            except Exception as exc:  # noqa: BLE001
+                if require_broker:
+                    logger.error("portfolio_sync_required_failed", error=str(exc)[:240])
+                    raise
+                logger.warning("portfolio_sync_fallback", error=str(exc)[:240])
+                return await self.portfolio_state_input(), "portfolio_db_fallback"
+
+        state = await self.portfolio_state_input()
+        note = (
+            "portfolio_from_db"
+            if state.equity != self.settings.starting_cash or state.positions
+            else "portfolio_starting_cash"
+        )
+        return state, note
+
     def to_risk_view(self, state: PortfolioStateInput) -> PortfolioRiskView:
         return PortfolioRiskView(
             equity=state.equity,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -13,7 +12,6 @@ from app.agents.pipeline import AgentPipeline
 from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.core.logging import get_logger
-from app.schemas.risk_manager import PortfolioStateInput
 from app.services.collection import DataCollectionService
 from app.services.llm import get_llm_client
 
@@ -92,13 +90,13 @@ async def _run_analysis(
         workflow_id=workflow_id
     )
     llm = get_llm_client(settings)
-    portfolio = PortfolioStateInput(
-        as_of=datetime.now(UTC),
-        equity=settings.starting_cash,
-        cash=settings.starting_cash,
-        cash_pct=100.0,
-        gross_exposure_pct=0.0,
-    )
+    from app.execution.position_manager import PositionManager
+
+    try:
+        portfolio, portfolio_note = await PositionManager(session, settings=settings).load_for_risk()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("analysis_portfolio_failed", workflow_id=str(workflow_id))
+        raise HTTPException(status_code=503, detail=f"portfolio_sync_failed:{exc}") from exc
     try:
         analysis = await AgentPipeline(settings=settings, llm=llm).run_from_collection(
             collection,
@@ -112,4 +110,5 @@ async def _run_analysis(
 
     payload = _analysis_payload(analysis, collection, broker_orders=False)
     payload["idempotency_key"] = idempotency_key
+    payload["portfolio_source"] = portfolio_note
     return payload

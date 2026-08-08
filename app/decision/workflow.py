@@ -244,9 +244,8 @@ class WorkflowService:
         if port is None:
             try:
                 pm = PositionManager(self.session, settings=self.settings)
-                await pm.sync_from_broker()
-                port = await pm.portfolio_state_input()
-                notes.append("portfolio_from_broker")
+                port, src = await pm.load_for_risk(require_broker=False)
+                notes.append(src)
             except Exception:  # noqa: BLE001
                 port = self._default_portfolio(datetime.now(UTC))
                 notes.append("portfolio_default_fallback")

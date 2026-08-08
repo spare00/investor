@@ -52,6 +52,14 @@ async def _run_analysis(*, fixture: Path | None, use_fake_llm: bool, real_data: 
             cash_pct=100.0,
             gross_exposure_pct=0.0,
         )
+        try:
+            from app.execution.position_manager import PositionManager
+
+            portfolio, _note = await PositionManager(session, settings=settings).load_for_risk(
+                require_broker=False
+            )
+        except Exception:  # noqa: BLE001
+            pass
         analysis = await pipeline.run_from_collection(
             collection,
             portfolio=portfolio,
