@@ -36,7 +36,13 @@ from app.schemas.risk_manager import (
 from app.services.collection import CollectionBundle
 from app.services.llm import LLMClient
 from app.market.live_prices import assess_collection_price_integrity
-from app.universe.horizons import align_cio_horizons
+from app.universe.horizons import (
+    align_cio_horizons,
+    enrich_watchlist_context,
+    policy_by_symbol,
+    suggested_long_stop,
+    widen_long_stop_if_too_tight,
+)
 
 logger = get_logger(__name__)
 
@@ -108,10 +114,14 @@ def enrich_cio_entry_stops(
     quant: QuantStrategistOutput,
     *,
     latest_prices: dict[str, float] | None = None,
+    watchlist_context: list[dict] | None = None,
+    atr_by_symbol: dict[str, float] | None = None,
 ) -> CIODecision:
-    """Fill missing stops/entry zones so execution can size and place entries."""
+    """Fill missing stops/entry zones with horizon-aware widths when possible."""
     prices = {k.upper(): float(v) for k, v in (latest_prices or {}).items() if v}
+    atrs = {k.upper(): float(v) for k, v in (atr_by_symbol or {}).items() if v and float(v) > 0}
     by_sym = {str(v.symbol).upper(): v for v in (quant.symbol_views or []) if v.symbol}
+    by_pol = policy_by_symbol(watchlist_context)
     updated: list[SymbolActionPlan] = []
     changed = False
     for plan in decision.symbol_actions:
@@ -120,23 +130,44 @@ def enrich_cio_entry_stops(
             continue
         sym = plan.symbol.upper()
         view = by_sym.get(sym)
+        pol = by_pol.get(sym)
         patch: dict = {}
         if plan.entry_zone is None and view and view.entry_zone is not None:
             patch["entry_zone"] = view.entry_zone
-        if plan.stop_loss is None:
-            stop = float(view.stop_or_invalidation) if view and view.stop_or_invalidation else None
-            zone = patch.get("entry_zone") or plan.entry_zone
-            if stop is None and zone is not None:
-                try:
-                    stop = float(zone.min) * 0.99
-                except (TypeError, ValueError):
-                    stop = None
-            if stop is None and sym in prices:
-                stop = round(prices[sym] * 0.98, 4)
-            if stop is not None:
-                patch["stop_loss"] = stop
-                if not plan.invalidation or plan.invalidation.strip() in {"", "n/a"}:
-                    patch["invalidation"] = f"Stop {stop}"
+        zone = patch.get("entry_zone") or plan.entry_zone
+        ref: float | None = None
+        if zone is not None:
+            try:
+                ref = float(zone.min)
+            except (TypeError, ValueError):
+                ref = None
+        if ref is None and sym in prices:
+            ref = prices[sym]
+        atr = atrs.get(sym)
+
+        stop: float | None = None
+        if plan.stop_loss is not None:
+            stop = float(plan.stop_loss)
+        elif view and view.stop_or_invalidation:
+            stop = float(view.stop_or_invalidation)
+        if stop is None and ref is not None:
+            stop = suggested_long_stop(reference=ref, atr=atr, policy=pol)
+        if stop is not None and ref is not None and pol is not None:
+            stop = widen_long_stop_if_too_tight(stop=stop, reference=ref, policy=pol)
+        if plan.stop_loss is None and stop is not None:
+            patch["stop_loss"] = stop
+            if not plan.invalidation or plan.invalidation.strip() in {"", "n/a"}:
+                book = pol.horizon.value if pol else "default"
+                patch["invalidation"] = f"Stop {stop} ({book} book)"
+        elif (
+            plan.stop_loss is not None
+            and stop is not None
+            and pol is not None
+            and ref is not None
+            and float(plan.stop_loss) != stop
+        ):
+            # Widen too-tight LLM/quant stops to book minimum distance.
+            patch["stop_loss"] = stop
         if patch:
             changed = True
             updated.append(plan.model_copy(update=patch))
@@ -194,7 +225,7 @@ class AgentPipeline:
         wf = workflow_id or collection.workflow_id or uuid4()
         as_of = collection.collected_at
         entry_list = list(entry_universe) if entry_universe is not None else list(self.settings.trade_allowlist)
-        watch_ctx = list(watchlist_context or [])
+        watch_ctx = enrich_watchlist_context(watchlist_context)
 
         mi_in = MarketIntelligenceInput(
             as_of=as_of,
@@ -214,6 +245,7 @@ class AgentPipeline:
             sec_filings=collection.filings,
             portfolio_symbols=[p.symbol for p in portfolio.positions],
             allowlist=entry_list,
+            watchlist=watch_ctx,
             trace=TraceMetadata(source_data_timestamp=as_of),
         )
         mi_out = await self.mi.run(mi_in)
@@ -278,6 +310,7 @@ class AgentPipeline:
                 "themes": mi_out.top_market_themes,
                 "quality": mi_out.data_quality_score,
             },
+            watchlist=watch_ctx,
             trace=TraceMetadata(source_data_timestamp=as_of),
         )
 
@@ -306,6 +339,7 @@ class AgentPipeline:
             price_feed_live=feed_live,
             price_providers=price_providers,
             price_integrity_notes=price_notes,
+            watchlist=watch_ctx,
             trace=TraceMetadata(source_data_timestamp=as_of),
         )
         risk_out = await self.risk.run(risk_in)
@@ -344,6 +378,7 @@ class AgentPipeline:
                 quant=quant_out,
                 risk=risk_out,
                 consensus_lean=macro_out.market_regime.value,
+                watchlist=watch_ctx,
                 trace=TraceMetadata(source_data_timestamp=as_of),
             )
         )
@@ -364,8 +399,19 @@ class AgentPipeline:
             )
         )
         prices = {m.symbol.upper(): float(m.last) for m in collection.markets if m.last}
-        cio_out = enrich_cio_entry_stops(cio_out, quant_out, latest_prices=prices)
+        atrs = {
+            m.symbol.upper(): float(m.atr_14)
+            for m in collection.markets
+            if m.atr_14 is not None and float(m.atr_14) > 0
+        }
         cio_out = align_cio_horizons(cio_out, watch_ctx)
+        cio_out = enrich_cio_entry_stops(
+            cio_out,
+            quant_out,
+            latest_prices=prices,
+            watchlist_context=watch_ctx,
+            atr_by_symbol=atrs,
+        )
 
         logger.info(
             "agent_pipeline_complete",

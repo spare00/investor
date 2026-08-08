@@ -35,6 +35,44 @@ def test_planned_interval_follows_tightest_passed_horizon() -> None:
     assert planned_intraday_interval_minutes(["medium"], settings) == 60
 
 
+def test_horizon_stop_and_overnight_policy() -> None:
+    from app.universe.horizons import (
+        closing_policy_for_horizon,
+        enrich_watchlist_context,
+        news_lookback_minutes_for_symbols,
+        overnight_allowed_for_horizon,
+        policy_for,
+        suggested_long_stop,
+    )
+
+    assert overnight_allowed_for_horizon("scalp") is False
+    assert overnight_allowed_for_horizon("day") is False
+    assert overnight_allowed_for_horizon("short") is True
+    assert overnight_allowed_for_horizon("medium") is True
+    assert policy_for("short").overnight_event_strict is True
+    assert policy_for("medium").overnight_event_strict is False
+    assert closing_policy_for_horizon("day") == "CLOSE_INTRADAY_ONLY"
+    assert closing_policy_for_horizon("short") == "OVERNIGHT_WITH_EVENT_REVIEW"
+    assert closing_policy_for_horizon("medium") == "ALLOW_OVERNIGHT"
+
+    scalp_stop = suggested_long_stop(
+        reference=100.0, atr=1.0, policy=policy_for("scalp")
+    )
+    medium_stop = suggested_long_stop(
+        reference=100.0, atr=1.0, policy=policy_for("medium")
+    )
+    assert scalp_stop == 99.0
+    assert medium_stop == 96.5
+    assert medium_stop < scalp_stop
+
+    ctx = enrich_watchlist_context([{"symbol": "qqq", "horizon": "scalp"}])
+    assert ctx[0]["stop_atr_mult"] == 1.0
+    assert ctx[0]["overnight_default"] is False
+    assert news_lookback_minutes_for_symbols(
+        {"QQQ": "scalp", "MSFT": "medium"}, default_minutes=90
+    ) == 360
+
+
 def test_align_cio_horizons_from_watchlist() -> None:
     from uuid import uuid4
 

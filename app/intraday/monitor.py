@@ -356,12 +356,6 @@ class PositionMonitor:
 
     async def _overnight_allowed(self, symbol: str) -> bool:
         """Scalp/day books default to flatten; short/medium may hold overnight."""
-        from app.universe.horizons import UniverseHorizon
+        from app.universe.horizons import overnight_allowed_for_horizon
 
-        horizon = await self._watchlist_horizon(symbol)
-        if horizon is None:
-            return False
-        try:
-            return UniverseHorizon(horizon) in {UniverseHorizon.SHORT, UniverseHorizon.MEDIUM}
-        except ValueError:
-            return False
+        return overnight_allowed_for_horizon(await self._watchlist_horizon(symbol))

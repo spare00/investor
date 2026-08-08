@@ -68,6 +68,10 @@ class RiskManagerInput(StrictModel):
     price_feed_live: bool = True
     price_providers: list[str] = Field(default_factory=list)
     price_integrity_notes: list[str] = Field(default_factory=list)
+    watchlist: list[dict] = Field(
+        default_factory=list,
+        description="Active watchlist rows with horizon/risk multipliers",
+    )
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 
 

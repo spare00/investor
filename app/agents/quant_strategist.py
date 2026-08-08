@@ -106,13 +106,19 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
     def build_user_prompt(self, payload: QuantStrategistInput) -> str:
         return (
             "Produce QuantStrategistOutput JSON from these bars. "
-            "Probabilities must be rule-based.\n\n"
+            "Probabilities must be rule-based. "
+            "When watchlist horizon/stop_notes are present, size "
+            "stop_or_invalidation to that book's ATR/pct policy "
+            "(scalp tight, medium wide) — do not use a flat 1–2% for all names.\n\n"
             f"{dump_for_prompt(payload)}"
         )
 
     def fallback_output(
         self, payload: QuantStrategistInput, *, reason: str
     ) -> QuantStrategistOutput:
+        from app.universe.horizons import policy_by_symbol, suggested_long_stop
+
+        by_pol = policy_by_symbol(payload.watchlist)
         bars = payload.symbol_bars or payload.index_bars
         views: list[SymbolQuantView] = []
         for bar in bars:
@@ -121,9 +127,12 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
             vol = _volatility(bar, payload.vix)
             liq = _liquidity(bar)
             prob, basis = _probability(trend, mom)
-            stop = None
-            if bar.atr_14:
-                stop = round(bar.last - 1.5 * bar.atr_14, 4)
+            pol = by_pol.get(bar.symbol.upper())
+            stop = suggested_long_stop(
+                reference=float(bar.last),
+                atr=float(bar.atr_14) if bar.atr_14 else None,
+                policy=pol,
+            )
             views.append(
                 SymbolQuantView(
                     symbol=bar.symbol.upper(),

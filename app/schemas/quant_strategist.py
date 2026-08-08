@@ -46,6 +46,10 @@ class QuantStrategistInput(StrictModel):
     vix: float | None = None
     advance_decline: float | None = None
     market_intelligence_summary: dict[str, object] | None = None
+    watchlist: list[dict] = Field(
+        default_factory=list,
+        description="Active watchlist rows with horizon/stop policy for per-symbol views",
+    )
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 
 

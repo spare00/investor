@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -93,7 +93,16 @@ class DataCollectionService:
         bundle = CollectionBundle(workflow_id=wf, collected_at=now)
 
         try:
-            raw_news = await get_news_provider().fetch_news(symbols=universe, limit=100)
+            from app.universe.horizons import news_lookback_minutes_for_symbols
+
+            lookback = news_lookback_minutes_for_symbols(
+                horizons,
+                default_minutes=int(self.settings.intraday_news_lookback_minutes),
+            )
+            since = now - timedelta(minutes=lookback)
+            raw_news = await get_news_provider().fetch_news(
+                symbols=universe, limit=100, since=since
+            )
             seen: set[str] = set()
             for raw in raw_news:
                 norm = normalize_news_item(raw, collected_at=now, now=now, seen_hashes=seen)

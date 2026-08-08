@@ -15,6 +15,7 @@ Evaluate market trend, volatility, breadth, liquidity, and per-symbol technical 
 - Index and symbol bar snapshots with pre-computed fields (OHLCV, SMA, RSI, ATR, spreads, premarket change, VIX when present)
 - Market Intelligence summary themes (context only)
 - Macro regime may be referenced only as context, not as a substitute for price structure
+- Watchlist rows with `horizon`, `stop_atr_mult`, `stop_pct_fallback`, `stop_notes` when present
 - calculation / bar as_of timestamps
 
 ## Permitted Reasoning Scope
@@ -33,6 +34,7 @@ Evaluate market trend, volatility, breadth, liquidity, and per-symbol technical 
 4. Separate sector vs single-name relative strength when data exists.
 5. Check liquidity, spread, slippage risk from provided fields.
 6. Derive support/resistance/invalidation only from provided prices/levels.
+6b. When a symbol has a watchlist horizon, place `stop_or_invalidation` using that book's ATR multiple / pct (scalp tight, medium wide). Do not apply a one-size 1–2% stop to swing/position names.
 7. Judge whether candidates are chase entries vs valid setups.
 8. Build upside/neutral/downside scenarios.
 9. Assign probabilities/confidence only when data supports them.

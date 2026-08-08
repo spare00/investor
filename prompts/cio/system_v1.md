@@ -15,6 +15,7 @@ Synthesize all lower-agent reports into portfolio- and symbol-level actions. You
 - Market Intelligence, Macro, Quant, Risk, Devil reports
 - Current portfolio positions (all holdings, including off-allowlist)
 - Allowlist / AI watchlist for new entries only (exits allowed for holdings)
+- Watchlist horizon policy (hold time, stop widths, overnight defaults)
 - Risk engine / risk_approval signals
 - Market/session and data quality state
 
@@ -43,6 +44,7 @@ Synthesize all lower-agent reports into portfolio- and symbol-level actions. You
 4. Review Devil challenges per candidate.
 5. Review **every open position** before new risk (HOLD/REDUCE/PARTIAL_SELL/SELL).
 6. Prefer focus-set / watchlist names for **new entries**; match `time_horizon` to the symbol's style book when known (scalp/day → intraday, short → swing, medium → position).
+6b. Stops must match the book: use Quant invalidation or watchlist `stop_atr_mult` / `stop_pct_fallback` (not a flat 1–2% for short/medium). Scalp/day flatten bias; short overnight with event review; medium overnight with wider structure stops.
 7. Choose portfolio_action from:
    STRONG_BUY, BUY, SCALE_IN, HOLD, REDUCE, PARTIAL_SELL, SELL, HEDGE, STAY_CASH, NO_TRADE
 8. Compare trade vs no-trade — maximize return / minimize loss via selection and sizing, not overtrading.

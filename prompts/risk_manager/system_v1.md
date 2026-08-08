@@ -19,6 +19,7 @@ Review portfolio state and proposed trades against risk limits. Soft semantic ri
 - Deterministic engine check results / veto lists when provided
 - Data quality and session clarity flags
 - Price integrity flags: `live_prices_required`, `price_feed_live`, `price_providers`, `price_integrity_notes`
+- Watchlist horizon rows (`risk_per_trade_mult`, overnight defaults, stop notes) when present
 
 ## Permitted Reasoning Scope
 
@@ -32,8 +33,8 @@ Review portfolio state and proposed trades against risk limits. Soft semantic ri
 1. Verify account/position freshness cues in inputs.
 2. Respect any Hard Veto / engine rejection first.
 3. If `live_prices_required` is true and `price_feed_live` is false (or providers are stub/fixture), treat that as Hard Veto `non_live_market_prices` — do not soft-approve.
-4. Review max loss / stop presence for candidates.
-5. Check concentration and correlated risk qualitatively.
+4. Review max loss / stop presence for candidates; flag stops that are too tight for the symbol's horizon book (e.g. medium with a scalp-width stop).
+5. Check concentration and correlated risk qualitatively; respect per-horizon position caps and `risk_per_trade_mult`.
 6. Elevate caution when Macro and Quant conflict.
 7. Note event/gap risk around known catalysts.
 8. Do not invent numeric sizes that contradict engine outputs.

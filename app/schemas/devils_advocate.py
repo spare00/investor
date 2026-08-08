@@ -37,6 +37,10 @@ class DevilsAdvocateInput(StrictModel):
     quant: QuantStrategistOutput | None = None
     risk: RiskManagerOutput | None = None
     consensus_lean: str | None = None
+    watchlist: list[dict] = Field(
+        default_factory=list,
+        description="Active watchlist rows with horizon for style-aware challenges",
+    )
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 
 

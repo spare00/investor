@@ -301,18 +301,43 @@ class ClosingService:
             status = "OVERNIGHT_APPROVED"
             reasons: list[str] = []
             hz = horizons.get(lc.symbol.upper())
+            event_strict = False
+            if hz:
+                try:
+                    from app.universe.horizons import policy_for
+
+                    event_strict = bool(policy_for(hz).overnight_event_strict)
+                except ValueError:
+                    event_strict = False
             if not lc.overnight_allowed or hz in {"scalp", "day"}:
                 status = "CLOSE_BEFORE_MARKET_CLOSE"
                 reasons.append("overnight_not_allowed" if not lc.overnight_allowed else f"horizon_{hz}")
+            # Short book: overnight ok in quiet tape, but events/holidays → flatten preference.
+            # Medium book: review/reduce rather than automatic flatten.
             if earnings or economic_event:
-                status = "MANUAL_REVIEW_REQUIRED" if status == "OVERNIGHT_APPROVED" else status
                 reasons.append("event_risk")
+                if status.startswith("OVERNIGHT"):
+                    status = (
+                        "CLOSE_BEFORE_MARKET_CLOSE"
+                        if event_strict or hz == "short"
+                        else "MANUAL_REVIEW_REQUIRED"
+                    )
             if gap_risk_high:
-                status = "OVERNIGHT_APPROVED_WITH_REDUCTION" if status.startswith("OVERNIGHT") else status
                 reasons.append("gap_risk")
+                if status.startswith("OVERNIGHT"):
+                    status = (
+                        "CLOSE_BEFORE_MARKET_CLOSE"
+                        if event_strict and hz == "short"
+                        else "OVERNIGHT_APPROVED_WITH_REDUCTION"
+                    )
             if next_session_holiday:
-                status = "MANUAL_REVIEW_REQUIRED"
                 reasons.append("holiday_gap")
+                if status.startswith("OVERNIGHT") or status == "OVERNIGHT_APPROVED_WITH_REDUCTION":
+                    status = (
+                        "CLOSE_BEFORE_MARKET_CLOSE"
+                        if event_strict or hz == "short"
+                        else "MANUAL_REVIEW_REQUIRED"
+                    )
             if not self.settings.overnight_review_required:
                 status = "NO_DATA"
             valid_for = datetime.now(UTC).date().isoformat()

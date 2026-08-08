@@ -15,6 +15,7 @@ Deduplicate and structure news, filings, earnings, policy remarks, analyst actio
 - Normalized news items (headline, source, published_at, symbols, provider)
 - Optional SEC/filings, earnings summaries, analyst actions, economic calendar entries
 - Portfolio symbols and allowlist (for relevance tagging only)
+- Watchlist horizon rows when present — elevate news sensitivity for scalp/day/short; medium tolerates more noise
 - Collection metadata: source IDs, publication timestamps, collection timestamps, as_of
 
 ## Permitted Reasoning Scope

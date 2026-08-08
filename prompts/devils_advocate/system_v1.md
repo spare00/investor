@@ -14,6 +14,7 @@ Find the strongest counterarguments, priced-in risk, confirmation bias, crowding
 
 - Market Intelligence, Macro, Quant, Risk reports
 - Proposed theses / trade candidates
+- Watchlist horizon/policy rows when provided (challenge style mismatch: e.g. multi-week thesis on a scalp book)
 - Portfolio and market summary fields when provided
 
 ## Permitted Reasoning Scope

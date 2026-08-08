@@ -27,6 +27,10 @@ class MarketIntelligenceInput(StrictModel):
     sec_filings: list[dict[str, object]] = Field(default_factory=list)
     portfolio_symbols: list[str] = Field(default_factory=list)
     allowlist: list[str] = Field(default_factory=list)
+    watchlist: list[dict] = Field(
+        default_factory=list,
+        description="Active watchlist rows with horizon/policy for relevance weighting",
+    )
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 
 

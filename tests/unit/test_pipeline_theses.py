@@ -171,6 +171,71 @@ def test_enrich_cio_entry_stops_from_quant_and_price() -> None:
     )
     by_sym = {p.symbol: p for p in out.symbol_actions}
     assert by_sym["AAPL"].stop_loss == 97.5
-    assert by_sym["MSFT"].stop_loss == 396.0  # 0.99 * entry min
-    assert by_sym["NVDA"].stop_loss == 98.0  # 2% below last
+    assert by_sym["MSFT"].stop_loss == 392.0  # default 2% below entry min
+    assert by_sym["NVDA"].stop_loss == 98.0  # default 2% below last
     assert by_sym["META"].stop_loss is None
+
+
+def test_enrich_cio_entry_stops_horizon_aware() -> None:
+    quant = _quant()
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.SCALE_IN,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="QQQ",
+                action=SymbolAction.BUY,
+                confidence=70,
+                target_position_pct=5.0,
+                order_type=OrderType.LIMIT,
+                entry_zone=PriceZone(min=100, max=101),
+                stop_loss=None,
+                thesis="scalp",
+                invalidation="n/a",
+                time_horizon=TimeHorizon.INTRADAY,
+            ),
+            SymbolActionPlan(
+                symbol="MSFT",
+                action=SymbolAction.BUY,
+                confidence=70,
+                target_position_pct=5.0,
+                order_type=OrderType.LIMIT,
+                entry_zone=PriceZone(min=100, max=101),
+                stop_loss=None,
+                thesis="medium",
+                invalidation="n/a",
+                time_horizon=TimeHorizon.POSITION,
+            ),
+            SymbolActionPlan(
+                symbol="AAPL",
+                action=SymbolAction.BUY,
+                confidence=70,
+                target_position_pct=5.0,
+                order_type=OrderType.LIMIT,
+                entry_zone=PriceZone(min=100, max=101),
+                stop_loss=99.5,  # too tight for medium book
+                thesis="widen me",
+                invalidation="structure",
+                time_horizon=TimeHorizon.POSITION,
+            ),
+        ],
+        cash_target_pct=90.0,
+        risk_approval=True,
+        trace=TraceMetadata(source_data_timestamp=NOW),
+    )
+    out = enrich_cio_entry_stops(
+        decision,
+        quant,
+        watchlist_context=[
+            {"symbol": "QQQ", "horizon": "scalp"},
+            {"symbol": "MSFT", "horizon": "medium"},
+            {"symbol": "AAPL", "horizon": "medium"},
+        ],
+        atr_by_symbol={"QQQ": 1.0, "MSFT": 2.0},
+    )
+    by_sym = {p.symbol: p for p in out.symbol_actions}
+    assert by_sym["QQQ"].stop_loss == 99.0  # 1× ATR
+    assert by_sym["MSFT"].stop_loss == 93.0  # 3.5× ATR
+    assert by_sym["AAPL"].stop_loss == 97.5  # widened to medium min_stop 2.5%

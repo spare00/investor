@@ -159,6 +159,10 @@ async def materialize_cio_decision(
                 latest_prices=prices,
                 data_quality_score=data_quality_score,
                 workflow_id=workflow_id,
+                horizon_by_symbol=horizon_by_symbol,
+                entry_universe=entry_universe,
+                block_new_entries=block_new_entries,
+                market_session_clear=market_session_clear,
             )
             intent_ids = [str(i.id) for i in intents]
             notes.append(f"order_intents_created={len(intents)}")

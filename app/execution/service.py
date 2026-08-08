@@ -78,13 +78,28 @@ class ExecutionService:
         latest_prices: dict[str, float],
         data_quality_score: float = 1.0,
         workflow_id: UUID | None = None,
+        horizon_by_symbol: dict[str, str] | None = None,
+        entry_universe: set[str] | None = None,
+        block_new_entries: bool = False,
+        market_session_clear: bool = True,
     ) -> list[OrderIntent]:
+        from app.universe.horizons import (
+            closing_policy_for_horizon,
+            overnight_allowed_for_horizon,
+            policy_for,
+        )
+
+        horizons = {k.upper(): v for k, v in (horizon_by_symbol or {}).items()}
         validation = ExecutionValidator(settings=self.settings, controls=self.controls).validate(
             decision,
             portfolio=portfolio,
             latest_prices=latest_prices,
             data_quality_score=data_quality_score,
+            market_session_clear=market_session_clear,
             workflow_id=str(workflow_id) if workflow_id else None,
+            entry_universe=entry_universe,
+            horizon_by_symbol=horizons,
+            block_new_entries=block_new_entries,
         )
         created: list[OrderIntent] = []
         for v in validation.intents:
@@ -92,6 +107,19 @@ class ExecutionService:
             if not self.settings.enable_short_selling and v.side == "sell":
                 # treat as reduce/close long only
                 intent_type = IntentType.CLOSE_LONG
+            hz = horizons.get(v.symbol.upper())
+            overnight = overnight_allowed_for_horizon(hz) if v.side.lower() == "buy" else False
+            closing = (
+                closing_policy_for_horizon(hz)
+                if v.side.lower() == "buy"
+                else "CLOSE_INTRADAY_ONLY"
+            )
+            max_hold = None
+            if hz:
+                try:
+                    max_hold = policy_for(hz).max_holding_minutes
+                except ValueError:
+                    max_hold = None
             intent = OrderIntent(
                 id=uuid4(),
                 decision_id=UUID(v.decision_id) if _is_uuid(v.decision_id) else None,
@@ -107,14 +135,17 @@ class ExecutionService:
                 thesis=v.thesis,
                 exit_policy={
                     "stop_loss": v.stop_price,
-                    "overnight_allowed": False,
-                    "closing_policy": "CLOSE_INTRADAY_ONLY",
+                    "overnight_allowed": overnight,
+                    "closing_policy": closing,
+                    "max_holding_time_minutes": max_hold,
                     "protection_submitted": False,
+                    "horizon": hz,
                 },
                 metadata_json={
                     "order_type": v.order_type,
                     "idempotency_key_seed": v.idempotency_key,
                     "validation_rejections": validation.rejections,
+                    "horizon": hz,
                 },
             )
             self.session.add(intent)
@@ -387,12 +418,18 @@ class ExecutionService:
                 "state": InternalOrderState.SUBMITTED.value,
             }
             intent.status = IntentStatus.SUBMITTED.value
-            # Exit policy: record stop; protection not auto-submitted unless configured
+            # Preserve horizon-aware exit policy from intent creation; refresh stop.
+            prior = dict(intent.exit_policy or {})
             policy = ExitPolicy(
-                stop_loss=intent.stop_price,
-                overnight_allowed=False,
+                stop_loss=intent.stop_price if intent.stop_price is not None else prior.get("stop_loss"),
+                invalidation_condition=prior.get("invalidation_condition"),
+                take_profit_policy=prior.get("take_profit_policy"),
+                max_holding_time_minutes=prior.get("max_holding_time_minutes"),
+                closing_policy=str(prior.get("closing_policy") or "CLOSE_INTRADAY_ONLY"),
+                overnight_allowed=bool(prior.get("overnight_allowed", False)),
                 protection_submitted=False,
             )
+            intent.exit_policy = policy.model_dump()
             meta = dict(intent.metadata_json or {})
             meta["exit_policy"] = policy.model_dump()
             intent.metadata_json = meta
