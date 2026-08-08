@@ -177,6 +177,20 @@ async def test_early_close_job_uses_session_close(session: AsyncSession) -> None
 
 
 @pytest.mark.asyncio
+async def test_run_analysis_rejects_fixtures_when_execution_armed(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ENABLE_EXTERNAL_DATA", "false")
+    monkeypatch.setenv("ENABLE_BROKER_ORDERS", "true")
+    monkeypatch.setenv("ENABLE_AUTOMATED_EXECUTION", "true")
+    clear_settings_cache()
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-03")
+    with pytest.raises(DailyWorkflowError, match="external_data_required_when_execution_armed"):
+        await svc.run_analysis(session_date="2026-08-03", fake_llm=True)
+
+
+@pytest.mark.asyncio
 async def test_full_flow_with_fake_analysis(session: AsyncSession) -> None:
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-08-03")

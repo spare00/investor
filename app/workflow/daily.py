@@ -183,8 +183,19 @@ class DailyWorkflowService:
                 raise DailyWorkflowError(f"analysis_not_allowed_from:{run.current_state}")
 
             llm = FakeLLMProvider({}) if fake_llm else get_llm_client(self.settings)
+            use_fixtures = not bool(self.settings.enable_external_data)
+            if (
+                use_fixtures
+                and (
+                    self.settings.enable_broker_orders
+                    or self.settings.enable_automated_execution
+                )
+            ):
+                raise DailyWorkflowError("external_data_required_when_execution_armed")
             data = await DataCollectionPipeline(
-                self.session, settings=self.settings, fixture_mode=True
+                self.session,
+                settings=self.settings,
+                fixture_mode=use_fixtures,
             ).collect("PREMARKET", workflow_id=run.id)
             collection = data.legacy_bundle
             if collection is None:
@@ -247,6 +258,7 @@ class DailyWorkflowService:
                     "portfolio_equity": portfolio.equity,
                     "portfolio_cash": portfolio.cash,
                     "portfolio_positions": len(portfolio.positions),
+                    "collection_fixture_mode": use_fixtures,
                     "trading_actor": "cio_bottom_up",
                     "collection_run_id": str(data.collection_run_id),
                     "data_quality_summary": data.quality_summary,
