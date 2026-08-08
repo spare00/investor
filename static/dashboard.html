@@ -1896,10 +1896,12 @@
           kpiCard("Firm hit", firm.directional_hit_rate != null ? fmtPct(firm.directional_hit_rate) : "—",
             { sub: `${fmtNum(firm.scored, 0)} scored` }),
           kpiCard("Avg quality", firm.avg_quality_score != null ? fmtNum(firm.avg_quality_score, 3) : "—"),
+          kpiCard("Prices filled", fmtNum(decisions.price_resolution?.filled, 0),
+            { sub: `pend ${fmtNum(decisions.price_resolution?.pending, 0)} · miss ${fmtNum(decisions.price_resolution?.missing, 0)}` }),
         ])}
         <div class="muted" style="margin:0.85rem 0 0.35rem">Hit rate by horizon</div>
         ${hzCards.length ? kpiGrid(hzCards) : ""}
-        <div class="muted" style="margin:0.65rem 0 0.5rem">Dir/Return stay empty for abstentions until a horizon price resolves</div>
+        <div class="muted" style="margin:0.65rem 0 0.5rem">Horizon price from market_snapshots inside book window; pending until horizon elapses</div>
         ${dataTable(["When", "Book", "Sym", "Action", "Dir.", "Return", "vs Bench", "Quality"], evalRows)}
         ${rawBlock(decisions)}`);
     }

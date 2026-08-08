@@ -86,16 +86,41 @@ class AuditService:
         cio = analysis.cio
         payload = cio.model_dump(mode="json")
         try:
+            from app.performance.price_lookup import DecisionPriceResolver
             from app.universe.service import UniverseService
 
             hz_map = await UniverseService(self.session).horizon_by_symbol()
+            resolver = DecisionPriceResolver(self.session, now=cio.timestamp)
             for plan in payload.get("symbol_actions") or []:
                 if not isinstance(plan, dict):
                     continue
                 sym = str(plan.get("symbol") or "").upper()
-                if sym and sym in hz_map:
-                    plan["universe_horizon"] = hz_map[sym]
-        except Exception:  # noqa: BLE001 — audit must not fail closed on horizon stamp
+                if not sym:
+                    continue
+                book = hz_map.get(sym)
+                if book:
+                    plan["universe_horizon"] = book
+                if plan.get("decision_price") is None:
+                    zone = plan.get("entry_zone") if isinstance(plan.get("entry_zone"), dict) else None
+                    resolved = await resolver.decision_price(
+                        sym,
+                        cio.timestamp,
+                        book=book,
+                        entry_zone=zone,
+                    )
+                    if resolved.price is not None:
+                        plan["decision_price"] = resolved.price
+                        plan["decision_price_source"] = resolved.source
+            # Portfolio reference print from primary benchmark when missing.
+            if payload.get("reference_price") is None and payload.get("decision_price") is None:
+                from app.core.config import get_settings
+
+                bench = str(get_settings().primary_benchmark or "SPY").upper()
+                resolved = await resolver.decision_price(bench, cio.timestamp, book="unknown")
+                if resolved.price is not None:
+                    payload["reference_price"] = resolved.price
+                    payload["decision_price_source"] = resolved.source
+        except Exception:  # noqa: BLE001 — audit must not fail closed on price stamp
             pass
         self.session.add(
             CIODecisionRecord(

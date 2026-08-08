@@ -437,6 +437,11 @@ class PerformanceService:
         persist: bool = False,
     ) -> dict[str, Any]:
         from app.models import WatchlistSymbol
+        from app.performance.price_lookup import (
+            DecisionPriceResolver,
+            evaluation_horizon_delta,
+            evaluation_horizon_label,
+        )
 
         result = await self.session.execute(
             select(CIODecisionRecord)
@@ -447,8 +452,14 @@ class PerformanceService:
         rows = list(result.scalars().all())
         wl = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
         watchlist_hz = {r.symbol.upper(): str(r.horizon) for r in wl if r.symbol}
+        resolver = DecisionPriceResolver(self.session)
+        benchmark = str(self.settings.primary_benchmark or "SPY").upper()
 
         evaluations: list[dict[str, Any]] = []
+        filled = 0
+        pending = 0
+        missing = 0
+
         for row in rows:
             payload = dict(row.payload or {})
             plans = list(payload.get("symbol_actions") or [])
@@ -457,36 +468,75 @@ class PerformanceService:
                 for p in plans
                 if isinstance(p, dict)
             ]
-            # Portfolio-level row: dominant book among symbol plans, else unknown.
             primary = "unknown"
             if plan_horizons:
-                # Prefer most common non-unknown, else first
                 non_unk = [h for h in plan_horizons if h != "unknown"]
                 pick_from = non_unk or plan_horizons
                 primary = max(set(pick_from), key=pick_from.count)
 
-            price = float(payload.get("reference_price") or payload.get("decision_price") or 0.0)
-            horizon_price = payload.get("horizon_price")
+            decision_ts = row.decision_timestamp
+            if decision_ts.tzinfo is None:
+                decision_ts = decision_ts.replace(tzinfo=UTC)
+
+            # Portfolio-level: prefer payload, else benchmark print as market proxy.
+            explicit_px = payload.get("reference_price") or payload.get("decision_price")
+            try:
+                explicit_px_f = float(explicit_px) if explicit_px is not None else None
+            except (TypeError, ValueError):
+                explicit_px_f = None
+            port_dec = await resolver.decision_price(
+                benchmark,
+                decision_ts,
+                book=primary,
+                explicit=explicit_px_f if explicit_px_f and explicit_px_f > 0 else None,
+            )
+            explicit_hp = payload.get("horizon_price")
+            try:
+                explicit_hp_f = float(explicit_hp) if explicit_hp is not None else None
+            except (TypeError, ValueError):
+                explicit_hp_f = None
+            port_hz = await resolver.horizon_price(
+                benchmark,
+                decision_ts,
+                book=primary,
+                explicit=explicit_hp_f if explicit_hp_f and explicit_hp_f > 0 else None,
+            )
             bench_ret = payload.get("benchmark_return")
+            if bench_ret is None:
+                bench_ret = await resolver.benchmark_return(benchmark, decision_ts, book=primary)
+
+            price = float(port_dec.price or 0.0)
+            horizon_price = port_hz.price
+            if port_hz.source == "pending":
+                pending += 1
+            elif horizon_price is None:
+                missing += 1
+            else:
+                filled += 1
+
             ev = evaluate_decision(
                 decision_price=price,
                 action=payload.get("portfolio_action", row.portfolio_action),
                 horizon_price=horizon_price,
-                benchmark_return=bench_ret,
+                benchmark_return=float(bench_ret) if bench_ret is not None else None,
             )
+            eval_label = evaluation_horizon_label(primary)
             item = {
                 "decision_id": str(row.decision_id),
                 "action": row.portfolio_action,
-                "symbol": None,
+                "symbol": benchmark if port_dec.price else None,
                 "scope": "portfolio",
                 "universe_horizon": primary,
                 "horizons": sorted(set(plan_horizons)) if plan_horizons else [],
-                "evaluated_at": row.decision_timestamp.isoformat(),
+                "evaluation_horizon": eval_label,
+                "decision_price": price or None,
+                "horizon_price": horizon_price,
+                "price_source": {"decision": port_dec.source, "horizon": port_hz.source},
+                "evaluated_at": decision_ts.isoformat(),
                 "metrics": _jsonable(ev),
             }
             evaluations.append(item)
 
-            # Per-symbol expansions when plans carry usable prices.
             sym_prices = dict(payload.get("symbol_horizon_prices") or {})
             for plan in plans:
                 if not isinstance(plan, dict):
@@ -495,59 +545,132 @@ class PerformanceService:
                 if not sym:
                     continue
                 hz = universe_horizon_for_plan(plan, watchlist_horizon=watchlist_hz)
-                zone = plan.get("entry_zone") if isinstance(plan.get("entry_zone"), dict) else {}
+                zone = plan.get("entry_zone") if isinstance(plan.get("entry_zone"), dict) else None
+                explicit_plan_px = plan.get("decision_price")
                 try:
-                    plan_price = float(
-                        plan.get("decision_price")
-                        or (zone or {}).get("min")
-                        or (zone or {}).get("max")
-                        or price
-                        or 0.0
+                    explicit_plan_px_f = (
+                        float(explicit_plan_px) if explicit_plan_px is not None else None
                     )
                 except (TypeError, ValueError):
-                    plan_price = price
-                plan_hp = plan.get("horizon_price")
-                if plan_hp is None:
-                    plan_hp = sym_prices.get(sym)
+                    explicit_plan_px_f = None
+                plan_dec = await resolver.decision_price(
+                    sym,
+                    decision_ts,
+                    book=hz,
+                    explicit=explicit_plan_px_f if explicit_plan_px_f and explicit_plan_px_f > 0 else None,
+                    entry_zone=zone,
+                )
+                plan_hp_raw = plan.get("horizon_price")
+                if plan_hp_raw is None:
+                    plan_hp_raw = sym_prices.get(sym)
+                try:
+                    plan_hp_f = float(plan_hp_raw) if plan_hp_raw is not None else None
+                except (TypeError, ValueError):
+                    plan_hp_f = None
+                plan_hz = await resolver.horizon_price(
+                    sym,
+                    decision_ts,
+                    book=hz,
+                    explicit=plan_hp_f if plan_hp_f and plan_hp_f > 0 else None,
+                )
+                plan_bench = bench_ret
+                if plan_bench is None:
+                    plan_bench = await resolver.benchmark_return(benchmark, decision_ts, book=hz)
+
+                plan_price = float(plan_dec.price or 0.0)
+                plan_hp = plan_hz.price
+                if plan_hz.source == "pending":
+                    pending += 1
+                elif plan_hp is None:
+                    missing += 1
+                else:
+                    filled += 1
+
                 plan_ev = evaluate_decision(
                     decision_price=plan_price,
                     action=plan.get("action"),
-                    horizon_price=float(plan_hp) if plan_hp is not None else None,
-                    benchmark_return=bench_ret,
+                    horizon_price=plan_hp,
+                    benchmark_return=float(plan_bench) if plan_bench is not None else None,
                 )
+                realized = None
+                if plan_price > 0 and plan_hp is not None:
+                    realized = (plan_hp - plan_price) / plan_price
+                sym_label = evaluation_horizon_label(hz)
                 sym_item = {
                     "decision_id": str(row.decision_id),
                     "action": plan.get("action"),
                     "symbol": sym,
                     "scope": "symbol",
                     "universe_horizon": hz,
-                    "evaluated_at": row.decision_timestamp.isoformat(),
+                    "evaluation_horizon": sym_label,
+                    "decision_price": plan_price or None,
+                    "horizon_price": plan_hp,
+                    "price_source": {"decision": plan_dec.source, "horizon": plan_hz.source},
+                    "horizon_end": (decision_ts + evaluation_horizon_delta(hz)).isoformat(),
+                    "evaluated_at": decision_ts.isoformat(),
                     "metrics": _jsonable(plan_ev),
                 }
                 evaluations.append(sym_item)
                 if persist:
+                    status = (
+                        "PENDING"
+                        if plan_hz.source == "pending"
+                        else ("AVAILABLE" if plan_hp is not None and plan_price > 0 else "UNAVAILABLE")
+                    )
                     self.session.add(
                         DecisionEvaluationRecord(
                             decision_id=row.decision_id,
                             decision_type="cio_symbol",
                             action=str(plan.get("action") or row.portfolio_action),
+                            symbol=sym,
                             decision_price=plan_price,
+                            evaluation_horizon=sym_label,
+                            price_at_horizon=plan_hp,
+                            return_after_decision=realized,
+                            benchmark_return_after_decision=(
+                                float(plan_bench) if plan_bench is not None else None
+                            ),
+                            excess_return=(
+                                (realized - float(plan_bench))
+                                if realized is not None and plan_bench is not None
+                                else None
+                            ),
                             evaluated_at=datetime.now(UTC),
                             payload=sym_item,
-                            status="AVAILABLE",
+                            status=status,
                         )
                     )
 
             if persist:
+                port_realized = None
+                if price > 0 and horizon_price is not None:
+                    port_realized = (horizon_price - price) / price
+                port_status = (
+                    "PENDING"
+                    if port_hz.source == "pending"
+                    else ("AVAILABLE" if horizon_price is not None and price > 0 else "UNAVAILABLE")
+                )
                 self.session.add(
                     DecisionEvaluationRecord(
                         decision_id=row.decision_id,
                         decision_type="cio",
                         action=row.portfolio_action,
+                        symbol=benchmark if port_dec.price else None,
                         decision_price=price,
+                        evaluation_horizon=eval_label,
+                        price_at_horizon=horizon_price,
+                        return_after_decision=port_realized,
+                        benchmark_return_after_decision=(
+                            float(bench_ret) if bench_ret is not None else None
+                        ),
+                        excess_return=(
+                            (port_realized - float(bench_ret))
+                            if port_realized is not None and bench_ret is not None
+                            else None
+                        ),
                         evaluated_at=datetime.now(UTC),
                         payload=item,
-                        status="AVAILABLE",
+                        status=port_status,
                     )
                 )
         if persist:
@@ -557,9 +680,16 @@ class PerformanceService:
             "count": len(evaluations),
             "evaluations": evaluations,
             "summary": summary,
+            "price_resolution": {
+                "filled": filled,
+                "pending": pending,
+                "missing": missing,
+                "benchmark": benchmark,
+            },
             "horizon_note": (
-                "universe_horizon from symbol_actions.universe_horizon / watchlist / "
-                "CIO time_horizon map (intraday→day, swing→short, position→medium)"
+                "horizon_price from market_snapshots within book max_holding window "
+                "(scalp 4h / day 1session / short 10d / medium 60d); "
+                "pending until horizon elapses; no look-ahead past horizon_end"
             ),
         }
 
