@@ -114,6 +114,55 @@ def test_readiness_gate_blocks_live(settings: Settings) -> None:
     assert any(c["name"] == "live_trading_disabled" for c in result["checks"])
 
 
+def test_paper_automated_requires_exit_arming() -> None:
+    unarmed = Settings(
+        app_env="test",
+        trading_mode="paper",
+        broker_environment="paper",
+        broker_provider="mock",
+        enable_live_trading=False,
+        enable_broker_orders=True,
+        enable_automated_execution=True,
+        require_manual_order_approval=False,
+        intraday_operation_mode="PAPER_AUTOMATED",
+        enable_external_data=True,
+        auto_execute_hard_stops=False,
+        auto_execute_force_close=False,
+        min_performance_observations=20,
+        enable_alerts=True,
+    )
+    result = GateEvaluator(settings=unarmed).evaluate(ReadinessGate.PAPER_AUTOMATED_CANDIDATE)
+    by_name = {c["name"]: c for c in result["checks"]}
+    assert by_name["hard_stops_armed_for_paper_auto"]["passed"] is False
+    assert by_name["force_close_armed_for_paper_auto"]["passed"] is False
+    assert result["all_required_passed"] is False
+
+    armed = Settings(
+        app_env="test",
+        trading_mode="paper",
+        broker_environment="paper",
+        broker_provider="mock",
+        enable_live_trading=False,
+        enable_broker_orders=True,
+        enable_automated_execution=True,
+        require_manual_order_approval=False,
+        intraday_operation_mode="PAPER_AUTOMATED",
+        enable_external_data=True,
+        auto_execute_hard_stops=True,
+        auto_execute_force_close=True,
+        min_performance_observations=20,
+        enable_alerts=True,
+        enable_fault_injection=False,
+    )
+    ok = GateEvaluator(settings=armed).evaluate(ReadinessGate.PAPER_AUTOMATED_CANDIDATE)
+    by_ok = {c["name"]: c for c in ok["checks"] if c["required_for"] in (None, "PAPER_AUTOMATED_CANDIDATE", "SIMULATION_READY", "DEVELOPMENT")}
+    # Evaluate using all_required_passed which filters applicable checks
+    assert by_ok["hard_stops_armed_for_paper_auto"]["passed"] is True
+    assert by_ok["force_close_armed_for_paper_auto"]["passed"] is True
+    assert by_ok["external_data_for_paper_auto"]["passed"] is True
+    assert ok["all_required_passed"] is True
+
+
 @pytest.mark.asyncio
 async def test_backup_create_verify(session: AsyncSession, tmp_path: Path) -> None:
     svc = BackupService(session=session, root=tmp_path)

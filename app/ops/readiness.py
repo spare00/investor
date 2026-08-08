@@ -175,6 +175,24 @@ class GateEvaluator:
                 required_for=ReadinessGate.PAPER_AUTOMATED_CANDIDATE,
             ),
             ReadinessCheck(
+                name="hard_stops_armed_for_paper_auto",
+                passed=bool(cfg.auto_execute_hard_stops),
+                detail="AUTO_EXECUTE_HARD_STOPS=true required for unattended exits",
+                required_for=ReadinessGate.PAPER_AUTOMATED_CANDIDATE,
+            ),
+            ReadinessCheck(
+                name="force_close_armed_for_paper_auto",
+                passed=bool(cfg.auto_execute_force_close),
+                detail="AUTO_EXECUTE_FORCE_CLOSE=true required for closing-window exits",
+                required_for=ReadinessGate.PAPER_AUTOMATED_CANDIDATE,
+            ),
+            ReadinessCheck(
+                name="external_data_for_paper_auto",
+                passed=bool(cfg.enable_external_data),
+                detail="ENABLE_EXTERNAL_DATA=true — fixtures forbidden when execution is armed",
+                required_for=ReadinessGate.PAPER_AUTOMATED_CANDIDATE,
+            ),
+            ReadinessCheck(
                 name="min_performance_observations_config",
                 passed=cfg.min_performance_observations >= 20,
                 detail=f"MIN_PERFORMANCE_OBSERVATIONS={cfg.min_performance_observations}",
