@@ -254,13 +254,36 @@ class PositionMonitor:
             # keep overnight_allowed=False / stale max_holding from open day.
             holding = await self._default_max_holding(symbol)
             overnight = await self._overnight_allowed(symbol)
+            hz = await self._watchlist_horizon(symbol)
             existing.overnight_allowed = overnight
             if holding is not None:
                 existing.max_holding_minutes = holding
+            policy = dict(existing.exit_policy or {})
+            if stop_price is not None:
+                policy["stop_loss"] = stop_price
+            if hz:
+                from app.universe.horizons import closing_policy_for_horizon
+
+                policy["horizon"] = hz
+                policy["overnight_allowed"] = overnight
+                policy["closing_policy"] = closing_policy_for_horizon(hz)
+                existing.closing_policy = str(policy["closing_policy"])
+            existing.exit_policy = policy
             await self.session.flush()
             return existing
         holding = await self._default_max_holding(symbol)
         overnight = await self._overnight_allowed(symbol)
+        hz = await self._watchlist_horizon(symbol)
+        from app.universe.horizons import closing_policy_for_horizon
+
+        closing = closing_policy_for_horizon(hz) if hz else self.settings.default_closing_policy
+        exit_policy: dict = {
+            "stop_loss": stop_price,
+            "overnight_allowed": overnight,
+            "closing_policy": closing,
+        }
+        if hz:
+            exit_policy["horizon"] = hz
         row = PositionLifecycle(
             id=uuid4(),
             symbol=symbol.upper(),
@@ -272,10 +295,10 @@ class PositionMonitor:
             decision_id=decision_id,
             opened_at=datetime.now(UTC),
             overnight_allowed=overnight,
-            closing_policy=self.settings.default_closing_policy,
+            closing_policy=closing,
             protection_submitted=False,
             max_holding_minutes=holding,
-            exit_policy={"stop_loss": stop_price},
+            exit_policy=exit_policy,
         )
         self.session.add(row)
         await self.session.flush()

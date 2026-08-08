@@ -1694,6 +1694,26 @@
           kpiFromMetric("Avg win", trades.avg_win, { format: "money", higherGood: true }),
           kpiFromMetric("Avg loss", trades.avg_loss, { format: "money", higherGood: false }),
         ])}
+        <div class="muted" style="margin:0.85rem 0 0.35rem">By horizon book</div>
+        ${(() => {
+          const books = trades.by_horizon || {};
+          const order = ["scalp", "day", "short", "medium", "unknown"];
+          const cards = order.filter((h) => books[h]).map((h) => {
+            const b = books[h];
+            return kpiCard(
+              h,
+              `${fmtNum(b.trade_count, 0)} · ${b.win_rate && b.win_rate.value != null && (b.win_rate.status === "AVAILABLE" || !b.win_rate.status) ? fmtPct(b.win_rate.value) : "—"} WR`,
+              {
+                sub: b.expectancy && b.expectancy.value != null
+                  ? `E ${fmtMoney(b.expectancy.value)}`
+                  : (b.win_rate && b.win_rate.status && b.win_rate.status !== "AVAILABLE"
+                    ? String(b.win_rate.status).toLowerCase().replaceAll("_", " ")
+                    : "no trades"),
+              }
+            );
+          });
+          return cards.length ? kpiGrid(cards) : `<div class="muted">No closed trades in period</div>`;
+        })()}
         ${rawBlock(trades)}`);
 
       renderMount("perfExecution", `

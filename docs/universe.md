@@ -48,7 +48,11 @@ When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler also runs `univ
 
 ## Persistence
 
-- `watchlist_symbols`
+- `watchlist_symbols` (optional `payload.last_outcome_stats` from closed-trade feedback)
 - `focus_set_snapshots`
 
 Migration: `0007_universe_watchlist`.
+
+## Outcome feedback (observational)
+
+Universe refresh passes `recent_outcomes` (90d closed lifecycles by symbol / horizon / seed source) into the Universe Manager. Stats are stamped onto watchlist payload for ops visibility (`GET /universe` → `recent_outcomes`). Priority/pause decisions remain LLM/human — no automatic strategy mutation.

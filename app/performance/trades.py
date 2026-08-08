@@ -20,6 +20,8 @@ class ClosedTrade:
     holding_minutes: float
     risk_amount: float | None = None
     fees: float = 0.0
+    symbol: str | None = None
+    horizon: str | None = None
 
 
 def _status_for_empty(name: str) -> MetricResult:
@@ -126,3 +128,18 @@ def compute_trade_metrics(trades: list[ClosedTrade]) -> dict[str, MetricResult |
         ),
         "trade_count": n,
     }
+
+
+def group_trade_metrics_by_horizon(
+    trades: list[ClosedTrade],
+    *,
+    books: tuple[str, ...] = ("scalp", "day", "short", "medium", "unknown"),
+) -> dict[str, dict[str, MetricResult | Any]]:
+    """Firm-compatible per-book slices; empty books still return INSUFFICIENT_DATA metrics."""
+    buckets: dict[str, list[ClosedTrade]] = {b: [] for b in books}
+    for t in trades:
+        key = (t.horizon or "unknown").lower()
+        if key not in buckets:
+            key = "unknown"
+        buckets[key].append(t)
+    return {book: compute_trade_metrics(items) for book, items in buckets.items()}

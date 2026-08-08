@@ -46,7 +46,7 @@ from app.performance.risk import (
     sortino_ratio,
     tracking_error,
 )
-from app.performance.trades import ClosedTrade, compute_trade_metrics
+from app.performance.trades import ClosedTrade, compute_trade_metrics, group_trade_metrics_by_horizon
 from app.performance.types import CALCULATION_VERSION, MetricResult
 
 
@@ -243,8 +243,30 @@ class PerformanceService:
         }
 
     async def trade_metrics(self, period_start: datetime, period_end: datetime) -> dict[str, Any]:
+        from app.models import WatchlistSymbol
+        from app.universe.horizons import UniverseHorizon
+
         result = await self.session.execute(select(PositionLifecycle))
         lifecycles = list(result.scalars().all())
+        wl = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
+        watchlist_hz = {r.symbol.upper(): str(r.horizon) for r in wl if r.symbol}
+
+        def _resolve_horizon(lc: PositionLifecycle) -> str:
+            policy = dict(lc.exit_policy or {})
+            raw = policy.get("horizon")
+            if raw:
+                try:
+                    return UniverseHorizon(str(raw).lower()).value
+                except ValueError:
+                    pass
+            sym = str(lc.symbol or "").upper()
+            if sym in watchlist_hz:
+                try:
+                    return UniverseHorizon(watchlist_hz[sym].lower()).value
+                except ValueError:
+                    return "unknown"
+            return "unknown"
+
         trades: list[ClosedTrade] = []
         for lc in lifecycles:
             if lc.status != "CLOSED" or not lc.closed_at:
@@ -258,13 +280,35 @@ class PerformanceService:
             risk = None
             if lc.average_entry_price and lc.stop_price:
                 risk = abs(lc.average_entry_price - lc.stop_price) * abs(lc.quantity)
-            trades.append(ClosedTrade(pnl=pnl, holding_minutes=holding, risk_amount=risk))
+            trades.append(
+                ClosedTrade(
+                    pnl=pnl,
+                    holding_minutes=holding,
+                    risk_amount=risk,
+                    symbol=str(lc.symbol).upper(),
+                    horizon=_resolve_horizon(lc),
+                )
+            )
 
         if not trades:
             result = await self.session.execute(select(TradePnL))
             for row in result.scalars().all():
-                trades.append(ClosedTrade(pnl=row.net_realized_pl, holding_minutes=0.0, fees=row.fees))
-        return compute_trade_metrics(trades)
+                trades.append(
+                    ClosedTrade(
+                        pnl=row.net_realized_pl,
+                        holding_minutes=0.0,
+                        fees=row.fees,
+                        symbol=str(getattr(row, "symbol", "") or "").upper() or None,
+                        horizon="unknown",
+                    )
+                )
+        firm = compute_trade_metrics(trades)
+        firm["by_horizon"] = group_trade_metrics_by_horizon(trades)
+        firm["unit"] = "position_lifecycle"
+        firm["horizon_note"] = (
+            "by_horizon uses lifecycle exit_policy.horizon with watchlist fallback"
+        )
+        return firm
 
     def execution(self, order_stats: dict[str, Any]) -> dict[str, Any]:
         return compute_execution_quality(order_stats)

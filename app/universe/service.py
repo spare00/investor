@@ -167,7 +167,68 @@ class UniverseService:
             "screener": screen_meta,
             "allow_candidate_adds": self.settings.universe_allow_candidate_adds,
             "book_usage": await self._book_usage(),
+            "recent_outcomes": await self._outcome_snapshot_summary(),
         }
+
+    async def _outcome_snapshot_summary(self) -> dict[str, Any]:
+        from app.universe.outcomes import recent_outcome_stats
+
+        try:
+            full = await recent_outcome_stats(self.session, lookback_days=90)
+        except Exception as exc:  # noqa: BLE001 — snapshot must not fail closed on analytics
+            logger.warning("universe_outcome_snapshot_failed", error=str(exc)[:200])
+            return {"error": str(exc)[:200]}
+        return {
+            "lookback_days": full.get("lookback_days"),
+            "by_horizon": full.get("by_horizon"),
+            "by_source": full.get("by_source"),
+            "symbols_with_trades": len(full.get("by_symbol") or []),
+            "negative_signals": [
+                s
+                for s in (full.get("by_symbol") or [])
+                if s.get("signal") == "negative"
+            ][:12],
+        }
+
+    async def _stamp_outcome_stats(self, outcomes: dict[str, Any]) -> None:
+        """Persist observational stats onto watchlist payload (no priority mutation)."""
+        by_sym = {
+            str(s.get("symbol") or "").upper(): s
+            for s in (outcomes.get("by_symbol") or [])
+            if s.get("symbol")
+        }
+        if not by_sym:
+            return
+        rows = list(
+            (
+                await self.session.execute(
+                    select(WatchlistSymbol).where(WatchlistSymbol.status != "removed")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        stamped = 0
+        for row in rows:
+            pack = by_sym.get(row.symbol.upper())
+            if not pack:
+                continue
+            payload = dict(row.payload or {})
+            payload["last_outcome_stats"] = {
+                "trade_count": pack.get("trade_count"),
+                "win_rate": pack.get("win_rate"),
+                "expectancy": pack.get("expectancy"),
+                "total_pnl": pack.get("total_pnl"),
+                "signal": pack.get("signal"),
+                "horizon": pack.get("horizon"),
+                "as_of": outcomes.get("period_end"),
+                "lookback_days": outcomes.get("lookback_days"),
+            }
+            row.payload = payload
+            stamped += 1
+        if stamped:
+            await self.session.flush()
+            logger.info("universe_outcome_stats_stamped", symbols=stamped)
 
     async def _book_usage(self) -> dict[str, Any]:
         from app.models import Position
@@ -293,6 +354,9 @@ class UniverseService:
         screened, screen_meta = await self._screened_candidate_pool(
             themes=themes, market_regime=market_regime
         )
+        from app.universe.outcomes import recent_outcome_stats
+
+        outcomes = await recent_outcome_stats(self.session, lookback_days=90)
         payload = UniverseManagerInput(
             as_of=utc_now(),
             current_watchlist=[self._row_dict(r) for r in paused],
@@ -304,10 +368,12 @@ class UniverseService:
             horizon_policies=all_horizon_summaries(),
             watchlist_limit=self.settings.universe_watchlist_limit,
             focus_limit=self.settings.universe_focus_limit,
+            recent_outcomes=outcomes,
             trace=TraceMetadata(source_data_timestamp=utc_now()),
         )
         out = await self.agent.run(payload)
         await self._apply_proposals(out, candidate_symbols=set(screened))
+        await self._stamp_outcome_stats(outcomes)
         hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
         focus_doc = await self._persist_focus(
             symbols=out.focus_symbols,
@@ -320,6 +386,11 @@ class UniverseService:
                 "quality": out.data_quality_score,
                 "screener": screen_meta,
                 "hygiene": hygiene,
+                "outcomes_summary": {
+                    "by_horizon": outcomes.get("by_horizon"),
+                    "by_source": outcomes.get("by_source"),
+                    "symbol_count": len(outcomes.get("by_symbol") or []),
+                },
             },
         )
         return {
@@ -329,6 +400,11 @@ class UniverseService:
             "notes": out.notes,
             "screener": screen_meta,
             "hygiene": hygiene,
+            "outcomes": {
+                "by_horizon": outcomes.get("by_horizon"),
+                "by_source": outcomes.get("by_source"),
+                "symbol_count": len(outcomes.get("by_symbol") or []),
+            },
         }
 
     async def hygiene_active_watchlist(
@@ -629,4 +705,7 @@ class UniverseService:
             "invalidation": r.invalidation,
             "source": r.source,
             "last_reviewed_at": r.last_reviewed_at.isoformat() if r.last_reviewed_at else None,
+            "last_outcome_stats": (r.payload or {}).get("last_outcome_stats")
+            if isinstance(r.payload, dict)
+            else None,
         }

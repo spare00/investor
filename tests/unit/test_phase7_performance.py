@@ -121,6 +121,23 @@ def test_trade_metrics_lifecycle_unit() -> None:
     assert m["win_rate"].value == pytest.approx(0.5)
 
 
+def test_trade_metrics_by_horizon() -> None:
+    from app.performance.trades import group_trade_metrics_by_horizon
+
+    trades = [
+        ClosedTrade(pnl=50.0, holding_minutes=30, horizon="scalp", symbol="QQQ"),
+        ClosedTrade(pnl=-20.0, holding_minutes=40, horizon="scalp", symbol="SPY"),
+        ClosedTrade(pnl=100.0, holding_minutes=2000, horizon="medium", symbol="MSFT"),
+        ClosedTrade(pnl=-10.0, holding_minutes=15, horizon=None, symbol="XYZ"),
+    ]
+    by_h = group_trade_metrics_by_horizon(trades)
+    assert by_h["scalp"]["trade_count"] == 2
+    assert by_h["scalp"]["win_rate"].value == pytest.approx(0.5)
+    assert by_h["medium"]["trade_count"] == 1
+    assert by_h["day"]["trade_count"] == 0
+    assert by_h["unknown"]["trade_count"] == 1
+
+
 def test_mae_mfe_long_and_insufficient() -> None:
     r = compute_mae_mfe(
         entry_price=100.0,

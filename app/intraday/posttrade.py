@@ -27,6 +27,12 @@ class PostTradeReviewService:
         thesis_status: str = "UNKNOWN",
         agent_runs: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        universe_horizon = None
+        if position_lifecycle_id:
+            lc_probe = await self.session.get(PositionLifecycle, position_lifecycle_id)
+            if lc_probe:
+                universe_horizon = (lc_probe.exit_policy or {}).get("horizon")
+
         review = PostTradeReviewRecord(
             id=uuid4(),
             position_lifecycle_id=position_lifecycle_id,
@@ -48,7 +54,10 @@ class PostTradeReviewService:
             unavoidable_factors=[],
             lessons=[],
             agent_assessment_ids=[],
-            payload={"created_at": datetime.now(UTC).isoformat()},
+            payload={
+                "created_at": datetime.now(UTC).isoformat(),
+                "universe_horizon": universe_horizon,
+            },
         )
         self.session.add(review)
         await self.session.flush()
@@ -67,7 +76,12 @@ class PostTradeReviewService:
                 invalidation_conditions=run.get("invalidation_conditions") or [],
                 actual_outcome_reference=str(review.id),
                 evaluated_at=None,  # Phase 7 scores
-                payload={},
+                payload={
+                    "universe_horizon": universe_horizon,
+                    "symbol": symbol.upper(),
+                    "pnl": pnl,
+                    "outcome": outcome,
+                },
             )
             self.session.add(ev)
             await self.session.flush()
@@ -84,5 +98,6 @@ class PostTradeReviewService:
             "symbol": symbol,
             "outcome": outcome,
             "agent_assessment_ids": assessment_ids,
+            "universe_horizon": universe_horizon,
             "strategy_auto_changed": False,
         }

@@ -29,6 +29,7 @@ Replace a static human ticker list with expert, horizon-aware selection so the f
 - Candidate pool (bounded liquid expansion beyond seed — may add from here; already liquidity-screened when enabled)
 - Optional regime / themes
 - Horizon policy summaries and capacity limits
+- Recent closed-trade outcomes (`recent_outcomes`) by symbol / horizon book / seed source — observational only; use to pause or deprioritize repeated losers with adequate sample size, never to invent risk rules
 
 ## Permitted Reasoning Scope
 
@@ -36,6 +37,7 @@ Replace a static human ticker list with expert, horizon-aware selection so the f
 - Horizon assignment and priority scoring
 - Focus-set construction for the current session
 - Liquidity and style fitness judgment
+- Interpreting recent_outcomes signals (positive / negative / insufficient) as selection hints
 
 ## Rules
 
@@ -45,6 +47,7 @@ Replace a static human ticker list with expert, horizon-aware selection so the f
 4. Today's `focus_symbols` ≤ `focus_limit`, always include holdings that need review, then highest-priority active watchlist names.
 5. Every add/keep needs a short thesis + invalidation.
 6. Pause or remove names whose thesis is dead, liquidity is poor, or horizon no longer fits.
+6b. When `recent_outcomes` shows `signal=negative` with enough trades, prefer pause/lower priority or rehorizon — do not keep promoting chronic losers. Treat `insufficient` as no evidence either way.
 7. Optimize for **max return / min loss** via selection quality — not by overtrading.
 
 ## Output

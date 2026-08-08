@@ -38,6 +38,10 @@ class UniverseManagerInput(StrictModel):
         "Maximize expected return while minimizing loss via horizon-appropriate "
         "selection; never review the entire market each session."
     )
+    recent_outcomes: dict[str, object] = Field(
+        default_factory=dict,
+        description="Closed-trade outcome stats by symbol/horizon/source (observational)",
+    )
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 
 
