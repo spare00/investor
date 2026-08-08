@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Investor">
+  <defs>
+    <linearGradient id="g" x1="12" y1="56" x2="52" y2="8" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2a7fd4"/>
+      <stop offset="100%" stop-color="#5eb0ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#0f1419"/>
+  <rect x="3" y="3" width="58" height="58" rx="12" fill="none" stroke="#2a3542" stroke-width="1.5"/>
+  <!-- stylized I stem -->
+  <rect x="24" y="16" width="10" height="32" rx="2.5" fill="url(#g)"/>
+  <!-- top serif -->
+  <rect x="18" y="14" width="22" height="7" rx="2.5" fill="url(#g)"/>
+  <!-- bottom serif -->
+  <rect x="18" y="43" width="22" height="7" rx="2.5" fill="url(#g)"/>
+  <!-- upward tick / growth spike -->
+  <path d="M34 28 L46 16 L46 22 L52 22 L40 34 L34 34 Z" fill="#3d9cf0"/>
+  <circle cx="48.5" cy="15.5" r="3.2" fill="#3ecf8e"/>
+</svg>

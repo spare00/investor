@@ -116,6 +116,16 @@ async def root() -> RedirectResponse:
     return RedirectResponse(url="/dashboard")
 
 
+@app.get("/favicon.ico")
+async def favicon_ico() -> FileResponse:
+    return FileResponse(STATIC_DIR / "favicon.ico")
+
+
+@app.get("/favicon.svg")
+async def favicon_svg() -> FileResponse:
+    return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
+
+
 @app.get("/dashboard")
 async def dashboard_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "dashboard.html")

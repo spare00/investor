@@ -4,6 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Investor Ops</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon.ico" sizes="any" />
+  <link rel="icon" href="/static/favicon-32.png" type="image/png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -1599,7 +1603,10 @@
         ? data.news.map(n => `<li><strong>${n.headline}</strong><div class="muted">${n.source} · ${n.published_at}</div></li>`).join("")
         : `<li class="muted">None</li>`;
       document.getElementById("errors").innerHTML = (data.errors || []).length
-        ? data.errors.map(e => `<li><span class="pill ${e.level === "error" ? "bad" : "warn"}">${e.level}</span> ${e.event_type}: ${e.message}</li>`).join("")
+        ? data.errors.map((e) => {
+            const when = e.created_at ? fmtWhen(e.created_at) : "—";
+            return `<li><span class="pill ${e.level === "error" ? "bad" : "warn"}">${esc(e.level)}</span> ${esc(e.event_type)}: ${esc(e.message)}<div class="muted">${esc(when)}</div></li>`;
+          }).join("")
         : `<li class="muted">None</li>`;
     }
 
