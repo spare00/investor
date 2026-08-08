@@ -53,6 +53,8 @@ def _settings(**kwargs: object) -> Settings:
         enable_broker_connection=True,
         enable_broker_orders=True,
         enable_automated_execution=False,
+        enable_external_data=False,
+        enable_market_data_collection=False,
         require_manual_order_approval=True,
         enable_live_trading=False,
         enable_short_selling=False,

@@ -1114,12 +1114,16 @@ class DailyWorkflowService:
             day = date_cls.fromisoformat(run.session_date)
             start = datetime(day.year, day.month, day.day, tzinfo=UTC)
             end = start + timedelta(days=1)
+            lookback = max(1, int(self.settings.decision_eval_lookback_days or 90))
+            eval_end = datetime.now(UTC)
+            eval_start = eval_end - timedelta(days=lookback)
             perf = PerformanceService(self.session, settings=self.settings)
             perf_run = await perf.recalculate(start, end)
-            decisions = await perf.evaluate_decisions_batch(start, end, persist=True)
+            decisions = await perf.evaluate_decisions_batch(eval_start, eval_end, persist=True)
             review["performance"] = {
                 "run_id": perf_run.get("run_id"),
                 "decision_evaluations": decisions.get("count", 0),
+                "decision_eval_lookback_days": lookback,
             }
         except Exception as exc:  # noqa: BLE001
             review["performance_error"] = str(exc)[:240]

@@ -63,7 +63,7 @@ async def test_simulated_submit_and_sync(session: AsyncSession) -> None:
     )
     orders = await om.submit_validated_intents(validation)
     assert len(orders) == 1
-    assert orders[0].status == "filled"
+    assert orders[0].status.upper() == "FILLED"
     assert orders[0].broker_order_id
 
     pm = PositionManager(session, broker=broker)
@@ -144,7 +144,7 @@ async def test_broker_error_fail_closed(session: AsyncSession) -> None:
     )
     rows = await om.submit_validated_intents(v)
     assert len(rows) == 1
-    assert rows[0].status == "rejected"
+    assert rows[0].status.upper() == "REJECTED"
 
 
 @pytest.mark.asyncio

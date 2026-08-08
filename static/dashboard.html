@@ -1006,7 +1006,7 @@
         pill(enforce ? "enforce on" : "monitor only", enforce ? "good" : "warn"),
         pill(blocked ? "BLOCKED" : "ok", blocked ? "bad" : "good"),
         budget.soft_warned || budget.month_soft_warned ? pill("soft warn", "warn") : "",
-        pill(budget.day ? fmtBne(budget.day + "T12:00:00Z", { dateOnly: true }) : "—", ""),
+        pill(budget.day ? esc(String(budget.day)) : "—", ""),
       ].filter(Boolean).join(" ");
       const tokRem = budget.tokens_remaining;
       const callRem = budget.calls_remaining;
@@ -1078,7 +1078,7 @@
         (budget.daily_budget_derived
           ? ` · day from month÷${budget.trading_days_per_month || 21}`
           : "") +
-        ` · ${budget.day ? fmtBne(budget.day + "T12:00:00Z", { dateOnly: true }) : "—"}`;
+        ` · ${budget.day ? esc(String(budget.day)) : "—"}`;
     }
 
     /** Lightweight strip update — avoids depending on heavy /dashboard/summary. */

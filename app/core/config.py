@@ -305,6 +305,8 @@ class Settings(BaseSettings):
     audit_log_retention_days: int = 2555
     metric_retention_days: int = 1825
     performance_calculation_version: str = "perf_v1"
+    # Re-score pending short/medium decision evals across recent sessions (postmarket).
+    decision_eval_lookback_days: int = 90
 
     # Scheduler (legacy cron placeholders; Phase 3 prefers enable_scheduler + dynamic jobs)
     scheduler_enabled: bool = False

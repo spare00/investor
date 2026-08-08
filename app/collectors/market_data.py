@@ -37,10 +37,12 @@ class StubMarketDataProvider:
     def __init__(self, quotes: dict[str, float] | None = None) -> None:
         self._quotes = quotes or _STUB_LAST
 
-    async def fetch_quotes(self, symbols: list[str]) -> list[RawMarketQuote]:
+    async def fetch_quotes(
+        self, symbols: list[str], *, allow_stub: bool = False
+    ) -> list[RawMarketQuote]:
         from app.market.live_prices import requires_live_market_prices
 
-        if requires_live_market_prices():
+        if requires_live_market_prices() and not allow_stub:
             logger.error(
                 "stub_quotes_blocked",
                 reason="live_market_prices_required",

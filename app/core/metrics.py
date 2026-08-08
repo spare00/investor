@@ -136,11 +136,11 @@ EVENT_QUEUE_DEPTH = Gauge("investor_event_queue_depth", "Pending event queue dep
 
 LLM_TOKENS_TODAY = Gauge(
     "investor_llm_tokens_today",
-    "Billable LLM tokens recorded today (UTC)",
+    "Billable LLM tokens recorded today (operator-local day)",
 )
 LLM_CALLS_TODAY = Gauge(
     "investor_llm_calls_today",
-    "Billable LLM API calls recorded today (UTC)",
+    "Billable LLM API calls recorded today (operator-local day)",
 )
 LLM_BUDGET_BLOCKED = Gauge(
     "investor_llm_budget_blocked",

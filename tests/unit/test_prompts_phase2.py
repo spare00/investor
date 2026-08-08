@@ -39,7 +39,7 @@ def test_agent_system_v1_exists_and_has_sections(agent_key: str) -> None:
 @pytest.mark.parametrize("agent_key", AGENT_PROMPT_KEYS)
 def test_loaded_prompt_includes_common_rules_and_hash(agent_key: str) -> None:
     loaded = load_agent_prompt(agent_key)
-    assert loaded.version == "1.0.0"
+    assert loaded.version  # from Prompt-Version header (may differ per agent)
     assert len(loaded.sha256) == 64
     assert "Data use" in loaded.common_rules or "provided input" in loaded.common_rules.lower()
     assert "Broker" in loaded.system_prompt or "broker" in loaded.system_prompt

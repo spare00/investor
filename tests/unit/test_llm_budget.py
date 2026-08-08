@@ -154,9 +154,9 @@ async def test_client_raises_llm_error_when_budget_exhausted(tmp_path) -> None:
 
 
 def test_legacy_state_file_seeds_month_and_survives_reload(tmp_path) -> None:
-    from datetime import UTC, datetime
+    from app.core.timeutils import operator_calendar_day_iso
 
-    day = datetime.now(UTC).date().isoformat()
+    day = operator_calendar_day_iso()
     path = tmp_path / "budget.json"
     path.write_text(
         '{"day": "%s", "prompt_tokens": 100, "completion_tokens": 20, "calls": 3, '
@@ -168,8 +168,10 @@ def test_legacy_state_file_seeds_month_and_survives_reload(tmp_path) -> None:
         llm_daily_call_budget=1000,
         llm_monthly_aud_budget=10,
         llm_budget_state_path=str(path),
+        operator_timezone="Australia/Brisbane",
     )
     snap = snapshot_llm_budget(settings)
+    assert snap.day == day
     assert snap.total_tokens == 120
     assert snap.calls == 3
     assert snap.month_total_tokens == 120
@@ -179,3 +181,24 @@ def test_legacy_state_file_seeds_month_and_survives_reload(tmp_path) -> None:
     snap2 = snapshot_llm_budget(settings)
     assert snap2.total_tokens == 120
     assert snap2.month_calls == 3
+
+
+def test_budget_day_follows_brisbane_not_utc(monkeypatch, tmp_path) -> None:
+    """After UTC date flips, BNE (+10) can still be the previous calendar day — and vice versa."""
+    from datetime import UTC, datetime
+
+    # 16:00 UTC Aug 7 == 02:00 BNE Aug 8
+    frozen = datetime(2026, 8, 7, 16, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.core.timeutils.utc_now", lambda: frozen)
+
+    settings = Settings(
+        llm_budget_enforce=False,
+        llm_daily_token_budget=1000,
+        llm_daily_call_budget=100,
+        llm_monthly_aud_budget=10,
+        llm_budget_state_path=str(tmp_path / "budget.json"),
+        operator_timezone="Australia/Brisbane",
+    )
+    snap = snapshot_llm_budget(settings)
+    assert snap.day == "2026-08-08"
+    assert frozen.date().isoformat() == "2026-08-07"

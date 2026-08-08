@@ -128,7 +128,10 @@ class ExecutionService:
                 intent_type=intent_type.value,
                 side=v.side,
                 quantity=v.quantity,
-                entry_price=v.limit_price,
+                # Market entries store last print as reference for pretrade sizing.
+                entry_price=v.limit_price
+                if v.limit_price is not None
+                else latest_prices.get(v.symbol.upper()),
                 stop_price=v.stop_price,
                 status=IntentStatus.CREATED.value,
                 client_order_id=None,

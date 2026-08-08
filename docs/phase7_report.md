@@ -67,6 +67,8 @@ Migration `0006_phase7_performance_ops`. Packages: `app/performance`, `app/alert
 
 ## Deferred / Phase 8
 
-Long paper ops, walk-forward evaluation, authZ, secret manager, CI/CD, configuration freeze, Go/No-Go.
+Long paper ops, walk-forward evaluation, authZ, secret manager, configuration freeze, Go/No-Go.
+
+Started: GitHub Actions unit CI (`.github/workflows/ci.yml`).
 
 Live trading: **NOT READY**.

@@ -37,6 +37,10 @@ class FixtureMarketDataProvider:
     name = "fixture"
     version = "1.0.0"
 
+    def __init__(self, *, allow_offline: bool = False) -> None:
+        # Explicit offline/fixture paths (tests, fixture_mode) must not be blocked by live gates.
+        self._allow_offline = allow_offline
+
     def capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
             name=self.name,
@@ -53,7 +57,7 @@ class FixtureMarketDataProvider:
         from app.market.live_prices import requires_live_market_prices
 
         cfg = settings or get_settings()
-        if requires_live_market_prices(cfg):
+        if requires_live_market_prices(cfg) and not self._allow_offline:
             meta = ProviderRequestMeta(
                 provider_name=self.name,
                 provider_version=self.version,
@@ -69,7 +73,9 @@ class FixtureMarketDataProvider:
             provider_name=self.name,
             provider_version=self.version,
             settings=cfg,
-            fn=lambda: StubMarketDataProvider().fetch_quotes(symbols),
+            fn=lambda: StubMarketDataProvider().fetch_quotes(
+                symbols, allow_stub=self._allow_offline
+            ),
         )
         now = datetime.now(UTC)
         quotes: list[CanonicalQuote] = []

@@ -157,7 +157,7 @@ class DataCollectionPipeline:
         if self.fixture_mode:
             from app.providers.registry import FixtureMarketDataProvider
 
-            market = FixtureMarketDataProvider()
+            market = FixtureMarketDataProvider(allow_offline=True)
         quotes, meta_q = await market.fetch_quotes(universe, settings=self.settings)
         metas.append(meta_q.to_dict())
         bars, meta_b = await market.fetch_daily_bars(universe[:8], settings=self.settings)
@@ -268,6 +268,7 @@ class DataCollectionPipeline:
         legacy = await self._to_legacy_bundle(
             wf, started, quotes, bars, news, filings, macro_dict, economic, reasons
         )
+        await self._persist_market_prints(legacy.markets if legacy else [])
 
         # Contexts
         mi = MarketIntelligenceContextBuilder(self.settings).build(
@@ -349,6 +350,19 @@ class DataCollectionPipeline:
             reasons=result.fail_closed_reasons,
         )
         return result
+
+    async def _persist_market_prints(self, markets: list[Any]) -> None:
+        """Write normalized quotes to market_snapshots for decision-eval density."""
+        if not markets:
+            return
+        from app.storage.repositories import MarketSnapshotRepository
+
+        repo = MarketSnapshotRepository(self.session)
+        for item in markets:
+            try:
+                await repo.add(item)
+            except Exception:  # noqa: BLE001
+                logger.exception("market_snapshot_persist_failed", symbol=getattr(item, "symbol", None))
 
     async def _to_legacy_bundle(
         self,

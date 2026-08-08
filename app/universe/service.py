@@ -103,23 +103,24 @@ class UniverseService:
     async def collection_universe(self, holdings: list[str] | None = None) -> list[str]:
         """Symbols to collect/analyze this cycle: holdings ∪ focus (or watchlist capped)."""
         held = sorted({h.upper() for h in (holdings or []) if h})
+        bench = (self.settings.primary_benchmark or "SPY").upper()
         if not self.is_dynamic():
-            return sorted({*self.settings.trade_allowlist, *held})
+            return sorted({*self.settings.trade_allowlist, *held, bench})
 
         await self.ensure_seeded()
         active_set = {r.symbol.upper() for r in await self.list_active()}
-        allowed = active_set | set(held)
+        allowed = active_set | set(held) | {bench}
         latest = await self._latest_focus()
         if latest and latest.symbols:
             # Drop sold / paused names that lingered in an older focus snapshot.
             focus = [str(s).upper() for s in latest.symbols if str(s).upper() in allowed]
             if focus or held:
-                return sorted({*focus, *held})
+                return sorted({*focus, *held, bench})
 
         active = await self.list_active()
         ranked = sorted(active, key=lambda r: (-r.priority, r.symbol))
         focus = [r.symbol.upper() for r in ranked[: self.settings.universe_focus_limit]]
-        return sorted({*focus, *held})
+        return sorted({*focus, *held, bench})
 
     async def snapshot(self) -> dict[str, Any]:
         await self.ensure_seeded()

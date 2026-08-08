@@ -20,6 +20,18 @@ class AuditService:
         wf = analysis.workflow_id
         now = datetime.now(UTC)
 
+        def _payload_ts(payload: dict) -> datetime:
+            raw = payload.get("timestamp")
+            if isinstance(raw, datetime):
+                return raw if raw.tzinfo else raw.replace(tzinfo=UTC)
+            if isinstance(raw, str):
+                try:
+                    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+                except ValueError:
+                    return now
+            return now
+
         async def _run(name: AgentName, payload: dict, quality: float | None = None) -> None:
             trace = payload.get("trace") or {}
             src_ts = trace.get("source_data_timestamp")
@@ -28,6 +40,7 @@ class AuditService:
                     src_ts = datetime.fromisoformat(src_ts.replace("Z", "+00:00"))
                 except ValueError:
                     src_ts = None
+            started = _payload_ts(payload)
             run = AgentRun(
                 id=uuid4(),
                 workflow_id=wf,
@@ -37,7 +50,7 @@ class AuditService:
                 model_name=trace.get("model_name"),
                 model_parameters=trace.get("model_parameters") or {},
                 status="completed",
-                started_at=now,
+                started_at=started,
                 finished_at=now,
                 source_data_timestamp=src_ts,
                 source_names=trace.get("source_names") or [],

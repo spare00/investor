@@ -26,7 +26,9 @@ Storage stays UTC. The dashboard **never shows UTC**.
 | Clock | Zone | Used for |
 |-------|------|----------|
 | **ET** | `America/New_York` | Market session, jobs, settlement/recon/closing, news, performance as-of, decision evals |
-| **BNE** | `Australia/Brisbane` | Ops logs, alerts, errors, recovery, LLM budget day, agent-run stamps |
+| **BNE** | `Australia/Brisbane` | Ops logs, alerts, errors, recovery, LLM budget day/month roll, universe focus, agent-run stamps |
+
+LLM daily/monthly budget counters roll at **BNE midnight** (`OPERATOR_TIMEZONE`); storage timestamps remain UTC.
 
 ## Safety
 

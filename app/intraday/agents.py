@@ -128,7 +128,9 @@ class IntradayAgentService:
             horizons = await univ.horizon_by_symbol()
             universe = await univ.collection_universe(holdings=held)
 
-            collection = await DataCollectionService(self.session, persist=False).collect_premarket(
+            collection = await DataCollectionService(
+                self.session, persist=False, persist_markets=True
+            ).collect_premarket(
                 symbols=universe,
                 workflow_id=run.id,
                 horizon_by_symbol=horizons,

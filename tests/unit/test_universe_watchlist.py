@@ -67,7 +67,7 @@ async def test_static_mode_uses_allowlist(session: AsyncSession) -> None:
     settings = Settings(universe_mode="static", trade_allowlist=["QQQ"])
     svc = UniverseService(session, settings=settings)
     assert await svc.entry_universe() == {"QQQ"}
-    assert await svc.collection_universe(holdings=["AAPL"]) == ["AAPL", "QQQ"]
+    assert await svc.collection_universe(holdings=["AAPL"]) == ["AAPL", "QQQ", "SPY"]
 
 
 @pytest.mark.asyncio

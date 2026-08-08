@@ -70,10 +70,13 @@ class DataCollectionService:
         *,
         settings: Settings | None = None,
         persist: bool = True,
+        persist_markets: bool | None = None,
     ) -> None:
         self.session = session
         self.settings = settings or get_settings()
         self.persist = persist
+        # Market prints feed decision-eval density; default on even when news/macro skip DB.
+        self.persist_markets = persist if persist_markets is None else persist_markets
         self.news_repo = NewsRepository(session)
         self.market_repo = MarketSnapshotRepository(session)
         self.macro_repo = MacroSnapshotRepository(session)
@@ -126,7 +129,7 @@ class DataCollectionService:
             for raw in raw_quotes:
                 norm = normalize_market_quote(raw, now=now)
                 bundle.markets.append(norm)
-                if self.persist:
+                if self.persist_markets:
                     await self.market_repo.add(norm)
                 bundle.eligibility.append(
                     evaluate_symbol_eligibility(

@@ -18,8 +18,14 @@ _SIMULATION_PROVIDERS = frozenset({"stub", "fixture"})
 
 
 def requires_live_market_prices(settings: Settings | None = None) -> bool:
-    """True whenever broker submission or live market collection is enabled."""
+    """True whenever a real broker/order path or live market collection is enabled.
+
+    Mock/simulated brokers are offline unit/dev paths — they do not require Alpaca
+    prints (the mock book is the present market for those runs).
+    """
     cfg = settings or get_settings()
+    if (cfg.broker_provider or "").lower() in {"mock", "simulated", "sim"}:
+        return False
     return bool(
         cfg.enable_broker_orders
         or cfg.enable_automated_execution

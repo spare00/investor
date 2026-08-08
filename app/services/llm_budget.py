@@ -1,7 +1,8 @@
 """LLM spend budget — monthly AUD is primary; daily token/call caps derive from it.
 
-Counters are process-local with an optional JSON state file. Daily keys reset on
-UTC date change; monthly keys reset on UTC month change. Cost is estimated from
+Counters are process-local with an optional JSON state file. Daily/monthly keys
+follow the operator calendar (``OPERATOR_TIMEZONE``, default Australia/Brisbane).
+Event timestamps (``updated_at``) stay UTC. Cost is estimated from
 prompt/completion tokens using configured per-1M USD rates and AUD/USD.
 
 When ``llm_daily_token_budget`` / ``llm_daily_call_budget`` are 0, daily caps are
@@ -19,6 +20,7 @@ from typing import Any
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.core.timeutils import operator_calendar_day_iso, operator_calendar_month
 
 logger = get_logger(__name__)
 
@@ -178,12 +180,12 @@ class LLMBudgetSnapshot:
         }
 
 
-def _today() -> str:
-    return datetime.now(UTC).date().isoformat()
+def _today(settings: Settings | None = None) -> str:
+    return operator_calendar_day_iso(settings)
 
 
-def _month() -> str:
-    return datetime.now(UTC).strftime("%Y-%m")
+def _month(settings: Settings | None = None) -> str:
+    return operator_calendar_month(settings)
 
 
 def estimate_usd_cost(
@@ -314,8 +316,8 @@ def _roll_period(settings: Settings) -> tuple[str, str]:
     global _state_day, _state_month
     global _prompt_tokens, _completion_tokens, _calls, _warned_soft
     global _month_prompt_tokens, _month_completion_tokens, _month_calls, _month_warned_soft
-    day = _today()
-    month = _month()
+    day = _today(settings)
+    month = _month(settings)
     if _state_day != day or _state_month != month:
         prev_day, prev_month = _state_day, _state_month
         if _state_day != day:

@@ -111,16 +111,24 @@ class SettlementService:
         )
         payload = {
             "position_sync": sync,
-            "recon": recon,
+            "recon": {k: v for k, v in recon.items() if k != "book"},
             "execution_scope": scope_note,
             "updated_at": datetime.now(UTC).isoformat(),
         }
+        account_json = account if isinstance(account, dict) else {}
+        # Defensive: never persist non-JSON broker objects into JSON columns.
+        try:
+            import json as _json
+
+            _json.dumps(account_json, default=str)
+        except TypeError:
+            account_json = {k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v)) for k, v in account_json.items()}
         if existing is None:
             settlement = PostmarketSettlement(
                 id=uuid4(),
                 session_date=day,
                 reconciliation_result=recon.get("result"),
-                account_snapshot=account if isinstance(account, dict) else {},
+                account_snapshot=account_json,
                 order_count=len(orders),
                 execution_count=len(scoped),
                 overnight_positions=[p.symbol for p in open_lc],
@@ -131,7 +139,7 @@ class SettlementService:
         else:
             settlement = existing
             settlement.reconciliation_result = recon.get("result")
-            settlement.account_snapshot = account if isinstance(account, dict) else {}
+            settlement.account_snapshot = account_json
             settlement.order_count = len(orders)
             settlement.execution_count = len(scoped)
             settlement.overnight_positions = [p.symbol for p in open_lc]

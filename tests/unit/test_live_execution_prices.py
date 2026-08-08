@@ -20,7 +20,18 @@ from app.market.live_prices import (
 
 
 def test_requires_live_when_broker_orders_on() -> None:
-    assert requires_live_market_prices(Settings(enable_broker_orders=True)) is True
+    assert (
+        requires_live_market_prices(
+            Settings(enable_broker_orders=True, broker_provider="alpaca")
+        )
+        is True
+    )
+    assert (
+        requires_live_market_prices(
+            Settings(enable_broker_orders=True, broker_provider="mock")
+        )
+        is False
+    )
     assert (
         requires_live_market_prices(
             Settings(
