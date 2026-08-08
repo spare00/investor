@@ -26,10 +26,24 @@ async def emit_reconciliation_alert(
     issues: list[Any] | None = None,
     sync_type: str = "",
 ) -> EmitResult | None:
-    """CRITICAL when recon cannot trust broker/local books."""
+    """CRITICAL when recon cannot trust broker/local books.
+
+    When books are ``IN_SYNC`` again, auto-resolve open recon.* alerts.
+    """
+    cfg = settings or get_settings()
+    if result == "IN_SYNC":
+        resolved = 0
+        for code in (
+            "recon.material_drift",
+            "recon.broker_unavailable",
+            "recon.local_state_invalid",
+        ):
+            resolved += await resolve_alerts_by_code(session, cfg, code=code)
+        if resolved:
+            logger.info("recon_alerts_auto_resolved", count=resolved, sync_type=sync_type)
+        return None
     if result not in _RECON_ALERT_RESULTS:
         return None
-    cfg = settings or get_settings()
     severity = (
         AlertSeverity.CRITICAL
         if result in {"MATERIAL_DRIFT", "LOCAL_STATE_INVALID"}

@@ -1786,6 +1786,9 @@
       ]);
       const kpis = metrics.kpis || {};
       const counters = metrics.counters || {};
+      const sourceNote = counters.source
+        ? `Source: ${counters.source}${counters.note ? " · " + counters.note : ""}`
+        : (counters.note || "");
       renderMount("opsMetrics", `
         ${kpiGrid([
           kpiFromMetric("Job success", kpis.job_success_rate, { format: "pct", higherGood: true }),
@@ -1795,7 +1798,7 @@
           kpiFromMetric("Alerts / hr", kpis.alert_rate_per_hour, { digits: 2 }),
           kpiFromMetric("Manual rate", kpis.manual_intervention_rate, { format: "pct" }),
         ])}
-        ${counters.note ? `<div class="muted" style="margin-top:0.55rem">${esc(counters.note)}</div>` : ""}
+        ${sourceNote ? `<div class="muted" style="margin-top:0.55rem">${esc(sourceNote)}</div>` : ""}
         ${rawBlock(metrics)}`);
 
       document.getElementById("opsAlerts").innerHTML = (alerts.alerts || []).length

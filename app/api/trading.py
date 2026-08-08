@@ -7,10 +7,27 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.core.config import get_settings
+from app.core.logging import get_logger
 from app.execution.ops_persistence import persist_trading_controls
 from app.execution.safety_controls import trading_controls
 
+logger = get_logger(__name__)
 router = APIRouter(prefix="/trading", tags=["trading"])
+
+
+async def _persist_controls(*, changed_by: str = "api") -> tuple[bool, str | None]:
+    """Persist in-memory trading controls. Returns (ok, error)."""
+    from app.core.database import get_session_factory
+
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await persist_trading_controls(session, trading_controls, changed_by=changed_by)
+            await session.commit()
+        return True, None
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("trading_controls_persist_failed", changed_by=changed_by)
+        return False, str(exc)[:300]
 
 
 @router.get("/state")
@@ -27,35 +44,27 @@ async def trading_state() -> dict[str, Any]:
 
 @router.post("/pause")
 async def pause_trading(reason: str = "manual_pause") -> dict[str, Any]:
-    from app.core.database import get_session_factory
-
     snap = trading_controls.pause(reason=reason)
-    try:
-        factory = get_session_factory()
-        async with factory() as session:
-            await persist_trading_controls(session, trading_controls, changed_by="api")
-            await session.commit()
-    except Exception:  # noqa: BLE001
-        pass
-    return {"state": snap.state.value, "reason": snap.reason, "changed_at": snap.changed_at.isoformat()}
-
-
-@router.post("/resume")
-async def resume_trading(reason: str = "manual_resume") -> dict[str, Any]:
-    from app.core.database import get_session_factory
-
-    snap = trading_controls.resume(reason=reason)
-    try:
-        factory = get_session_factory()
-        async with factory() as session:
-            await persist_trading_controls(session, trading_controls, changed_by="api")
-            await session.commit()
-    except Exception:  # noqa: BLE001
-        pass
+    persisted, persist_error = await _persist_controls(changed_by="api:pause")
     return {
         "state": snap.state.value,
         "reason": snap.reason,
         "changed_at": snap.changed_at.isoformat(),
+        "persisted": persisted,
+        "persist_error": persist_error,
+    }
+
+
+@router.post("/resume")
+async def resume_trading(reason: str = "manual_resume") -> dict[str, Any]:
+    snap = trading_controls.resume(reason=reason)
+    persisted, persist_error = await _persist_controls(changed_by="api:resume")
+    return {
+        "state": snap.state.value,
+        "reason": snap.reason,
+        "changed_at": snap.changed_at.isoformat(),
+        "persisted": persisted,
+        "persist_error": persist_error,
         "note": (
             "Emergency stop cannot be cleared via resume; use /trading/clear-emergency or /trading/restart"
             if snap.state.value == "emergency_stop"
@@ -75,6 +84,7 @@ async def emergency_stop(reason: str = "emergency_stop") -> dict[str, Any]:
     canceled = 0
     closed_positions = 0
     error = None
+    persisted = False
     try:
         factory = get_session_factory()
         async with factory() as session:
@@ -90,8 +100,10 @@ async def emergency_stop(reason: str = "emergency_stop") -> dict[str, Any]:
             if settings.emergency_stop_close_positions and hasattr(broker, "close_all_positions"):
                 closed_positions = await broker.close_all_positions()
             await session.commit()
+            persisted = True
     except Exception as exc:  # noqa: BLE001
         error = str(exc)[:300]
+        logger.exception("emergency_stop_persist_or_broker_failed")
     return {
         "state": snap.state.value,
         "reason": snap.reason,
@@ -101,6 +113,7 @@ async def emergency_stop(reason: str = "emergency_stop") -> dict[str, Any]:
         "closed_positions": closed_positions,
         "close_positions_enabled": settings.emergency_stop_close_positions,
         "error": error,
+        "persisted": persisted,
         "action": "cancel_open_orders_and_block_new",
     }
 
@@ -112,6 +125,8 @@ async def clear_emergency(reason: str = "emergency_cleared") -> dict[str, Any]:
 
     snap = trading_controls.clear_emergency(reason=reason)
     resolved = 0
+    persisted = False
+    persist_error = None
     try:
         factory = get_session_factory()
         async with factory() as session:
@@ -122,13 +137,17 @@ async def clear_emergency(reason: str = "emergency_cleared") -> dict[str, Any]:
                 session, get_settings(), code="trading.emergency_stop"
             )
             await session.commit()
-    except Exception:  # noqa: BLE001
-        pass
+            persisted = True
+    except Exception as exc:  # noqa: BLE001
+        persist_error = str(exc)[:300]
+        logger.exception("clear_emergency_persist_failed")
     return {
         "state": snap.state.value,
         "reason": snap.reason,
         "changed_at": snap.changed_at.isoformat(),
         "alerts_resolved": resolved,
+        "persisted": persisted,
+        "persist_error": persist_error,
         "next": "POST /trading/resume to re-enable new orders",
     }
 
@@ -145,6 +164,8 @@ async def restart_trading(reason: str = "dashboard_restart") -> dict[str, Any]:
         steps.append("cleared_emergency")
     snap = trading_controls.resume(reason=reason)
     steps.append("resumed")
+    persisted = False
+    persist_error = None
     try:
         factory = get_session_factory()
         async with factory() as session:
@@ -158,13 +179,16 @@ async def restart_trading(reason: str = "dashboard_restart") -> dict[str, Any]:
                 if n:
                     steps.append(f"alerts_resolved:{n}")
             await session.commit()
-    except Exception:  # noqa: BLE001
-        pass
+            persisted = True
+    except Exception as exc:  # noqa: BLE001
+        persist_error = str(exc)[:300]
+        logger.exception("restart_persist_failed")
+        steps.append("persist_failed")
     return {
         "state": snap.state.value,
         "reason": snap.reason,
         "changed_at": snap.changed_at.isoformat(),
-        "before": before,
         "steps": steps,
-        "new_orders_allowed": trading_controls.is_new_order_allowed(),
+        "persisted": persisted,
+        "persist_error": persist_error,
     }

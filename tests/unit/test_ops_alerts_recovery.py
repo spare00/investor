@@ -82,6 +82,27 @@ async def test_recon_alert_only_on_bad_results(settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
+async def test_recon_in_sync_auto_resolves_open_alerts(
+    session: AsyncSession, settings: Settings
+) -> None:
+    from app.models import AlertRecordModel
+
+    drift = await emit_reconciliation_alert(
+        session, settings, result="MATERIAL_DRIFT", issues=[{"x": 1}], sync_type="SCHEDULED"
+    )
+    assert drift is not None and drift.emitted is True and drift.alert_id is not None
+    row = await session.get(AlertRecordModel, drift.alert_id)
+    assert row is not None
+    assert row.status == "active"
+    assert row.alert_type == "recon.material_drift"
+
+    cleared = await emit_reconciliation_alert(session, settings, result="IN_SYNC", sync_type="SCHEDULED")
+    assert cleared is None
+    await session.refresh(row)
+    assert row.status == "resolved"
+
+
+@pytest.mark.asyncio
 async def test_emergency_and_llm_budget_alerts(settings: Settings) -> None:
     emergency = await emit_emergency_stop_alert(
         None, settings, reason="operator", source="test"

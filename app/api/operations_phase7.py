@@ -43,17 +43,66 @@ class AlertAckBody(BaseModel):
 
 @router.get("/operations/metrics")
 async def operations_metrics(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+    """Operational KPIs derived from DB job/workflow/alert rows (last 24h)."""
+    from datetime import timedelta
+
+    from sqlalchemy import func
+
+    from app.models import AlertRecordModel, DailyWorkflowRun, ScheduledJobRecord
+
+    since = datetime.now(UTC) - timedelta(hours=24)
+    job_rows = list(
+        (
+            await session.execute(
+                select(ScheduledJobRecord.status, func.count())
+                .where(ScheduledJobRecord.planned_at >= since)
+                .group_by(ScheduledJobRecord.status)
+            )
+        ).all()
+    )
+    jobs_by_status = {str(status): int(count) for status, count in job_rows}
+    jobs_total = sum(jobs_by_status.values())
+    jobs_success = jobs_by_status.get("completed", 0)
+    jobs_failed = jobs_by_status.get("failed", 0)
+
+    wf_rows = list(
+        (
+            await session.execute(
+                select(DailyWorkflowRun.status, func.count())
+                .where(DailyWorkflowRun.started_at >= since)
+                .group_by(DailyWorkflowRun.status)
+            )
+        ).all()
+    )
+    wf_by_status = {str(status): int(count) for status, count in wf_rows}
+    workflows_total = sum(wf_by_status.values())
+    workflows_completed = wf_by_status.get("completed", 0) + wf_by_status.get("COMPLETED", 0)
+
+    alerts_fired = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(AlertRecordModel)
+                .where(AlertRecordModel.detected_at >= since)
+            )
+        ).scalar_one()
+        or 0
+    )
+
     counters = {
-        "jobs_total": 0,
-        "jobs_success": 0,
-        "jobs_failed": 0,
-        "workflows_total": 0,
-        "workflows_completed": 0,
-        "alerts_fired": 0,
+        "jobs_total": jobs_total,
+        "jobs_success": jobs_success,
+        "jobs_failed": jobs_failed,
+        "workflows_total": workflows_total,
+        "workflows_completed": workflows_completed,
+        "alerts_fired": alerts_fired,
         "manual_interventions": 0,
         "uptime_seconds": 0,
         "window_seconds": 86400,
-        "note": "Counters are placeholders until Prometheus scrape bridge ships",
+        "source": "database_24h",
+        "note": "Job/workflow/alert KPIs from DB (24h). Uptime still unavailable until process heartbeat ships.",
+        "jobs_by_status": jobs_by_status,
+        "workflows_by_status": wf_by_status,
     }
     kpis = PerformanceService(session).operational(counters)
     return {
