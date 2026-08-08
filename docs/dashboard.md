@@ -19,6 +19,15 @@ Overview and the top strip show **US equity session phase** (`REGULAR`, `PREMARK
 
 Each non-Overview panel keeps a collapsed **Raw JSON** details block for debugging.
 
+## Timestamps (GUI)
+
+Storage stays UTC. The dashboard **never shows UTC**.
+
+| Clock | Zone | Used for |
+|-------|------|----------|
+| **ET** | `America/New_York` | Market session, jobs, settlement/recon/closing, news, performance as-of, decision evals |
+| **BNE** | `Australia/Brisbane` | Ops logs, alerts, errors, recovery, LLM budget day, agent-run stamps |
+
 ## Safety
 
 - **DEV ONLY** banner when `env` is development/test or live trading is blocked

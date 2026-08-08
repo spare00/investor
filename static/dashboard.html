@@ -365,7 +365,7 @@
       <button id="btnStop" class="danger" onclick="emergencyStop()">Emergency Stop</button>
     </div>
   </header>
-  <div class="usage-strip" id="llmUsageStrip" title="Daily LLM budget (UTC)">
+  <div class="usage-strip" id="llmUsageStrip" title="Daily LLM budget (BNE day)">
     <div class="label">AI usage</div>
     <div class="usage-meter level-off" id="llmUsageMeter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" role="progressbar">
       <span id="llmUsageFill"></span>
@@ -725,28 +725,54 @@
       return `${pct.toFixed(digits)}%`;
     }
 
-    function fmtWhen(iso) {
-      if (!iso) return "—";
-      const s = String(iso);
-      return s.length > 19 ? s.slice(0, 19).replace("T", " ") : s.replace("T", " ");
+    /**
+     * Display clocks — never show UTC in the GUI.
+     * ET  = US market clock (session, jobs, trading lifecycle, decision/perf).
+     * BNE = operator-local (ops logs, alerts, errors, LLM budget day).
+     */
+    const TZ_ET = "America/New_York";
+    const TZ_BNE = "Australia/Brisbane";
+
+    function _parseInstant(iso) {
+      if (!iso) return null;
+      const d = new Date(String(iso));
+      return Number.isNaN(d.getTime()) ? null : d;
     }
 
-    /** Job times — always US/Eastern (market clock), regardless of API timezone. */
-    function fmtEt(iso) {
-      if (!iso) return "—";
-      const d = new Date(String(iso));
-      if (Number.isNaN(d.getTime())) return fmtWhen(iso);
-      const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/New_York",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      }).formatToParts(d);
+    function fmtInTz(iso, timeZone, label, { dateOnly = false, withSeconds = true } = {}) {
+      const d = _parseInstant(iso);
+      if (!d) return "—";
+      const opts = dateOnly
+        ? { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }
+        : {
+            timeZone,
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: withSeconds ? "2-digit" : undefined,
+            hour12: false,
+          };
+      const parts = new Intl.DateTimeFormat("en-US", opts).formatToParts(d);
       const g = (t) => (parts.find((p) => p.type === t) || {}).value || "";
-      return `${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")}`;
+      if (dateOnly) {
+        return `${g("year")}-${g("month")}-${g("day")} ${label}`;
+      }
+      const sec = withSeconds ? `:${g("second")}` : "";
+      return `${g("month")}-${g("day")} ${g("hour")}:${g("minute")}${sec} ${label}`;
+    }
+
+    function fmtEt(iso, opts) {
+      return fmtInTz(iso, TZ_ET, "ET", opts);
+    }
+
+    function fmtBne(iso, opts) {
+      return fmtInTz(iso, TZ_BNE, "BNE", opts);
+    }
+
+    /** @deprecated use fmtEt / fmtBne — kept as BNE default so nothing silently shows UTC. */
+    function fmtWhen(iso) {
+      return fmtBne(iso);
     }
 
     function kpiTone(status, value, { higherGood } = {}) {
@@ -859,7 +885,7 @@
       if (!iso) return "—";
       // Prefer HH:MM from ISO; keep timezone abbrev if present
       const m = String(iso).match(/T(\d{2}:\d{2})/);
-      return m ? m[1] : fmtWhen(iso);
+      return m ? m[1] : fmtEt(iso, { withSeconds: false });
     }
 
     function renderOverviewOpsStrip(data) {
@@ -918,7 +944,7 @@
         chip.title = [
           `Phase: ${phase}`,
           us.is_trading_day ? `Session ${open}–${close} ET` : "Non-trading day",
-          us.as_of_us_eastern ? `ET ${fmtWhen(us.as_of_us_eastern)}` : "",
+          us.as_of_us_eastern ? fmtEt(us.as_of_us_eastern) : "",
         ].filter(Boolean).join(" · ");
       }
 
@@ -980,7 +1006,7 @@
         pill(enforce ? "enforce on" : "monitor only", enforce ? "good" : "warn"),
         pill(blocked ? "BLOCKED" : "ok", blocked ? "bad" : "good"),
         budget.soft_warned || budget.month_soft_warned ? pill("soft warn", "warn") : "",
-        pill(`UTC ${budget.day || "—"}`, ""),
+        pill(budget.day ? fmtBne(budget.day + "T12:00:00Z", { dateOnly: true }) : "—", ""),
       ].filter(Boolean).join(" ");
       const tokRem = budget.tokens_remaining;
       const callRem = budget.calls_remaining;
@@ -1052,7 +1078,7 @@
         (budget.daily_budget_derived
           ? ` · day from month÷${budget.trading_days_per_month || 21}`
           : "") +
-        ` · UTC ${budget.day || "—"}`;
+        ` · ${budget.day ? fmtBne(budget.day + "T12:00:00Z", { dateOnly: true }) : "—"}`;
     }
 
     /** Lightweight strip update — avoids depending on heavy /dashboard/summary. */
@@ -1183,7 +1209,7 @@
       if (focus && (focus.symbols || []).length) {
         focusEl.innerHTML =
           `<div class="muted" style="margin-bottom:0.35rem">Focus` +
-          (focus.as_of ? ` · ${esc(fmtWhen(focus.as_of))}` : "") +
+          (focus.as_of ? ` · ${esc(fmtBne(focus.as_of))}` : "") +
           (focus.rationale ? ` — ${esc(focus.rationale)}` : "") +
           `</div>` +
           focus.symbols.map((s) => pill(s, "")).join(" ");
@@ -1271,7 +1297,7 @@
             </tr>`).join("")
           : "";
         setEl.innerHTML =
-          `<div class="muted" style="margin-bottom:0.35rem">Settlement · ${esc(fmtWhen(settle.created_at))} · orders ${esc(settle.order_count)} · fills ${esc(settle.execution_count)}</div>` +
+          `<div class="muted" style="margin-bottom:0.35rem">Settlement · ${esc(fmtEt(settle.created_at))} · orders ${esc(settle.order_count)} · fills ${esc(settle.execution_count)}</div>` +
           `<div style="margin-bottom:0.5rem"><span class="muted">Overnight </span>${overnightPos}</div>` +
           dataTable(["Symbol", "Realized", "Unrealized", "Flag"], prows, 4);
       } else {
@@ -1288,7 +1314,7 @@
             </tr>`).join("")
           : "";
         reconEl.innerHTML =
-          `<div class="muted" style="margin-bottom:0.35rem">Latest recon · ${esc(fmtWhen(recon.created_at))} · ${esc(recon.sync_type)} · ${esc(recon.result)}</div>` +
+          `<div class="muted" style="margin-bottom:0.35rem">Latest recon · ${esc(fmtEt(recon.created_at))} · ${esc(recon.sync_type)} · ${esc(recon.result)}</div>` +
           dataTable(["Type", "Broker id", "Detail"], irows, 3);
       } else {
         reconEl.innerHTML = `<div class="muted">No reconciliation run yet</div>`;
@@ -1331,7 +1357,7 @@
         reconRes
           ? pill(`recon ${reconRes}`, /DRIFT|UNAVAILABLE|INVALID/i.test(reconRes) ? "bad" : "good")
           : "",
-        pill(fmtWhen(rec.created_at), ""),
+        pill(fmtBne(rec.created_at), ""),
       ].filter(Boolean).join(" ");
       const actions = rec.actions || [];
       const arows = actions.length
@@ -1362,7 +1388,7 @@
           <td>${pill(a.severity || "info", a.severity === "critical" ? "bad" : a.severity === "warning" ? "warn" : "")}</td>
           <td class="mono">${esc(a.code || "")}</td>
           <td>${esc(a.message || "")}</td>
-          <td class="muted">${esc(fmtWhen(a.detected_at))}</td>
+          <td class="muted">${esc(fmtBne(a.detected_at))}</td>
           <td>
             <button type="button" style="font-size:0.75rem;padding:0.15rem 0.4rem;margin-right:0.25rem"
               onclick="ackAlert('${esc(a.id)}')">Ack</button>
@@ -1442,7 +1468,7 @@
             <td>${pill(e.importance || "—", e.importance === "critical" ? "bad" : e.importance === "high" ? "warn" : "")}</td>
             <td>${esc((e.symbols || []).join(",") || "—")}</td>
             <td>${e.requires_analysis ? pill("analyze", "warn") : "—"}</td>
-            <td class="muted">${esc(fmtWhen(e.detected_at))}</td>
+            <td class="muted">${esc(fmtBne(e.detected_at))}</td>
           </tr>`).join("")
         : "";
       evEl.innerHTML =
@@ -1456,7 +1482,7 @@
             <td>${esc(i.side)}</td>
             <td>${esc(i.quantity)}</td>
             <td>${pill(i.status || "—", i.status === "PENDING_APPROVAL" ? "warn" : "")}</td>
-            <td class="muted">${esc(fmtWhen(i.created_at))}</td>
+            <td class="muted">${esc(fmtBne(i.created_at))}</td>
           </tr>`).join("")
         : "";
       intentEl.innerHTML =
@@ -1489,7 +1515,7 @@
             </tr>`).join("")
           : "";
         plansEl.innerHTML =
-          `<div class="muted" style="margin-bottom:0.35rem">Latest closing · ${esc(fmtWhen(closing.created_at))} · ${esc(closing.policy || "")}</div>` +
+          `<div class="muted" style="margin-bottom:0.35rem">Latest closing · ${esc(fmtEt(closing.created_at))} · ${esc(closing.policy || "")}</div>` +
           dataTable(["Symbol", "Action", "Qty", "Book", "Rationale"], rows, 5);
       } else {
         plansEl.innerHTML = `<div class="muted">No closing review yet</div>`;
@@ -1535,7 +1561,7 @@
           ? pill(`news ${wf.last_news_ingest.published}`, wf.last_news_ingest.published ? "warn" : "")
           : "",
         wf.last_intraday_result ? pill(String(wf.last_intraday_result), "") : "",
-        wf.last_intraday_eval_at ? pill(`last ${fmtWhen(wf.last_intraday_eval_at)}`, "") : "",
+        wf.last_intraday_eval_at ? pill(`last ${fmtEt(wf.last_intraday_eval_at)}`, "") : "",
       ].filter(Boolean).join(" ");
     }
 
@@ -1562,7 +1588,9 @@
     async function refreshOverview() {
       const data = await fetchJson("/dashboard/summary");
       document.getElementById("asOf").textContent =
-        `UTC ${data.as_of.utc} · ET ${data.as_of.us_eastern} · BNE ${data.as_of.brisbane}`;
+        data.as_of?.utc
+          ? `${fmtEt(data.as_of.utc)} · ${fmtBne(data.as_of.utc)}`
+          : `${fmtEt(data.as_of?.us_eastern)} · ${fmtBne(data.as_of?.brisbane)}`;
       renderLlmUsage(data.llm_budget);
       renderLlmBudgetPanel(data.llm_budget);
       renderAgentLamps(data.agent_lamps, data.agents);
@@ -1647,11 +1675,11 @@
         ? data.open_orders.map(o => `<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.qty}</td><td>${o.status}</td></tr>`).join("")
         : `<tr><td colspan="4" class="muted">None</td></tr>`;
       document.getElementById("news").innerHTML = (data.news || []).length
-        ? data.news.map(n => `<li><strong>${n.headline}</strong><div class="muted">${n.source} · ${n.published_at}</div></li>`).join("")
+        ? data.news.map(n => `<li><strong>${n.headline}</strong><div class="muted">${n.source} · ${esc(fmtEt(n.published_at))}</div></li>`).join("")
         : `<li class="muted">None</li>`;
       document.getElementById("errors").innerHTML = (data.errors || []).length
         ? data.errors.map((e) => {
-            const when = e.created_at ? fmtWhen(e.created_at) : "—";
+            const when = e.created_at ? fmtBne(e.created_at) : "—";
             return `<li><span class="pill ${e.level === "error" ? "bad" : "warn"}">${esc(e.level)}</span> ${esc(e.event_type)}: ${esc(e.message)}<div class="muted">${esc(when)}</div></li>`;
           }).join("")
         : `<li class="muted">None</li>`;
@@ -1684,7 +1712,7 @@
           kpiFromMetric("Abs. return", portfolio.absolute_return, { format: "pct", higherGood: true }),
           kpiCard("Equity pts", fmtNum(portfolio.equity_points, 0)),
         ])}
-        <div class="muted" style="margin:0.65rem 0 0.35rem">As of ${esc(fmtWhen(val.as_of))}</div>
+        <div class="muted" style="margin:0.65rem 0 0.35rem">As of ${esc(fmtEt(val.as_of))}</div>
         ${dataTable(["Symbol", "Side", "Qty", "Mkt value", "Cost"], posRows)}
         ${rawBlock(portfolio)}`);
 
@@ -1713,7 +1741,7 @@
       const ddPeriods = drawdowns.periods || [];
       const ddRows = ddPeriods.length
         ? ddPeriods.slice(0, 12).map((p) => `<tr>
-            <td>${esc(fmtWhen(p.peak_at))}</td><td>${esc(fmtWhen(p.trough_at))}</td>
+            <td>${esc(fmtEt(p.peak_at))}</td><td>${esc(fmtEt(p.trough_at))}</td>
             <td>${esc(fmtPct(p.drawdown_pct))}</td>
             <td>${esc(fmtNum(p.duration_days, 0))}</td>
             <td>${esc(p.recovery_days != null ? fmtNum(p.recovery_days, 0) : "—")}</td>
@@ -1870,7 +1898,7 @@
                 ? pill("✗", "bad")
                 : pill(dirSt === "UNAVAILABLE" ? "n/a" : "—", "");
             return `<tr>
-              <td class="mono">${esc(fmtWhen(e.evaluated_at))}</td>
+              <td class="mono">${esc(fmtEt(e.evaluated_at))}</td>
               <td>${esc(e.universe_horizon || "—")}</td>
               <td>${esc(e.symbol || (e.scope === "portfolio" ? "book" : "—"))}</td>
               <td>${esc(e.action || m.action || m.raw_action || "—")}</td>
@@ -1935,7 +1963,7 @@
             ${pill(a.severity, a.severity === "critical" ? "bad" : "warn")}
             ${pill(a.status || "", "")}
             <strong>${esc(a.code)}</strong>: ${esc(a.message)}
-            <div class="muted">${esc(fmtWhen(a.created_at))}</div>
+            <div class="muted">${esc(fmtBne(a.created_at))}</div>
           </li>`).join("")
         : `<li class="muted">No active alerts</li>`;
 
@@ -1968,7 +1996,7 @@
             <td>${esc(s.return_pct != null ? `${fmtNum(s.return_pct, 2)}%` : "—")}</td>
             <td>${esc(s.max_drawdown != null ? `${fmtNum(s.max_drawdown, 2)}%` : "—")}</td>
             <td>${pill(s.status || "—", s.status === "completed" || s.status === "COMPLETED" ? "good" : "")}</td>
-            <td class="muted">${esc(fmtWhen(s.created_at))}</td>
+            <td class="muted">${esc(fmtBne(s.created_at))}</td>
           </tr>`).join("")
         : "";
       renderMount("opsSimulations", `
@@ -2029,7 +2057,7 @@
       const rows = decisions.decisions || [];
       const decRows = rows.length
         ? rows.map((d) => {
-            const when = d.display?.brisbane || d.display?.us_eastern || fmtWhen(d.timestamp);
+            const when = d.timestamp ? fmtEt(d.timestamp) : (d.display?.us_eastern || d.display?.brisbane || "—");
             return `<tr>
               <td class="mono">${esc(when)}</td>
               <td>${esc(d.market_regime || "—")}</td>
@@ -2131,7 +2159,7 @@
       } else {
         body = rawBlock(s);
       }
-      const when = agent.run?.display?.brisbane || agent.run?.display?.us_eastern || agent.run?.started_at || "";
+      const when = agent.run?.started_at ? fmtBne(agent.run.started_at) : (agent.run?.display?.brisbane || agent.run?.display?.us_eastern || "");
       return `<article class="briefing-agent">
         <h3>${esc(agent.label || agent.agent)} ${missing ? pill("missing", "warn") : pill("ok", "good")}
           <span class="muted" style="font-weight:400;font-size:0.8rem;margin-left:0.35rem">${esc(when)}</span>
@@ -2181,7 +2209,7 @@
               const agentBits = (row.agents || []).length
                 ? `<details style="margin-top:0.45rem"><summary class="muted">Agent materials (${row.agents_present || 0}/6)</summary>${(row.agents || []).map(renderBriefingAgent).join("")}</details>`
                 : `<p class="muted" style="margin:0.35rem 0 0">No full agent dump for this tick (decision summary only).</p>`;
-              const when = row.display?.brisbane || row.display?.us_eastern || row.as_of || "";
+              const when = row.as_of ? fmtBne(row.as_of) : (row.display?.brisbane || row.display?.us_eastern || "");
               return `<div class="intraday-card">
                 <div><strong>${esc(when)}</strong> · ${pill(esc(row.portfolio_action || "?"), "")} · thesis ${esc(row.thesis_status || "—")} · ${pill(row.risk_approval ? "risk ok" : "risk blocked", row.risk_approval ? "good" : "bad")}</div>
                 <div class="muted" style="margin-top:0.25rem">regime ${esc(row.market_regime || "—")} · mode ${esc(row.mode || "—")}</div>
