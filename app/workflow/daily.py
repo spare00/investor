@@ -463,7 +463,20 @@ class DailyWorkflowService:
             DailyWorkflowState.INTRADAY.value,
             DailyWorkflowState.MARKET_OPEN.value,
         }:
-            return {**self._run_dict(run), "catch_up": {"skipped": True, "reason": "already_ready"}}
+            mopped = await self._complete_planned_jobs(
+                run.session_date,
+                ["premarket_analysis", "preopen_revalidation"],
+                now=now,
+                note="catch_up_already_ready",
+            )
+            return {
+                **self._run_dict(run),
+                "catch_up": {
+                    "skipped": True,
+                    "reason": "already_ready",
+                    "jobs_marked": mopped,
+                },
+            }
 
         if not force and not self._should_catch_up_session(run, now):
             return {
@@ -506,16 +519,85 @@ class DailyWorkflowService:
                 session_date=run.session_date, fake_llm=fake_llm, now=now
             )
             steps.append("revalidate")
+            jobs_marked = await self._mark_catch_up_jobs(run.session_date, steps, now=now)
             return {
                 **settled,
-                "catch_up": {"skipped": False, "steps": steps, "reason": "advanced"},
+                "catch_up": {
+                    "skipped": False,
+                    "steps": steps,
+                    "reason": "advanced",
+                    "jobs_marked": jobs_marked,
+                },
             }
 
         run = await self._require_run(run.session_date)
+        jobs_marked = await self._mark_catch_up_jobs(run.session_date, steps, now=now)
         return {
             **self._run_dict(run),
-            "catch_up": {"skipped": False, "steps": steps, "reason": "partial"},
+            "catch_up": {
+                "skipped": False,
+                "steps": steps,
+                "reason": "partial",
+                "jobs_marked": jobs_marked,
+            },
         }
+
+    async def _mark_catch_up_jobs(
+        self,
+        session_date: str,
+        steps: list[str],
+        *,
+        now: datetime,
+    ) -> list[str]:
+        keys: list[str] = []
+        if "analysis" in steps:
+            keys.append("premarket_analysis")
+        if "revalidate" in steps:
+            # Analysis already happened before revalidate in the catch-up path.
+            if "premarket_analysis" not in keys:
+                keys.append("premarket_analysis")
+            keys.append("preopen_revalidation")
+        return await self._complete_planned_jobs(
+            session_date, keys, now=now, note="catch_up"
+        )
+
+    async def _complete_planned_jobs(
+        self,
+        session_date: str,
+        job_keys: list[str],
+        *,
+        now: datetime,
+        note: str,
+    ) -> list[str]:
+        """Mark matching planned/running jobs completed so catch-up cannot race the due loop."""
+        marked: list[str] = []
+        for key in job_keys:
+            row = (
+                await self.session.execute(
+                    select(ScheduledJobRecord).where(
+                        ScheduledJobRecord.session_date == session_date,
+                        ScheduledJobRecord.job_key == key,
+                        ScheduledJobRecord.status.in_(["planned", "running"]),
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                continue
+            row.status = "completed"
+            row.completed_at = now
+            row.error = None
+            if not row.started_at:
+                row.started_at = now
+            marked.append(key)
+            logger.info(
+                "scheduler_job_completed_by_catch_up",
+                job=key,
+                session_date=session_date,
+                note=note,
+            )
+        if marked:
+            await self.session.flush()
+        return marked
 
     async def evaluate_intraday(
         self,

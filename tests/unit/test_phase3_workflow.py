@@ -45,6 +45,7 @@ async def session() -> AsyncSession:
 def _reset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENABLE_BROKER_ORDERS", "false")
     monkeypatch.setenv("ENABLE_AUTOMATED_EXECUTION", "false")
+    monkeypatch.setenv("ENABLE_EXTERNAL_DATA", "false")
     monkeypatch.setenv("ENABLE_SCHEDULER", "false")
     monkeypatch.setenv("SCHEDULER_ENABLED", "false")
     clear_settings_cache()
@@ -322,6 +323,37 @@ async def test_catch_up_enters_intraday_after_open(session: AsyncSession) -> Non
     out = await svc.catch_up_to_intraday(session_date="2026-08-04", now=now, fake_llm=True)
     assert out["current_state"] == DailyWorkflowState.INTRADAY.value
     assert out["catch_up"]["skipped"] is False
+
+
+@pytest.mark.asyncio
+async def test_catch_up_marks_planned_premarket_jobs_completed(session: AsyncSession) -> None:
+    from app.models import ScheduledJobRecord
+    from sqlalchemy import select
+
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-04")
+    jobs = (
+        await session.execute(
+            select(ScheduledJobRecord).where(ScheduledJobRecord.session_date == "2026-08-04")
+        )
+    ).scalars().all()
+    by_key = {j.job_key: j for j in jobs}
+    assert by_key["premarket_analysis"].status == "planned"
+    assert by_key["preopen_revalidation"].status == "planned"
+
+    # Near open from PREMARKET_PREPARATION — catch-up runs analysis+revalidate.
+    now = datetime(2026, 8, 4, 13, 25, tzinfo=UTC)  # 09:25 ET
+    out = await svc.catch_up_to_intraday(
+        session_date="2026-08-04", now=now, fake_llm=True, force=True
+    )
+    assert "analysis" in (out.get("catch_up") or {}).get("steps", [])
+    assert "revalidate" in (out.get("catch_up") or {}).get("steps", [])
+    await session.refresh(by_key["premarket_analysis"])
+    await session.refresh(by_key["preopen_revalidation"])
+    assert by_key["premarket_analysis"].status == "completed"
+    assert by_key["preopen_revalidation"].status == "completed"
+    assert "premarket_analysis" in (out.get("catch_up") or {}).get("jobs_marked", [])
+    assert "preopen_revalidation" in (out.get("catch_up") or {}).get("jobs_marked", [])
 
 
 @pytest.mark.asyncio
