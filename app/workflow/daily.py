@@ -667,11 +667,41 @@ class DailyWorkflowService:
                     RISK_REVIEW_REQUIRED,
                 )
                 from app.intraday.service import IntradayService
+                from app.models import PositionLifecycle
+                from sqlalchemy import select as sa_select
 
                 intra = IntradayService(
                     self.session, settings=self.settings, controls=self.controls
                 )
-                mon_rows = await intra.monitor_all(prices=None)
+                mon_prices: dict[str, float] = {}
+                try:
+                    from app.market.live_prices import (
+                        fetch_live_last_prices,
+                        requires_live_market_prices,
+                    )
+
+                    if requires_live_market_prices(self.settings):
+                        open_syms = [
+                            p.symbol
+                            for p in (
+                                await self.session.execute(
+                                    sa_select(PositionLifecycle).where(
+                                        PositionLifecycle.status.in_(
+                                            ["OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"]
+                                        )
+                                    )
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        ]
+                        if open_syms:
+                            mon_prices = await fetch_live_last_prices(
+                                open_syms, settings=self.settings
+                            )
+                except Exception as exc:  # noqa: BLE001
+                    meta["last_monitor_price_error"] = str(exc)[:200]
+                mon_rows = await intra.monitor_all(prices=mon_prices or None)
                 escalate_verdicts = {
                     EXIT_INTENT_REQUIRED,
                     ANALYSIS_REQUIRED,

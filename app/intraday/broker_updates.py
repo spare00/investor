@@ -32,6 +32,20 @@ _STATUS_MAP = {
     "unknown": InternalOrderState.UNKNOWN,
 }
 
+_OPENISH = {
+    "new",
+    "accepted",
+    "partially_filled",
+    "pending_submit",
+    "pending_new",
+    "SUBMITTED",
+    "ACCEPTED",
+    "SUBMITTING",
+    "PARTIALLY_FILLED",
+    "CANCEL_PENDING",
+    "REPLACE_PENDING",
+}
+
 
 class BrokerUpdateProcessor:
     def __init__(self, session: AsyncSession, *, settings: Settings | None = None) -> None:
@@ -40,14 +54,26 @@ class BrokerUpdateProcessor:
         self.broker = get_broker(self.settings)
         self.bus = IntradayEventBus(session, settings=self.settings)
 
-    async def poll_and_apply(self) -> dict[str, Any]:
-        """Polling fallback when streaming disabled."""
+    async def poll_and_apply(self, *, remote_orders: list[Any] | None = None) -> dict[str, Any]:
+        """Polling fallback when streaming disabled.
+
+        Pass ``remote_orders`` from a shared broker book to avoid a second
+        ``get_open_orders`` call during scheduled reconciliation.
+        """
         updated = 0
         skipped_stale = 0
+        skipped_unchanged = 0
         try:
-            remote_orders = await self.broker.get_open_orders()
-            # Also sync known local orders by id
-            local = list((await self.session.execute(select(Order))).scalars().all())
+            if remote_orders is None:
+                remote_orders = await self.broker.get_open_orders()
+            # Only open-ish local rows — not the full order history.
+            local = list(
+                (
+                    await self.session.execute(select(Order).where(Order.status.in_(list(_OPENISH))))
+                )
+                .scalars()
+                .all()
+            )
         except Exception as exc:  # noqa: BLE001
             await self.bus.publish(
                 event_type="DATA_STALE",
@@ -60,12 +86,18 @@ class BrokerUpdateProcessor:
             )
             return {"updated": 0, "error": str(exc)[:200], "fallback": "reconciliation_required"}
 
-        remote_by_id = {o.broker_order_id: o for o in remote_orders}
+        remote_by_id = {
+            getattr(o, "broker_order_id", None): o
+            for o in (remote_orders or [])
+            if getattr(o, "broker_order_id", None)
+        }
         for row in local:
             if not row.broker_order_id:
                 continue
-            # Prefer fetch by id for accuracy
             remote = remote_by_id.get(row.broker_order_id)
+            # Local still open but missing from open-orders → likely filled/cancelled;
+            # fetch once by id. Skip when remote list was empty due to broker outage
+            # (handled above).
             if remote is None and hasattr(self.broker, "get_order"):
                 try:
                     remote = await self.broker.get_order(row.broker_order_id)
@@ -78,12 +110,22 @@ class BrokerUpdateProcessor:
                 updated += 1
             elif applied == "stale":
                 skipped_stale += 1
-        return {"updated": updated, "skipped_stale": skipped_stale, "mode": "polling"}
+            elif applied == "unchanged":
+                skipped_unchanged += 1
+        return {
+            "updated": updated,
+            "skipped_stale": skipped_stale,
+            "skipped_unchanged": skipped_unchanged,
+            "mode": "polling",
+        }
 
     async def apply_remote_status(self, row: Order, raw_status: str, remote: Any) -> str:
         mapped = _STATUS_MAP.get(raw_status.lower(), InternalOrderState.UNKNOWN)
+        # No-op when already in sync — avoid BrokerOrderEvent / bus write amp.
+        if row.status == mapped.value:
+            return "unchanged"
+
         event_ts = getattr(remote, "submitted_at", None) or datetime.now(UTC)
-        # Idempotent append-only event
         self.session.add(
             BrokerOrderEvent(
                 id=uuid4(),
@@ -98,7 +140,6 @@ class BrokerUpdateProcessor:
                 },
             )
         )
-        # Do not overwrite with older/unknown if already terminal
         terminal = {
             InternalOrderState.FILLED.value,
             InternalOrderState.CANCELLED.value,
@@ -110,11 +151,9 @@ class BrokerUpdateProcessor:
             await self.session.flush()
             return "stale"
         try:
-            # Best-effort transition guard when current maps to InternalOrderState
             if row.status in {s.value for s in InternalOrderState}:
                 assert_order_transition(InternalOrderState(row.status), mapped)
         except ValueError:
-            # Broker truth wins for sync but flag reconciliation
             row.raw_payload = {**(row.raw_payload or {}), "illegal_transition_observed": True}
             row.status = InternalOrderState.RECONCILIATION_REQUIRED.value
             await self.session.flush()

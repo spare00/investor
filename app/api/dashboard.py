@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -156,17 +157,31 @@ async def list_events(
     }
 
 
+# Throttle dashboard broker order sync so it doesn't compete with scheduled recon.
+_LAST_DASHBOARD_ORDER_SYNC: datetime | None = None
+_DASHBOARD_ORDER_SYNC_MIN_SECONDS = 90
+
+
 @router.get("/dashboard/summary")
 async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     """Single payload for the ops dashboard."""
+    global _LAST_DASHBOARD_ORDER_SYNC
     now = utc_now()
     controls = trading_controls.snapshot()
 
-    # Keep local order statuses aligned with Alpaca before rendering open orders.
-    try:
-        await OrderManager(session).sync_statuses_from_broker()
-    except Exception:  # noqa: BLE001 — dashboard should still render
-        pass
+    # Prefer scheduled recon for broker truth; only refresh here when stale.
+    sync_orders = False
+    if _LAST_DASHBOARD_ORDER_SYNC is None:
+        sync_orders = True
+    else:
+        age = (now - _LAST_DASHBOARD_ORDER_SYNC).total_seconds()
+        sync_orders = age >= _DASHBOARD_ORDER_SYNC_MIN_SECONDS
+    if sync_orders:
+        try:
+            await OrderManager(session).sync_statuses_from_broker()
+            _LAST_DASHBOARD_ORDER_SYNC = now
+        except Exception:  # noqa: BLE001 — dashboard should still render
+            pass
 
     snap = (
         await session.execute(

@@ -353,7 +353,15 @@ async def _reconcile_broker() -> None:
             try:
                 from app.intraday.broker_updates import BrokerUpdateProcessor
 
-                recon = await ReconciliationService(session, settings=settings).run("SCHEDULED")
+                recon_svc = ReconciliationService(session, settings=settings)
+                book = None
+                try:
+                    book = await recon_svc.fetch_book()
+                except Exception as exc:  # noqa: BLE001
+                    recon = await recon_svc.run("SCHEDULED")  # records BROKER_UNAVAILABLE
+                    recon.setdefault("fetch_error", str(exc)[:200])
+                else:
+                    recon = await recon_svc.run("SCHEDULED", book=book)
                 try:
                     from app.alerts.ops import emit_reconciliation_alert
 
@@ -367,15 +375,22 @@ async def _reconcile_broker() -> None:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("broker_recon_alert_failed", error=str(exc)[:200])
                 poll: dict[str, Any] = {}
-                try:
-                    poll = await BrokerUpdateProcessor(session, settings=settings).poll_and_apply()
-                except Exception as exc:  # noqa: BLE001
-                    poll = {"error": str(exc)[:200]}
                 sync: dict[str, Any] = {}
-                try:
-                    sync = await PositionManager(session, settings=settings).sync_from_broker()
-                except Exception as exc:  # noqa: BLE001
-                    sync = {"error": str(exc)[:200]}
+                book = recon.get("book") or book
+                if book is not None:
+                    try:
+                        poll = await BrokerUpdateProcessor(
+                            session, settings=settings
+                        ).poll_and_apply(remote_orders=book.orders)
+                    except Exception as exc:  # noqa: BLE001
+                        poll = {"error": str(exc)[:200]}
+                    try:
+                        sync = await PositionManager(session, settings=settings).sync_from_broker(
+                            account=book.account,
+                            positions=book.positions,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        sync = {"error": str(exc)[:200]}
                 await session.commit()
                 entry = {
                     "job": "broker_reconciliation",
@@ -385,10 +400,13 @@ async def _reconcile_broker() -> None:
                     "issues": len(recon.get("issues") or []),
                     "blocks_new_orders": recon.get("blocks_new_orders"),
                     "poll_updated": poll.get("updated"),
+                    "poll_unchanged": poll.get("skipped_unchanged"),
                     "poll_error": poll.get("error"),
                     "sync_error": sync.get("error"),
+                    "snapshot_written": sync.get("snapshot_written"),
                     "lifecycles_upserted": (sync.get("lifecycles") or {}).get("upserted"),
                     "lifecycles_closed": (sync.get("lifecycles") or {}).get("closed"),
+                    "shared_book": book is not None,
                 }
                 _job_log.append(entry)
                 if len(_job_log) > 100:

@@ -104,11 +104,20 @@ class IntradayAgentService:
 
         try:
             pm = PositionManager(self.session, settings=self.settings)
-            try:
-                await pm.sync_from_broker()
-            except Exception:  # noqa: BLE001
-                pass
-            portfolio = await pm.portfolio_state_input()
+            # Prefer recent snapshot from scheduled recon; only re-sync when stale.
+            port = await pm.portfolio_state_input()
+            snap_age_s: float | None = None
+            if port.as_of is not None:
+                as_of = port.as_of if port.as_of.tzinfo else port.as_of.replace(tzinfo=UTC)
+                snap_age_s = (datetime.now(UTC) - as_of).total_seconds()
+            max_age = max(30, int(self.settings.broker_reconciliation_interval_seconds) * 1.5)
+            if snap_age_s is None or snap_age_s > max_age:
+                try:
+                    await pm.sync_from_broker()
+                    port = await pm.portfolio_state_input()
+                except Exception:  # noqa: BLE001
+                    pass
+            portfolio = port
             held = [
                 p.symbol.upper()
                 for p in portfolio.positions

@@ -44,8 +44,15 @@ class IntradayRecoveryService:
                 source="intraday_recovery",
             )
 
-        # 2. Broker reconciliation before allowing new orders
-        recon = await ReconciliationService(self.session, settings=self.settings).run("RECOVERY")
+        # 2. Broker reconciliation before allowing new orders (one shared book).
+        recon_svc = ReconciliationService(self.session, settings=self.settings)
+        book = None
+        try:
+            book = await recon_svc.fetch_book()
+            recon = await recon_svc.run("RECOVERY", book=book)
+        except Exception:  # noqa: BLE001
+            recon = await recon_svc.run("RECOVERY")
+            book = recon.get("book")
         actions.append(f"reconciliation:{recon.get('result')}")
         await emit_reconciliation_alert(
             self.session,
@@ -60,14 +67,25 @@ class IntradayRecoveryService:
             "LOCAL_STATE_INVALID",
         }
 
-        # 3. Order status poll
-        poll = await BrokerUpdateProcessor(self.session, settings=self.settings).poll_and_apply()
+        # 3. Order status poll + position sync (reuse book when available)
+        if book is not None:
+            poll = await BrokerUpdateProcessor(self.session, settings=self.settings).poll_and_apply(
+                remote_orders=book.orders
+            )
+        else:
+            poll = await BrokerUpdateProcessor(self.session, settings=self.settings).poll_and_apply()
         actions.append(f"broker_poll_updated:{poll.get('updated')}")
 
         # 3b. Mirror broker positions into PositionLifecycle
         lifecycle_sync: dict[str, Any] = {}
         try:
-            sync = await PositionManager(self.session, settings=self.settings).sync_from_broker()
+            if book is not None:
+                sync = await PositionManager(self.session, settings=self.settings).sync_from_broker(
+                    account=book.account,
+                    positions=book.positions,
+                )
+            else:
+                sync = await PositionManager(self.session, settings=self.settings).sync_from_broker()
             lifecycle_sync = sync.get("lifecycles") or {}
             actions.append(
                 f"lifecycles_upserted:{lifecycle_sync.get('upserted', 0)}"
@@ -116,13 +134,14 @@ class IntradayRecoveryService:
         )
         actions.append(f"pending_events:{len(pending_events)}")
 
+        recon_payload = {k: v for k, v in recon.items() if k != "book"}
         run = IntradayRecoveryRun(
             id=uuid4(),
             emergency_stop=emergency,
             new_orders_allowed=new_orders_allowed,
             actions=actions,
             payload={
-                "recon": recon,
+                "recon": recon_payload,
                 "poll": poll,
                 "lifecycle_sync": lifecycle_sync,
                 "restored_controls": restored,

@@ -69,26 +69,41 @@ class PositionManager:
         self.settings = settings or get_settings()
         self.broker = broker or get_broker(self.settings)
 
-    async def sync_from_broker(self) -> dict[str, Any]:
+    async def sync_from_broker(
+        self,
+        *,
+        account: dict[str, Any] | None = None,
+        positions: list[dict[str, Any]] | None = None,
+        force_snapshot: bool = False,
+    ) -> dict[str, Any]:
+        """Sync local positions from broker.
+
+        Optional ``account`` / ``positions`` reuse a shared broker book (avoid
+        triple-fetch during scheduled recon). Skips a new PortfolioSnapshot when
+        equity/cash/position fingerprint is unchanged unless ``force_snapshot``.
+        """
         try:
-            account = await self.broker.get_account()
-            positions = await self.broker.get_positions()
-        except BrokerError as exc:
+            if account is None or positions is None:
+                account = await self.broker.get_account()
+                positions = await self.broker.get_positions()
+        except BrokerError:
             logger.exception("position_sync_failed")
             raise
+
+        assert account is not None
+        assert positions is not None
 
         now = datetime.now(UTC)
         equity = float(str(account.get("equity") or account.get("portfolio_value") or 0))
         cash = float(str(account.get("cash") or 0))
         cash_pct = (cash / equity * 100.0) if equity else 100.0
 
-        # Replace local position rows with broker truth
-        existing = await self.session.execute(select(Position))
-        for row in existing.scalars().all():
-            await self.session.delete(row)
-        await self.session.flush()
-
+        # Upsert by symbol instead of wipe+rewrite.
+        existing_rows = list((await self.session.execute(select(Position))).scalars().all())
+        by_symbol = {p.symbol.upper(): p for p in existing_rows}
+        seen: set[str] = set()
         gross = 0.0
+        parsed: list[dict[str, Any]] = []
         for raw in positions:
             symbol = str(raw.get("symbol") or "").upper()
             qty = float(str(raw.get("qty") or 0))
@@ -99,19 +114,45 @@ class PositionManager:
             upnl = float(str(raw.get("unrealized_pl") or 0))
             avg = float(str(raw.get("avg_entry_price") or 0))
             gross += abs(mv)
-            self.session.add(
-                Position(
-                    id=uuid4(),
-                    symbol=symbol,
-                    quantity=qty,
-                    avg_entry_price=avg,
-                    market_value=mv,
-                    cost_basis=cost,
-                    unrealized_pnl=upnl,
-                    sector=SECTOR_MAP.get(symbol, "Unknown"),
-                    as_of=now,
-                )
+            seen.add(symbol)
+            parsed.append(
+                {
+                    "symbol": symbol,
+                    "quantity": qty,
+                    "avg_entry_price": avg,
+                    "market_value": mv,
+                    "cost_basis": cost,
+                    "unrealized_pnl": upnl,
+                }
             )
+            row = by_symbol.get(symbol)
+            if row is None:
+                self.session.add(
+                    Position(
+                        id=uuid4(),
+                        symbol=symbol,
+                        quantity=qty,
+                        avg_entry_price=avg,
+                        market_value=mv,
+                        cost_basis=cost,
+                        unrealized_pnl=upnl,
+                        sector=SECTOR_MAP.get(symbol, "Unknown"),
+                        as_of=now,
+                    )
+                )
+            else:
+                row.quantity = qty
+                row.avg_entry_price = avg
+                row.market_value = mv
+                row.cost_basis = cost
+                row.unrealized_pnl = upnl
+                row.sector = SECTOR_MAP.get(symbol, row.sector or "Unknown")
+                row.as_of = now
+
+        for symbol, row in by_symbol.items():
+            if symbol not in seen:
+                await self.session.delete(row)
+        await self.session.flush()
 
         gross_pct = (gross / equity * 100.0) if equity else 0.0
         from app.brokers.models import redact_account_id
@@ -122,29 +163,58 @@ class PositionManager:
         for key in ("account_number", "account_id"):
             if key in safe_account:
                 safe_account[key] = redact_account_id(str(safe_account[key]))
-        snap = PortfolioSnapshot(
-            id=uuid4(),
-            as_of=now,
-            equity=equity,
-            cash=cash,
-            cash_pct=cash_pct,
-            gross_exposure_pct=gross_pct,
-            daily_pnl=0.0,
-            daily_pnl_pct=0.0,
-            drawdown_pct=0.0,
-            peak_equity=equity,
-            open_positions=len(positions),
-            payload={"account": safe_account, "position_count": len(positions)},
-        )
-        # Rough daily pnl if last_equity present
-        last_eq = account.get("last_equity")
-        if last_eq is not None:
-            last = float(str(last_eq))
-            snap.daily_pnl = equity - last
-            snap.daily_pnl_pct = ((equity - last) / last * 100.0) if last else 0.0
 
-        self.session.add(snap)
-        await self.session.flush()
+        fingerprint = {
+            "equity": round(equity, 4),
+            "cash": round(cash, 4),
+            "positions": sorted(
+                [
+                    [p["symbol"], round(p["quantity"], 6), round(p["market_value"], 4)]
+                    for p in parsed
+                ]
+            ),
+        }
+        snapshot_written = False
+        snap: PortfolioSnapshot | None = None
+        last = (
+            await self.session.execute(
+                select(PortfolioSnapshot).order_by(PortfolioSnapshot.as_of.desc()).limit(1)
+            )
+        ).scalar_one_or_none()
+        last_fp = (last.payload or {}).get("fingerprint") if last is not None else None
+        if force_snapshot or last_fp != fingerprint:
+            snap = PortfolioSnapshot(
+                id=uuid4(),
+                as_of=now,
+                equity=equity,
+                cash=cash,
+                cash_pct=cash_pct,
+                gross_exposure_pct=gross_pct,
+                daily_pnl=0.0,
+                daily_pnl_pct=0.0,
+                drawdown_pct=float(last.drawdown_pct) if last is not None else 0.0,
+                peak_equity=max(equity, float(last.peak_equity) if last is not None else equity),
+                open_positions=len(parsed),
+                payload={
+                    "account": safe_account,
+                    "position_count": len(parsed),
+                    "fingerprint": fingerprint,
+                },
+            )
+            last_eq = account.get("last_equity")
+            if last_eq is not None:
+                prior = float(str(last_eq))
+                snap.daily_pnl = equity - prior
+                snap.daily_pnl_pct = ((equity - prior) / prior * 100.0) if prior else 0.0
+            if snap.peak_equity > 0:
+                snap.drawdown_pct = max(
+                    0.0, (snap.peak_equity - equity) / snap.peak_equity * 100.0
+                )
+            self.session.add(snap)
+            snapshot_written = True
+            await self.session.flush()
+        else:
+            snap = last
 
         lifecycle_sync: dict[str, Any] = {}
         try:
@@ -166,14 +236,15 @@ class PositionManager:
 
         PORTFOLIO_EQUITY.set(equity)
         PORTFOLIO_CASH.set(cash)
-        PORTFOLIO_DRAWDOWN_PCT.set(snap.drawdown_pct)
-        OPEN_POSITIONS.set(len(positions))
+        PORTFOLIO_DRAWDOWN_PCT.set(float(snap.drawdown_pct) if snap is not None else 0.0)
+        OPEN_POSITIONS.set(len(parsed))
 
         logger.info(
             "positions_synced",
             equity=equity,
             cash=cash,
-            positions=len(positions),
+            positions=len(parsed),
+            snapshot_written=snapshot_written,
             lifecycles=lifecycle_sync.get("upserted"),
             lifecycles_closed=lifecycle_sync.get("closed"),
         )
@@ -182,10 +253,11 @@ class PositionManager:
             "cash": cash,
             "cash_pct": cash_pct,
             "gross_exposure_pct": gross_pct,
-            "open_positions": len(positions),
-            "daily_pnl": snap.daily_pnl,
-            "daily_pnl_pct": snap.daily_pnl_pct,
+            "open_positions": len(parsed),
+            "daily_pnl": float(snap.daily_pnl) if snap is not None else 0.0,
+            "daily_pnl_pct": float(snap.daily_pnl_pct) if snap is not None else 0.0,
             "lifecycles": lifecycle_sync,
+            "snapshot_written": snapshot_written,
         }
 
     async def portfolio_state_input(self) -> PortfolioStateInput:
