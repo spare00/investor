@@ -9,9 +9,9 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.brokers.alpaca import get_broker
 from app.brokers.base import BrokerClient, OrderRequest, OrderSide, OrderStatus
 from app.brokers.errors import BrokerError
+from app.brokers.factory import get_broker
 from app.brokers.models import InternalOrderState
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger

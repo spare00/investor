@@ -23,6 +23,7 @@ def _clear() -> None:
 def test_map_ibkr_order_status() -> None:
     assert _map_status("Filled") == OrderStatus.FILLED
     assert _map_status("Submitted") == OrderStatus.ACCEPTED
+    assert _map_status("ValidationError") == OrderStatus.ACCEPTED  # warn 399 outside RTH
     assert _map_status("Cancelled") == OrderStatus.CANCELED
     assert _map_status("PartiallyFilled") == OrderStatus.PARTIAL
 

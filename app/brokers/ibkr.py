@@ -38,6 +38,7 @@ def _map_status(raw: str | None) -> OrderStatus:
         "PreSubmitted": OrderStatus.ACCEPTED,
         "Submitted": OrderStatus.ACCEPTED,
         "ApiPending": OrderStatus.NEW,
+        "ValidationError": OrderStatus.ACCEPTED,  # often outside-RTH hold (warn 399), not a hard reject
         "Filled": OrderStatus.FILLED,
         "PartiallyFilled": OrderStatus.PARTIAL,
         "Cancelled": OrderStatus.CANCELED,

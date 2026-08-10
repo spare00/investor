@@ -62,3 +62,5 @@ pip install -e ".[ibkr]"
 - Existing Alpaca paper history does not transfer — treat IBKR paper as day 0.
 - `clientId` must be unique per Gateway connection (avoid colliding with TWS UI tools).
 - Alpaca adapter remains in-tree for rollback (`BROKER_PROVIDER=alpaca`) but is no longer the cutover path.
+- Outside RTH, IB may emit **Warning 399** (`ValidationError` → held until open). We map that to `accepted` / working, not rejected.
+- Paper order smoke (far limit buy → open → cancel) was verified via `IbkrBroker` and `OrderManager`. Cancel resting test orders; do not leave far limits overnight.
