@@ -42,7 +42,7 @@ TRADE_ALLOWLIST_AU=BHP,CBA,VAS,IOZ,NDQ,JPEQ
 - Holdings, open lifecycles, live-price polls, and intraday agent reanalysis are filtered to the run's venue.
 - Positions are unique on `(symbol, venue)` so the same ticker can exist on both books.
 - High-importance news escalate per book: symbol-tagged items must hit that venue's allowlist/holdings; untagged macro still escalates for every book. Stub news includes a few ASX-tagged fixtures; live ASX news API is not wired yet.
-- Risk: new entries whose trade currency differs from portfolio `base_currency` hard-veto (`currency_mismatch`) until FX sizing exists. Prefer matching IB account base to the book you trade, or keep AU analysis-only on a USD base account.
+- Risk: new entries whose trade currency differs from portfolio `base_currency` hard-veto (`currency_mismatch`) unless `FX_RATES` provides a static pair (e.g. `AUDUSD:0.65`). Rates convert entry/stop/notional into base for sizing; they are ops overrides, not a live FX feed.
 
 Registry: `app.market.venues` (`venue_for_symbol`, `enabled_venues`, `holdings_for_venue`). Factory: `MarketCalendarService(..., venue=)` / `get_market_calendar(venue=)`.
 

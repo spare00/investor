@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from app.core.config import Settings, get_settings
+from app.market.fx import fx_rate, parse_fx_rates
 from app.risk.types import (
     CheckResult,
     PortfolioRiskView,
@@ -45,8 +46,14 @@ def limits_from_settings(settings: Settings | None = None) -> RiskLimits:
 class DeterministicRiskEngine:
     """Pure-Python risk math and Hard Veto evaluation."""
 
-    def __init__(self, limits: RiskLimits | None = None) -> None:
+    def __init__(
+        self,
+        limits: RiskLimits | None = None,
+        *,
+        fx_rates: dict[str, float] | None = None,
+    ) -> None:
         self.limits = limits or limits_from_settings()
+        self.fx_rates = dict(fx_rates or {})
 
     def stop_distance(self, entry_price: float, stop_price: float) -> float:
         if entry_price <= 0:
@@ -324,18 +331,42 @@ class DeterministicRiskEngine:
             venue_ccy = "USD"
         trade_ccy = (trade.currency or venue_ccy or "USD").upper()
         base_ccy = (portfolio.base_currency or "USD").upper()
+        rate = fx_rate(self.fx_rates, trade_ccy, base_ccy)
 
         if trade.side == "buy" and trade_ccy != base_ccy:
-            add(
-                VetoCode.CURRENCY_MISMATCH,
-                False,
-                f"Trade currency {trade_ccy} != portfolio base {base_ccy}; "
-                "FX-normalized sizing is not enabled — fail closed",
-                trade_currency=trade_ccy,
-                base_currency=base_ccy,
-            )
+            if rate is None:
+                add(
+                    VetoCode.CURRENCY_MISMATCH,
+                    False,
+                    f"Trade currency {trade_ccy} != portfolio base {base_ccy}; "
+                    "set FX_RATES (e.g. AUDUSD:0.65) or match account base — fail closed",
+                    trade_currency=trade_ccy,
+                    base_currency=base_ccy,
+                )
+            else:
+                add(
+                    VetoCode.CURRENCY_MISMATCH,
+                    True,
+                    f"FX {trade_ccy}->{base_ccy} rate={rate:.6f}",
+                    trade_currency=trade_ccy,
+                    base_currency=base_ccy,
+                    fx_rate=rate,
+                )
 
-        if trade.side == "buy" and trade.stop_loss is not None and trade_ccy == base_ccy:
+        can_size = trade.side == "buy" and trade.stop_loss is not None and (
+            trade_ccy == base_ccy or rate is not None
+        )
+        if can_size:
+            assert trade.stop_loss is not None
+            entry_base = trade.entry_price
+            stop_base = trade.stop_loss
+            atr_base = trade.atr
+            if rate is not None and trade_ccy != base_ccy:
+                entry_base = float(trade.entry_price) * rate
+                stop_base = float(trade.stop_loss) * rate
+                if atr_base is not None:
+                    atr_base = float(atr_base) * rate
+
             existing = next(
                 (
                     p.market_value
@@ -347,9 +378,9 @@ class DeterministicRiskEngine:
             )
             sizing = self.position_size(
                 equity=portfolio.equity,
-                entry_price=trade.entry_price,
-                stop_price=trade.stop_loss,
-                atr=trade.atr,
+                entry_price=entry_base,
+                stop_price=stop_base,
+                atr=atr_base,
                 existing_position_value=existing,
             )
             adjusted_qty = float(min(trade.quantity, sizing.shares))
@@ -365,7 +396,7 @@ class DeterministicRiskEngine:
             else:
                 add(VetoCode.RISK_PER_TRADE, True, "Risk per trade sizing OK")
 
-            notional = (adjusted_qty or 0.0) * trade.entry_price
+            notional = (adjusted_qty or 0.0) * entry_base
             projected_weight = (existing + notional) / portfolio.equity * 100.0 if portfolio.equity else 0.0
             add(
                 VetoCode.MAX_POSITION_PCT,
@@ -406,12 +437,8 @@ class DeterministicRiskEngine:
                 f"Projected gross {projected_gross:.2f}%",
             )
 
-            cash_pool = portfolio.cash
-            if portfolio.cash_by_currency:
-                cash_pool = float(
-                    portfolio.cash_by_currency.get(trade_ccy, portfolio.cash)
-                )
-            cash_after = cash_pool - notional
+            # Notionals are base-currency; portfolio.cash is base TotalCashValue.
+            cash_after = portfolio.cash - notional
             cash_pct_after = cash_after / portfolio.equity * 100.0 if portfolio.equity else 0.0
             add(
                 VetoCode.MIN_CASH_PCT,
@@ -445,3 +472,11 @@ class DeterministicRiskEngine:
             sizing=sizing,
             adjusted_quantity=adjusted_qty if approved else 0.0,
         )
+
+
+def engine_from_settings(settings: Settings | None = None) -> DeterministicRiskEngine:
+    cfg = settings or get_settings()
+    return DeterministicRiskEngine(
+        limits_from_settings(cfg),
+        fx_rates=parse_fx_rates(cfg.fx_rates),
+    )

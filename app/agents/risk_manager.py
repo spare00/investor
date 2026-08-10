@@ -12,7 +12,7 @@ from app.risk import (
     PortfolioRiskView,
     PositionRiskView,
     TradeIntent,
-    limits_from_settings,
+    engine_from_settings,
 )
 from app.risk.types import VetoCode
 from app.schemas.common import AgentName, RiskVerdict, TraceMetadata
@@ -37,7 +37,7 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
         engine: DeterministicRiskEngine | None = None,
     ) -> None:
         super().__init__(llm=llm, settings=settings)
-        self.engine = engine or DeterministicRiskEngine(limits_from_settings(self.settings))
+        self.engine = engine or engine_from_settings(self.settings)
 
     def output_model(self) -> type[RiskManagerOutput]:
         return RiskManagerOutput

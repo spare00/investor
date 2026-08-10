@@ -456,3 +456,44 @@ class TestVenueGrossCap:
         )
         assert result.approved is False
         assert VetoCode.CURRENCY_MISMATCH.value in result.hard_vetoes
+
+    def test_fx_rate_allows_cross_currency_sizing(
+        self, portfolio: PortfolioRiskView
+    ) -> None:
+        engine = DeterministicRiskEngine(
+            RiskLimits(
+                max_position_pct=10.0,
+                max_sector_pct=30.0,
+                max_gross_exposure_pct=70.0,
+                max_venue_gross_pct=50.0,
+                min_cash_pct=30.0,
+                risk_per_trade_pct=0.5,
+            ),
+            fx_rates={"AUDUSD": 0.65},
+        )
+        portfolio.base_currency = "USD"
+        portfolio.equity = 100_000
+        portfolio.cash = 80_000
+        portfolio.cash_pct = 80.0
+        portfolio.gross_exposure_pct = 0.0
+        trade = _buy(
+            qty=100,
+            price=40.0,
+            stop=38.0,
+            symbol="BHP",
+            sector="Materials",
+            venue="AU",
+            currency="AUD",
+        )
+        result = engine.evaluate_pretrade(
+            portfolio,
+            trade,
+            allowlist={"BHP"},
+            data_quality_score=1.0,
+            market_session_clear=True,
+            broker_data_consistent=True,
+        )
+        assert VetoCode.CURRENCY_MISMATCH.value not in result.hard_vetoes
+        assert result.approved is True
+        assert result.adjusted_quantity is not None
+        assert result.adjusted_quantity > 0

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from app.core.config import Settings, get_settings
 from app.execution.safety_controls import TradingControls, trading_controls
 from app.market.venues import get_venue_spec, venue_for_symbol
-from app.risk import DeterministicRiskEngine, PortfolioRiskView, TradeIntent, limits_from_settings
+from app.risk import DeterministicRiskEngine, PortfolioRiskView, TradeIntent, engine_from_settings
 from app.schemas.cio import CIODecision, SymbolActionPlan
 from app.schemas.common import PortfolioAction, SymbolAction
 
@@ -68,7 +68,7 @@ class ExecutionValidator:
         controls: TradingControls | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self.engine = engine or DeterministicRiskEngine(limits_from_settings(self.settings))
+        self.engine = engine or engine_from_settings(self.settings)
         self.controls = controls or trading_controls
 
     def validate(
