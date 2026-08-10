@@ -56,7 +56,13 @@ def test_get_market_data_provider_uses_alpaca_when_enabled() -> None:
             enable_external_data=True,
             enable_market_data_collection=True,
             market_data_provider="alpaca",
+            broker_provider="alpaca",
+            enable_broker_orders=False,
+            enable_automated_execution=False,
         ),
+    ), patch(
+        "app.market.live_prices.requires_live_market_prices",
+        return_value=False,
     ):
         provider = get_market_data_provider()
     assert isinstance(provider, AlpacaMarketDataProvider)

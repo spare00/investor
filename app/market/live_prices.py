@@ -53,14 +53,14 @@ async def fetch_live_last_prices(
     *,
     settings: Settings | None = None,
 ) -> dict[str, float]:
-    """Fetch current last prints from Alpaca snapshots only."""
-    from app.collectors.market_data import AlpacaMarketDataProvider
+    """Fetch current last prints from the configured live market-data provider."""
+    from app.collectors.market_data import get_market_data_provider
 
     cfg = settings or get_settings()
     syms = sorted({str(s).upper() for s in symbols if s})
     if not syms:
         return {}
-    quotes = await AlpacaMarketDataProvider(cfg).fetch_quotes(syms)
+    quotes = await get_market_data_provider().fetch_quotes(syms)
     out: dict[str, float] = {}
     for q in quotes:
         if q.provider and is_simulation_price_provider(q.provider):
@@ -69,7 +69,7 @@ async def fetch_live_last_prices(
         if q.last is None or float(q.last) <= 0:
             continue
         if looks_like_stub_last(q.symbol, float(q.last)):
-            # Guard against accidental stub wiring behind an "alpaca" label.
+            # Guard against accidental stub wiring behind a live provider label.
             logger.error(
                 "live_price_matches_stub_table_rejected",
                 symbol=q.symbol,
@@ -81,6 +81,7 @@ async def fetch_live_last_prices(
         "live_prices_fetched",
         requested=len(syms),
         returned=len(out),
+        provider=cfg.market_data_provider,
         as_of=datetime.now(UTC).isoformat(),
     )
     return out

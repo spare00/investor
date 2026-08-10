@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     ibkr_default_currency: str = "USD"
     # Refuse common live Gateway/TWS ports unless explicitly allowed.
     ibkr_allow_live_ports: bool = False
+    # Separate Gateway clientId for market-data polls (avoid clashing with broker client).
+    ibkr_md_client_id: int = 11
 
     # LLM
     llm_base_url: str = "https://api.openai.com/v1"

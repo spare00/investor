@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -170,23 +172,191 @@ class AlpacaMarketDataProvider:
         return out
 
 
+class IbkrMarketDataProvider:
+    """Live quotes via IB Gateway (TWS API). Uses a dedicated clientId."""
+
+    name = "ibkr"
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or get_settings()
+
+    async def fetch_quotes(self, symbols: list[str]) -> list[RawMarketQuote]:
+        settings = self.settings
+        if not settings.enable_external_data or not settings.enable_market_data_collection:
+            logger.warning("ibkr_market_disabled", action="empty")
+            return []
+        if (settings.broker_environment or "").lower() != "paper" and settings.enable_live_trading:
+            logger.error("ibkr_market_live_blocked")
+            return []
+
+        syms = sorted({s.upper() for s in symbols if s})
+        if not syms:
+            return []
+
+        try:
+            from ib_async import IB, Stock
+        except ImportError:
+            logger.error("ib_async_not_installed")
+            return []
+
+        host = settings.ibkr_host
+        port = int(settings.ibkr_port)
+        client_id = int(settings.ibkr_md_client_id or (int(settings.ibkr_client_id) + 10))
+        timeout = max(5, int(settings.provider_request_timeout_seconds))
+        ib = IB()
+        try:
+            await ib.connectAsync(host, port, clientId=client_id, readonly=True, timeout=timeout)
+            # Paper accounts often lack real-time API entitlements; use delayed when needed.
+            try:
+                ib.reqMarketDataType(3)  # 3 = delayed
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("ibkr_md_connect_failed", host=host, port=port, error=str(exc)[:160])
+            return []
+
+        now = datetime.now(UTC)
+        out: list[RawMarketQuote] = []
+        try:
+            contracts = []
+            for sym in syms:
+                contract = await self._qualify(ib, Stock, sym)
+                if contract is not None:
+                    contracts.append(contract)
+            if not contracts:
+                return []
+            tickers = await ib.reqTickersAsync(*contracts)
+            # Brief settle for delayed ticks.
+            await asyncio.sleep(0.8)
+            tickers = await ib.reqTickersAsync(*contracts)
+            by_sym = {str(t.contract.symbol).upper(): t for t in tickers if t.contract}
+            for sym in syms:
+                t = by_sym.get(sym)
+                if t is None:
+                    logger.warning("ibkr_ticker_missing", symbol=sym)
+                    continue
+                last = self._last_price(t)
+                if last is None or last <= 0:
+                    logger.warning("ibkr_ticker_no_price", symbol=sym)
+                    continue
+                bid = float(t.bid) if t.bid and t.bid > 0 else None
+                ask = float(t.ask) if t.ask and t.ask > 0 else None
+                out.append(
+                    RawMarketQuote(
+                        symbol=sym,
+                        as_of=now,
+                        provider=self.name,
+                        last=float(last),
+                        bid=bid,
+                        ask=ask,
+                        volume=float(t.volume) if t.volume and t.volume > 0 else None,
+                        raw_payload={
+                            "con_id": getattr(t.contract, "conId", None),
+                            "exchange": getattr(t.contract, "primaryExchange", None)
+                            or getattr(t.contract, "exchange", None),
+                            "currency": getattr(t.contract, "currency", None),
+                            "last": last,
+                            "close": getattr(t, "close", None),
+                            "market_price": getattr(t, "marketPrice", lambda: None)(),
+                        },
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("ibkr_md_fetch_failed")
+        finally:
+            if ib.isConnected():
+                ib.disconnect()
+
+        logger.info("ibkr_quotes_fetched", requested=len(syms), returned=len(out))
+        return out
+
+    async def _qualify(self, ib: Any, stock_cls: Any, symbol: str) -> Any | None:
+        settings = self.settings
+        tried: set[tuple[str, str]] = set()
+        candidates = [
+            (
+                (settings.ibkr_default_exchange or "SMART").upper(),
+                (settings.ibkr_default_currency or "USD").upper(),
+            ),
+            ("SMART", "USD"),
+            ("ASX", "AUD"),
+            ("SMART", "AUD"),
+        ]
+        for exchange, currency in candidates:
+            key = (exchange, currency)
+            if key in tried:
+                continue
+            tried.add(key)
+            contract = stock_cls(symbol, exchange, currency)
+            try:
+                qualified = await ib.qualifyContractsAsync(contract)
+            except Exception:  # noqa: BLE001
+                continue
+            hit = next((c for c in (qualified or []) if getattr(c, "conId", 0)), None)
+            if hit is not None:
+                return hit
+        logger.warning("ibkr_md_qualify_failed", symbol=symbol)
+        return None
+
+    @staticmethod
+    def _last_price(ticker: Any) -> float | None:
+        for attr in ("last", "close", "midpoint"):
+            val = getattr(ticker, attr, None)
+            if callable(val):
+                try:
+                    val = val()
+                except Exception:  # noqa: BLE001
+                    val = None
+            try:
+                f = float(val) if val is not None else 0.0
+            except (TypeError, ValueError):
+                f = 0.0
+            if f > 0:
+                return f
+        mp = getattr(ticker, "marketPrice", None)
+        if callable(mp):
+            try:
+                f = float(mp())
+                if f > 0:
+                    return f
+            except Exception:  # noqa: BLE001
+                return None
+        return None
+
+
 def get_market_data_provider(name: str | None = None) -> MarketDataProvider:
     settings = get_settings()
     from app.market.live_prices import requires_live_market_prices
 
     provider_name = (name or settings.market_data_provider).lower()
+    # Only auto-align to IBKR when provider is unspecified/auto — never override explicit alpaca.
+    if (settings.broker_provider or "").lower() == "ibkr" and provider_name in {"auto", ""}:
+        provider_name = "ibkr"
     live_required = requires_live_market_prices(settings)
 
     if live_required:
-        # Never hand callers a stub/fixture provider on the live/order path.
         if provider_name in {"stub", "fixture"}:
             logger.error(
                 "stub_market_provider_forbidden",
                 requested=provider_name,
-                action="force_alpaca",
+                action="force_live_provider",
             )
+            provider_name = (
+                "ibkr" if (settings.broker_provider or "").lower() == "ibkr" else "alpaca"
+            )
+        if provider_name == "ibkr":
+            return IbkrMarketDataProvider(settings)
         return AlpacaMarketDataProvider(settings)
 
+    if provider_name == "ibkr":
+        if settings.enable_external_data and settings.enable_market_data_collection:
+            return IbkrMarketDataProvider(settings)
+        logger.info(
+            "market_provider_fallback_stub",
+            requested=provider_name,
+            reason="external_market_data_disabled",
+        )
+        return StubMarketDataProvider()
     if provider_name == "alpaca":
         if settings.enable_external_data and settings.enable_market_data_collection:
             return AlpacaMarketDataProvider(settings)

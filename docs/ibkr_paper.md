@@ -35,7 +35,12 @@ IBKR_ALLOW_LIVE_PORTS=false
 
 Live-looking ports `4001` / `7496` are refused unless `IBKR_ALLOW_LIVE_PORTS=true`.
 
-## Smoke test
+## Market data
+
+Set `MARKET_DATA_PROVIDER=ibkr` (and keep `ENABLE_EXTERNAL_DATA` /
+`ENABLE_MARKET_DATA_COLLECTION` on) so collection and execution sizing use Gateway
+quotes. Market-data polls use `IBKR_MD_CLIENT_ID` (default 11) so they do not
+collide with the broker `IBKR_CLIENT_ID`.
 
 ```bash
 # Gateway paper must be up on IBKR_PORT

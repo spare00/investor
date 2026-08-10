@@ -265,6 +265,107 @@ class AlpacaMarketDataAdapter:
         return result or [], meta
 
 
+class IbkrMarketDataAdapter:
+    """IB Gateway market-data adapter for the Phase-4 pipeline."""
+
+    name = "ibkr"
+    version = "1.0.0"
+
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            name=self.name,
+            version=self.version,
+            supports_quotes=True,
+            supports_bars=True,
+            supports_premarket=True,
+            requires_credentials=False,
+            is_fixture=False,
+        )
+
+    async def fetch_quotes(
+        self, symbols: list[str], *, settings: Settings | None = None
+    ) -> tuple[list[CanonicalQuote], ProviderRequestMeta]:
+        from app.collectors.market_data import IbkrMarketDataProvider
+        from app.providers.base import ProviderStatus
+
+        cfg = settings or get_settings()
+        started = datetime.now(UTC)
+        if not cfg.enable_external_data or not cfg.enable_market_data_collection:
+            meta = ProviderRequestMeta(
+                provider_name=self.name,
+                provider_version=self.version,
+                request_id=str(uuid4()),
+                request_started_at=started,
+                request_completed_at=datetime.now(UTC),
+                status=ProviderStatus.DISABLED,
+                error_code="disabled",
+                error_message="external market data disabled",
+            )
+            return [], meta
+
+        raw_list, meta = await run_with_retry(
+            provider_name=self.name,
+            provider_version=self.version,
+            settings=cfg,
+            fn=lambda: IbkrMarketDataProvider(cfg).fetch_quotes(symbols),
+        )
+        now = datetime.now(UTC)
+        quotes = [_raw_quote_to_canonical(raw, now, self.name) for raw in (raw_list or [])]
+        meta.raw_payload_reference = f"ibkr:quotes:{meta.request_id}"
+        return quotes, meta
+
+    async def fetch_daily_bars(
+        self, symbols: list[str], *, settings: Settings | None = None
+    ) -> tuple[list[CanonicalBar], ProviderRequestMeta]:
+        quotes, meta = await self.fetch_quotes(symbols, settings=settings)
+        bars: list[CanonicalBar] = []
+        for q in quotes:
+            bars.append(
+                CanonicalBar(
+                    as_of=q.as_of,
+                    collected_at=q.collected_at,
+                    symbol=q.symbol,
+                    timeframe="1D",
+                    open=q.last,
+                    high=q.last,
+                    low=q.last,
+                    close=q.last,
+                    volume=0,
+                    vwap=q.last,
+                    session="regular",
+                    source_ids=[self.name],
+                    provenance=q.provenance,
+                    quality=q.quality,
+                )
+            )
+        return bars, meta
+
+    async def fetch_premarket(
+        self, symbols: list[str], *, settings: Settings | None = None
+    ) -> tuple[list[CanonicalPremarketSnapshot], ProviderRequestMeta]:
+        quotes, meta = await self.fetch_quotes(symbols, settings=settings)
+        now = datetime.now(UTC)
+        out: list[CanonicalPremarketSnapshot] = []
+        for q in quotes:
+            out.append(
+                CanonicalPremarketSnapshot(
+                    as_of=q.as_of,
+                    collected_at=now,
+                    symbol=q.symbol,
+                    availability=PremarketAvailability.AVAILABLE,
+                    premarket_last=q.last,
+                    premarket_open=q.last,
+                    premarket_high=q.last,
+                    premarket_low=q.last,
+                    gap_from_previous_close_pct=None,
+                    premarket_spread_bps=q.spread_bps,
+                    provenance=q.provenance,
+                    quality=q.quality,
+                )
+            )
+        return out, meta
+
+
 # --- News ---
 
 
@@ -641,9 +742,14 @@ def _raw_quote_to_canonical(raw: RawMarketQuote, now: datetime, provider: str) -
 
 def resolve_market_provider(settings: Settings | None = None) -> Any:
     cfg = settings or get_settings()
-    order = list(cfg.market_data_provider_priority) or [cfg.market_data_provider]
+    order = [str(x).lower() for x in (list(cfg.market_data_provider_priority) or [cfg.market_data_provider])]
+    provider = (cfg.market_data_provider or "").lower()
+    if (cfg.broker_provider or "").lower() == "ibkr" and provider in {"auto", ""}:
+        provider = "ibkr"
     if cfg.enable_external_data and cfg.enable_market_data_collection:
-        if "alpaca" in order or cfg.market_data_provider == "alpaca":
+        if provider == "ibkr" or "ibkr" in order:
+            return IbkrMarketDataAdapter()
+        if provider == "alpaca" or "alpaca" in order:
             return AlpacaMarketDataAdapter()
     return FixtureMarketDataProvider()
 
@@ -667,6 +773,7 @@ def list_providers(settings: Settings | None = None) -> list[dict[str, Any]]:
     cfg = settings or get_settings()
     providers = [
         FixtureMarketDataProvider(),
+        IbkrMarketDataAdapter(),
         AlpacaMarketDataAdapter(),
         FixtureNewsProvider(),
         FixtureSecProvider(),

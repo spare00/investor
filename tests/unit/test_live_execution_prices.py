@@ -106,7 +106,25 @@ def test_get_market_data_provider_forces_alpaca_when_live_required() -> None:
             enable_external_data=True,
             enable_market_data_collection=True,
             market_data_provider="stub",
+            broker_provider="alpaca",
         ),
     ):
         provider = get_market_data_provider("stub")
     assert isinstance(provider, AlpacaMarketDataProvider)
+
+
+def test_get_market_data_provider_forces_ibkr_when_broker_is_ibkr() -> None:
+    from app.collectors.market_data import IbkrMarketDataProvider
+
+    with patch(
+        "app.collectors.market_data.get_settings",
+        return_value=Settings(
+            enable_broker_orders=True,
+            enable_external_data=True,
+            enable_market_data_collection=True,
+            market_data_provider="stub",
+            broker_provider="ibkr",
+        ),
+    ):
+        provider = get_market_data_provider("stub")
+    assert isinstance(provider, IbkrMarketDataProvider)
