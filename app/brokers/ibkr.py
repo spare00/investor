@@ -133,20 +133,41 @@ class IbkrBroker:
             return str(accounts[0])
         raise BrokerError("ibkr_no_managed_accounts")
 
-    async def _qualify_stock(self, ib: Any, symbol: str, *, currency: str | None = None) -> Any:
+    async def _qualify_stock(
+        self,
+        ib: Any,
+        symbol: str,
+        *,
+        currency: str | None = None,
+        venue: str | None = None,
+    ) -> Any:
         from ib_async import Stock
 
+        from app.market.venues import ib_qualify_candidates
+
         sym = symbol.upper().strip()
-        ccy = (currency or self.settings.ibkr_default_currency or "USD").upper()
-        exchange = (self.settings.ibkr_default_exchange or "SMART").upper()
-        contract = Stock(sym, exchange, ccy)
-        try:
-            qualified = await ib.qualifyContractsAsync(contract)
-        except Exception as exc:  # noqa: BLE001
-            raise BrokerError(f"ibkr_qualify_failed:{sym}:{exc}") from exc
-        if not qualified:
-            raise BrokerError(f"ibkr_contract_not_found:{sym}")
-        return qualified[0]
+        candidates = ib_qualify_candidates(self.settings, venue=venue)
+        if currency:
+            # Prefer an explicit currency override first.
+            ccy = currency.upper()
+            preferred = [(ex, c) for ex, c in candidates if c == ccy]
+            rest = [(ex, c) for ex, c in candidates if c != ccy]
+            candidates = preferred + rest
+
+        last_exc: Exception | None = None
+        for exchange, ccy in candidates:
+            contract = Stock(sym, exchange, ccy)
+            try:
+                qualified = await ib.qualifyContractsAsync(contract)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                continue
+            hit = next((c for c in (qualified or []) if getattr(c, "conId", 0)), None)
+            if hit is not None:
+                return hit
+        if last_exc is not None:
+            raise BrokerError(f"ibkr_qualify_failed:{sym}:{last_exc}") from last_exc
+        raise BrokerError(f"ibkr_contract_not_found:{sym}")
 
     def _build_order(self, request: OrderRequest) -> Any:
         from ib_async import LimitOrder, MarketOrder, StopLimitOrder, StopOrder
@@ -232,7 +253,7 @@ class IbkrBroker:
 
     async def submit_order(self, request: OrderRequest) -> OrderResult:
         ib = await self._ensure_connected()
-        contract = await self._qualify_stock(ib, request.symbol)
+        contract = await self._qualify_stock(ib, request.symbol, venue=request.venue)
         order = self._build_order(request)
         try:
             trade = ib.placeOrder(contract, order)

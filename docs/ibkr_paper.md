@@ -58,7 +58,7 @@ pip install -e ".[ibkr]"
 
 ## Notes
 
-- First cutover is **US equities** via `SMART`/`USD`. ASX contracts come in a later venue phase.
+- First cutover is **US equities** via `SMART`/`USD`. Pass `OrderRequest.venue="AU"` (or set `PRIMARY_VENUE=AU`) so qualification prefers `ASX`/`AUD`. Dual-book scheduler jobs are still a later phase; calendars for both venues exist now (`docs/market_calendar.md`).
 - Existing Alpaca paper history does not transfer — treat IBKR paper as day 0.
 - `clientId` must be unique per Gateway connection (avoid colliding with TWS UI tools).
 - Alpaca adapter remains in-tree for rollback (`BROKER_PROVIDER=alpaca`) but is no longer the cutover path.

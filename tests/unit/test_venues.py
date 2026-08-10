@@ -1,0 +1,78 @@
+"""Venue registry and ASX calendar tests."""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from app.core.config import clear_settings_cache, get_settings
+from app.market.calendar import MarketCalendarService
+from app.market.venues import Venue, ib_qualify_candidates, resolve_venue
+
+
+SYD = ZoneInfo("Australia/Sydney")
+ET = ZoneInfo("America/New_York")
+
+
+@pytest.fixture(autouse=True)
+def _settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PRIMARY_VENUE", "US")
+    monkeypatch.setenv("MARKET_TIMEZONE", "America/New_York")
+    monkeypatch.setenv("OPERATOR_TIMEZONE", "Australia/Brisbane")
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
+
+
+def test_resolve_primary_venue() -> None:
+    assert resolve_venue(get_settings()) == Venue.US
+    assert resolve_venue(get_settings(), venue="AU") == Venue.AU
+
+
+def test_asx_regular_session() -> None:
+    cal = MarketCalendarService(get_settings(), venue=Venue.AU)
+    day = date(2026, 8, 10)  # Monday
+    assert cal.is_trading_day(day)
+    session = cal.get_session(day)
+    assert session.venue == "AU"
+    assert session.calendar_source == "XASX"
+    open_local = session.regular_open.astimezone(SYD)
+    close_local = session.regular_close.astimezone(SYD)
+    assert open_local.hour == 10 and open_local.minute == 0
+    assert close_local.hour == 16 and close_local.minute == 0
+
+
+def test_asx_weekend() -> None:
+    cal = MarketCalendarService(get_settings(), venue="AU")
+    assert not cal.is_trading_day(date(2026, 8, 8))  # Saturday
+    assert not cal.is_trading_day(date(2026, 8, 9))  # Sunday
+
+
+def test_asx_australia_day_holiday() -> None:
+    cal = MarketCalendarService(get_settings(), venue=Venue.AU)
+    # Australia Day 2026 falls on Monday 26 Jan
+    assert not cal.is_trading_day(date(2026, 1, 26))
+
+
+def test_asx_status_during_rth() -> None:
+    cal = MarketCalendarService(get_settings(), venue=Venue.AU)
+    now = datetime(2026, 8, 10, 11, 0, tzinfo=SYD)
+    status = cal.get_market_status(now)
+    assert status.venue == "AU"
+    assert status.phase == "REGULAR"
+    assert status.as_of_market_local is not None
+
+
+def test_us_calendar_unchanged_default() -> None:
+    cal = MarketCalendarService(get_settings())
+    session = cal.get_session(date(2026, 8, 3))
+    assert session.venue == "US"
+    assert session.regular_open.astimezone(ET).hour == 9
+
+
+def test_ib_qualify_candidates_prefer_au() -> None:
+    pairs = ib_qualify_candidates(get_settings(), venue=Venue.AU)
+    assert pairs[0] == ("ASX", "AUD")
+    assert ("SMART", "USD") in pairs

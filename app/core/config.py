@@ -190,6 +190,8 @@ class Settings(BaseSettings):
     display_tz_local: str = "Australia/Brisbane"
 
     # Phase 3 market / daily workflow
+    # Primary trading book. US keeps NYSE/ET; AU uses ASX / Australia/Sydney.
+    primary_venue: str = "US"  # US | AU
     market_calendar: str = "NYSE"
     market_timezone: str = "America/New_York"
     operator_timezone: str = "Australia/Brisbane"

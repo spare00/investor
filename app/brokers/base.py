@@ -32,6 +32,7 @@ class OrderRequest:
     stop_price: float | None = None
     idempotency_key: str | None = None
     time_in_force: str = "day"
+    venue: str | None = None  # US | AU — IBKR contract routing hint
 
 
 @dataclass(slots=True)

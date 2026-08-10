@@ -271,22 +271,9 @@ class IbkrMarketDataProvider:
         return out
 
     async def _qualify(self, ib: Any, stock_cls: Any, symbol: str) -> Any | None:
-        settings = self.settings
-        tried: set[tuple[str, str]] = set()
-        candidates = [
-            (
-                (settings.ibkr_default_exchange or "SMART").upper(),
-                (settings.ibkr_default_currency or "USD").upper(),
-            ),
-            ("SMART", "USD"),
-            ("ASX", "AUD"),
-            ("SMART", "AUD"),
-        ]
-        for exchange, currency in candidates:
-            key = (exchange, currency)
-            if key in tried:
-                continue
-            tried.add(key)
+        from app.market.venues import ib_qualify_candidates
+
+        for exchange, currency in ib_qualify_candidates(self.settings):
             contract = stock_cls(symbol, exchange, currency)
             try:
                 qualified = await ib.qualifyContractsAsync(contract)

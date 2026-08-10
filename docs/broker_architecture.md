@@ -24,6 +24,8 @@ CIO Decision
 
 Factory: `app/brokers/factory.py`. Live environment / `ENABLE_LIVE_TRADING=true` raises immediately.
 
+Venues (`PRIMARY_VENUE=US|AU`, `OrderRequest.venue`): calendar/currency/IB contract hints for the US and ASX books. Dual-book scheduler jobs are not wired yet — see `docs/market_calendar.md`.
+
 ## Canonical models
 
 Pydantic models in `app/brokers/models.py` (`BrokerAccount`, `BrokerPosition`, `BrokerOrder`, …). Adapters may keep legacy `OrderRequest`/`OrderResult` for submission compatibility; API surfaces prefer canonical models with redacted account IDs.
