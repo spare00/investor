@@ -103,10 +103,14 @@ class PositionManager:
         from app.market.books import summarize_venue_books
         from app.market.venues import venue_for_symbol
 
-        # Upsert by (symbol, venue) so dual-listed / dual-book rows can coexist.
+        # Prefer IBKR con_id when present; fall back to (symbol, venue).
         existing_rows = list((await self.session.execute(select(Position))).scalars().all())
         by_key = {(p.symbol.upper(), (p.venue or "US").upper()): p for p in existing_rows}
+        by_con: dict[int, Position] = {
+            int(p.con_id): p for p in existing_rows if getattr(p, "con_id", None)
+        }
         seen: set[tuple[str, str]] = set()
+        seen_con: set[int] = set()
         gross = 0.0
         parsed: list[dict[str, Any]] = []
         for raw in positions:
@@ -120,6 +124,7 @@ class PositionManager:
             avg = float(str(raw.get("avg_entry_price") or 0))
             exchange = str(raw.get("exchange") or "") or None
             currency = str(raw.get("currency") or "") or None
+            con_id = int(raw.get("con_id") or 0) or None
             venue = venue_for_symbol(
                 symbol, self.settings, exchange=exchange, currency=currency
             ).value
@@ -127,6 +132,8 @@ class PositionManager:
             gross += abs(mv)
             key = (symbol, venue)
             seen.add(key)
+            if con_id:
+                seen_con.add(con_id)
             parsed.append(
                 {
                     "symbol": symbol,
@@ -138,9 +145,12 @@ class PositionManager:
                     "venue": venue,
                     "currency": currency,
                     "exchange": exchange,
+                    "con_id": con_id,
                 }
             )
-            row = by_key.get(key)
+            row = by_con.get(con_id) if con_id else None
+            if row is None:
+                row = by_key.get(key)
             if row is None:
                 self.session.add(
                     Position(
@@ -155,6 +165,7 @@ class PositionManager:
                         venue=venue,
                         currency=currency,
                         exchange=exchange,
+                        con_id=con_id,
                         as_of=now,
                     )
                 )
@@ -168,9 +179,17 @@ class PositionManager:
                 row.venue = venue
                 row.currency = currency
                 row.exchange = exchange
+                if con_id:
+                    row.con_id = con_id
                 row.as_of = now
+                by_key[key] = row
+                if con_id:
+                    by_con[con_id] = row
 
-        for key, row in by_key.items():
+        for key, row in list(by_key.items()):
+            row_con = int(getattr(row, "con_id", 0) or 0) or None
+            if row_con and row_con in seen_con:
+                continue
             if key not in seen:
                 await self.session.delete(row)
         await self.session.flush()
@@ -342,6 +361,7 @@ class PositionManager:
                     weight_pct=(p.market_value / equity * 100.0) if equity else 0.0,
                     venue=getattr(p, "venue", None) or "US",
                     currency=getattr(p, "currency", None),
+                    con_id=int(getattr(p, "con_id", 0) or 0) or None,
                 )
                 for p in positions
             ],
@@ -408,6 +428,7 @@ class PositionManager:
                     weight_pct=p.weight_pct,
                     venue=getattr(p, "venue", None) or "US",
                     currency=getattr(p, "currency", None),
+                    con_id=int(getattr(p, "con_id", 0) or 0) or None,
                 )
                 for p in state.positions
             ],

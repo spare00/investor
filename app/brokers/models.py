@@ -145,8 +145,10 @@ class BrokerPosition(BaseModel):
     unrealized_pl_pct: float | None = None
     asset_class: str = "us_equity"
     exchange: str | None = None
+    currency: str | None = None
     as_of: datetime
     source: str
+    con_id: int | None = None
 
 
 class BrokerOrderRequest(BaseModel):

@@ -232,21 +232,41 @@ class PositionMonitor:
         current_price: float | None = None,
         venue: str | None = None,
         currency: str | None = None,
+        con_id: int | None = None,
     ) -> PositionLifecycle:
         from app.market.venues import venue_for_symbol
 
         resolved_venue = venue_for_symbol(
             symbol, self.settings, currency=currency, venue=venue
         ).value
-        existing = (
-            await self.session.execute(
-                select(PositionLifecycle)
-                .where(PositionLifecycle.symbol == symbol.upper())
-                .where(PositionLifecycle.venue == resolved_venue)
-                .where(PositionLifecycle.status.in_(["OPEN", "PENDING_OPEN", "ADDING", "REDUCING"]))
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+        existing = None
+        if con_id:
+            existing = (
+                await self.session.execute(
+                    select(PositionLifecycle)
+                    .where(PositionLifecycle.con_id == int(con_id))
+                    .where(
+                        PositionLifecycle.status.in_(
+                            ["OPEN", "PENDING_OPEN", "ADDING", "REDUCING"]
+                        )
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        if existing is None:
+            existing = (
+                await self.session.execute(
+                    select(PositionLifecycle)
+                    .where(PositionLifecycle.symbol == symbol.upper())
+                    .where(PositionLifecycle.venue == resolved_venue)
+                    .where(
+                        PositionLifecycle.status.in_(
+                            ["OPEN", "PENDING_OPEN", "ADDING", "REDUCING"]
+                        )
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
         px = float(current_price if current_price is not None else avg_entry or 0)
         if existing:
             existing.quantity = quantity
@@ -254,6 +274,8 @@ class PositionMonitor:
             existing.venue = resolved_venue
             if currency:
                 existing.currency = currency
+            if con_id:
+                existing.con_id = int(con_id)
             if px > 0:
                 existing.current_price = px
             if stop_price is not None and existing.stop_price is None:
@@ -304,6 +326,7 @@ class PositionMonitor:
             current_price=px or avg_entry,
             venue=resolved_venue,
             currency=currency,
+            con_id=int(con_id) if con_id else None,
             stop_price=stop_price,
             decision_id=decision_id,
             opened_at=datetime.now(UTC),
@@ -346,6 +369,7 @@ class PositionMonitor:
             venue = venue_for_symbol(
                 symbol, self.settings, exchange=exchange, currency=currency
             ).value
+            con_id = int(raw.get("con_id") or 0) or None
             await self.ensure_lifecycle_from_broker(
                 symbol=symbol,
                 quantity=qty,
@@ -354,6 +378,7 @@ class PositionMonitor:
                 current_price=float(cur) if cur is not None else None,
                 venue=venue,
                 currency=currency,
+                con_id=con_id,
             )
             held[(symbol, venue)] = raw
             upserted += 1

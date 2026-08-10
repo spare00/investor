@@ -24,7 +24,7 @@ CIO Decision
 
 Factory: `app/brokers/factory.py`. Live environment / `ENABLE_LIVE_TRADING=true` raises immediately.
 
-Venues (`PRIMARY_VENUE=US|AU`, `OrderRequest.venue`, `ENABLED_VENUES`): calendar/currency/IB contract hints and dual-book scheduler prepare/dispatch. Positions are unique on `(symbol, venue)`. Cross-currency new entries fail closed until FX-normalized sizing exists — see `docs/market_calendar.md` and `docs/scheduler_and_leases.md`.
+Venues (`PRIMARY_VENUE=US|AU`, `OrderRequest.venue`, `ENABLED_VENUES`): calendar/currency hints and dual-book scheduler. **IBKR contract identity is `conId`** — positions/lifecycles store nullable `con_id`, orders prefer it over re-qualifying by symbol, and a process-local qualify cache cuts Gateway RTT. `(symbol, venue)` remains the app ops key when `con_id` is null (mock). See `docs/ibkr_paper.md` and `docs/market_calendar.md`.
 
 ## Canonical models
 

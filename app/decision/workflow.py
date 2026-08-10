@@ -149,6 +149,7 @@ class WorkflowService:
                     weight_pct=p.weight_pct,
                     venue=getattr(p, "venue", None) or "US",
                     currency=getattr(p, "currency", None),
+                    con_id=int(getattr(p, "con_id", 0) or 0) or None,
                 )
                 for p in portfolio.positions
             ],

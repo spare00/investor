@@ -124,6 +124,9 @@ class IbkrBroker:
             if self._ib is not None and self._ib.isConnected():
                 self._ib.disconnect()
             self._ib = None
+        from app.brokers.ibkr_contracts import clear_contract_cache
+
+        clear_contract_cache()
 
     def _account_id(self, ib: Any) -> str:
         wanted = (self.settings.ibkr_account or "").strip()
@@ -141,34 +144,22 @@ class IbkrBroker:
         *,
         currency: str | None = None,
         venue: str | None = None,
+        con_id: int | None = None,
     ) -> Any:
-        from ib_async import Stock
+        from app.brokers.ibkr_contracts import resolve_stock_contract
+        from app.brokers.errors import BrokerError
 
-        from app.market.venues import ib_qualify_candidates
-
-        sym = symbol.upper().strip()
-        candidates = ib_qualify_candidates(self.settings, venue=venue)
-        if currency:
-            # Prefer an explicit currency override first.
-            ccy = currency.upper()
-            preferred = [(ex, c) for ex, c in candidates if c == ccy]
-            rest = [(ex, c) for ex, c in candidates if c != ccy]
-            candidates = preferred + rest
-
-        last_exc: Exception | None = None
-        for exchange, ccy in candidates:
-            contract = Stock(sym, exchange, ccy)
-            try:
-                qualified = await ib.qualifyContractsAsync(contract)
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                continue
-            hit = next((c for c in (qualified or []) if getattr(c, "conId", 0)), None)
-            if hit is not None:
-                return hit
-        if last_exc is not None:
-            raise BrokerError(f"ibkr_qualify_failed:{sym}:{last_exc}") from last_exc
-        raise BrokerError(f"ibkr_contract_not_found:{sym}")
+        try:
+            return await resolve_stock_contract(
+                ib,
+                symbol=symbol,
+                con_id=con_id,
+                venue=venue,
+                currency=currency,
+                settings=self.settings,
+            )
+        except LookupError as exc:
+            raise BrokerError(str(exc)) from exc
 
     def _build_order(self, request: OrderRequest) -> Any:
         from ib_async import LimitOrder, MarketOrder, StopLimitOrder, StopOrder
@@ -254,7 +245,12 @@ class IbkrBroker:
 
     async def submit_order(self, request: OrderRequest) -> OrderResult:
         ib = await self._ensure_connected()
-        contract = await self._qualify_stock(ib, request.symbol, venue=request.venue)
+        contract = await self._qualify_stock(
+            ib,
+            request.symbol,
+            venue=request.venue,
+            con_id=request.con_id,
+        )
         order = self._build_order(request)
         try:
             trade = ib.placeOrder(contract, order)
@@ -264,9 +260,18 @@ class IbkrBroker:
         except Exception as exc:  # noqa: BLE001
             logger.exception("ibkr_submit_failed", symbol=request.symbol)
             raise BrokerError(f"ibkr_submit_failed:{exc}") from exc
+        # Attach resolved conId so callers can persist broker identity.
+        raw = dict(result.raw or {})
+        raw["con_id"] = int(getattr(contract, "conId", 0) or 0) or None
+        raw["currency"] = getattr(contract, "currency", None)
+        raw["exchange"] = getattr(contract, "primaryExchange", None) or getattr(
+            contract, "exchange", None
+        )
+        result.raw = raw
         logger.info(
             "ibkr_order_submitted",
             symbol=request.symbol,
+            con_id=raw.get("con_id"),
             side=request.side.value,
             qty=request.qty,
             broker_order_id=result.broker_order_id,
@@ -344,11 +349,14 @@ class IbkrBroker:
 
         portfolio = [p for p in ib.portfolio() if str(p.account) == account]
         if portfolio:
+            from app.brokers.ibkr_contracts import cache_contract
+
             for item in portfolio:
                 qty = float(item.position or 0)
                 if abs(qty) < 1e-12:
                     continue
                 avg = float(item.averageCost or 0)
+                cache_contract(item.contract)
                 out.append(
                     {
                         "symbol": str(item.contract.symbol).upper(),
@@ -361,6 +369,7 @@ class IbkrBroker:
                         "exchange": getattr(item.contract, "primaryExchange", None)
                         or getattr(item.contract, "exchange", None),
                         "currency": getattr(item.contract, "currency", None),
+                        "con_id": int(getattr(item.contract, "conId", 0) or 0) or None,
                         "account": account,
                     }
                 )
@@ -371,6 +380,9 @@ class IbkrBroker:
             if abs(qty) < 1e-12:
                 continue
             avg = float(pos.avgCost or 0)
+            from app.brokers.ibkr_contracts import cache_contract
+
+            cache_contract(pos.contract)
             out.append(
                 {
                     "symbol": str(pos.contract.symbol).upper(),
@@ -382,6 +394,7 @@ class IbkrBroker:
                     "side": "long" if qty > 0 else "short",
                     "exchange": getattr(pos.contract, "exchange", None),
                     "currency": getattr(pos.contract, "currency", None),
+                    "con_id": int(getattr(pos.contract, "conId", 0) or 0) or None,
                     "account": account,
                 }
             )
@@ -496,6 +509,8 @@ class IbkrBroker:
                     unrealized_pl=float(p.get("unrealized_pl") or 0),
                     current_price=None,
                     exchange=str(p.get("exchange") or "") or None,
+                    currency=str(p.get("currency") or "") or None,
+                    con_id=int(p.get("con_id") or 0) or None,
                     as_of=now,
                     source="ibkr",
                 )
@@ -520,6 +535,7 @@ class IbkrBroker:
         from app.brokers.base import OrderSide
 
         side = OrderSide.SELL if held > 0 else OrderSide.BUY
+        con_id = int(row.get("con_id") or 0) or None
         return await self.submit_order(
             OrderRequest(
                 symbol=symbol.upper(),
@@ -533,6 +549,7 @@ class IbkrBroker:
                     exchange=str(row.get("exchange") or "") or None,
                     currency=str(row.get("currency") or "") or None,
                 ).value,
+                con_id=con_id,
             )
         )
 

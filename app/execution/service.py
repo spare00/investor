@@ -149,6 +149,8 @@ class ExecutionService:
                     "idempotency_key_seed": v.idempotency_key,
                     "validation_rejections": validation.rejections,
                     "horizon": hz,
+                    "venue": v.venue,
+                    "con_id": v.con_id,
                 },
             )
             self.session.add(intent)
@@ -386,6 +388,8 @@ class ExecutionService:
         from app.market.venues import resolve_venue
 
         venue = str((intent.metadata_json or {}).get("venue") or resolve_venue(self.settings).value)
+        con_id_raw = (intent.metadata_json or {}).get("con_id")
+        con_id = int(con_id_raw) if con_id_raw else None
         order_row = Order(
             id=uuid4(),
             broker_order_id=None,
@@ -403,6 +407,7 @@ class ExecutionService:
                 "intent_id": str(intent.id),
                 "state": InternalOrderState.SUBMITTING.value,
                 "venue": venue,
+                "con_id": con_id,
             },
         )
         self.session.add(order_row)
@@ -419,6 +424,7 @@ class ExecutionService:
                     stop_price=intent.stop_price,
                     idempotency_key=client_order_id,
                     venue=venue,
+                    con_id=con_id,
                 )
             )
             order_row.broker_order_id = result.broker_order_id

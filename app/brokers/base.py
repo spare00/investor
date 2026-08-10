@@ -33,6 +33,7 @@ class OrderRequest:
     idempotency_key: str | None = None
     time_in_force: str = "day"
     venue: str | None = None  # US | AU — IBKR contract routing hint
+    con_id: int | None = None  # IBKR Contract ID when known (preferred over symbol qualify)
 
 
 @dataclass(slots=True)

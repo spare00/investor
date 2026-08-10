@@ -271,19 +271,21 @@ class IbkrMarketDataProvider:
         return out
 
     async def _qualify(self, ib: Any, stock_cls: Any, symbol: str) -> Any | None:
-        from app.market.venues import ib_qualify_candidates
+        from app.brokers.ibkr_contracts import resolve_stock_contract
+        from app.market.venues import venue_for_symbol
 
-        for exchange, currency in ib_qualify_candidates(self.settings):
-            contract = stock_cls(symbol, exchange, currency)
-            try:
-                qualified = await ib.qualifyContractsAsync(contract)
-            except Exception:  # noqa: BLE001
-                continue
-            hit = next((c for c in (qualified or []) if getattr(c, "conId", 0)), None)
-            if hit is not None:
-                return hit
-        logger.warning("ibkr_md_qualify_failed", symbol=symbol)
-        return None
+        try:
+            venue = venue_for_symbol(symbol, self.settings).value
+            return await resolve_stock_contract(
+                ib,
+                symbol=symbol,
+                venue=venue,
+                settings=self.settings,
+                stock_cls=stock_cls,
+            )
+        except LookupError:
+            logger.warning("ibkr_md_qualify_failed", symbol=symbol)
+            return None
 
     @staticmethod
     def _last_price(ticker: Any) -> float | None:

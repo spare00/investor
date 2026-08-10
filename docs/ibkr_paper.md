@@ -56,6 +56,17 @@ pip install -e ".[ibkr]"
 # or base install — ib_async is in main dependencies
 ```
 
+## Contract identity
+
+IBKR’s unique instrument key is **`conId`**. The app:
+
+- Reads `con_id` from Gateway `portfolio()` / `positions()`
+- Persists it on `positions` and `position_lifecycles` (nullable; mock leaves null)
+- Prefers `OrderRequest.con_id` on submit/close so Gateway does not re-qualify by symbol every time
+- Keeps a process-local qualify cache (`app/brokers/ibkr_contracts.py`) shared by broker + market-data clients
+
+`(symbol, venue)` remains the ops/book key for calendar, allowlists, and dual-book scheduling — not a substitute for `conId`.
+
 ## Notes
 
 - First cutover is **US equities** via `SMART`/`USD`. Pass `OrderRequest.venue="AU"` (or set `PRIMARY_VENUE=AU`) so qualification prefers `SMART`/`AUD` (ASX primary). Direct `ASX` routing may require Gateway precautionary allow (error 10311). Dual-book scheduler: set `ENABLED_VENUES=US,AU` — see `docs/scheduler_and_leases.md`.

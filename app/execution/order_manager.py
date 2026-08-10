@@ -147,6 +147,7 @@ class OrderManager:
             raw_payload={
                 "thesis": intent.thesis,
                 "venue": intent.venue or resolve_venue(self.settings).value,
+                "con_id": intent.con_id,
             },
         )
         self.session.add(row)
@@ -158,6 +159,7 @@ class OrderManager:
             if order_type in {"limit", "stop_limit"} and limit_price is None:
                 raise BrokerError(f"{intent.symbol}: limit order missing limit_price")
             venue = intent.venue or (row.raw_payload or {}).get("venue")
+            con_id = intent.con_id or (row.raw_payload or {}).get("con_id")
             result = await self.broker.submit_order(
                 OrderRequest(
                     symbol=intent.symbol,
@@ -168,6 +170,7 @@ class OrderManager:
                     stop_price=intent.stop_price,
                     idempotency_key=intent.idempotency_key,
                     venue=str(venue) if venue else None,
+                    con_id=int(con_id) if con_id else None,
                 )
             )
         except TimeoutError as exc:

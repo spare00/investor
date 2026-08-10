@@ -40,6 +40,7 @@ class ValidatedOrderIntent:
     decision_id: str
     thesis: str
     venue: str | None = None  # US | AU
+    con_id: int | None = None  # IBKR Contract ID when known
 
 
 @dataclass(slots=True)
@@ -338,4 +339,15 @@ class ExecutionValidator:
             decision_id=str(decision.decision_id),
             thesis=plan.thesis,
             venue=venue or venue_for_symbol(symbol, self.settings).value,
+            con_id=next(
+                (
+                    int(p.con_id)
+                    for p in portfolio.positions
+                    if p.symbol.upper() == symbol
+                    and (p.venue or "US").upper()
+                    == (venue or venue_for_symbol(symbol, self.settings).value)
+                    and getattr(p, "con_id", None)
+                ),
+                None,
+            ),
         )

@@ -67,6 +67,7 @@ class PositionRiskView:
     weight_pct: float
     venue: str = "US"
     currency: str | None = None
+    con_id: int | None = None
 
 
 @dataclass(slots=True)
