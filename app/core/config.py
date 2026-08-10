@@ -148,11 +148,15 @@ class Settings(BaseSettings):
     # How often Universe Manager may call the LLM (days). Premarket/scheduler
     # still run between — they rebuild focus without LLM until this elapses.
     universe_refresh_min_interval_days: int = 7
-    # APScheduler poll interval (seconds). Actual LLM gated by min_interval_days.
-    # Default = 7d backup tick; premarket is the primary weekly opportunity.
-    universe_refresh_seconds: int = 604_800
-    # When true, skip periodic refresh outside premarket→after-hours (no overnight LLM).
-    universe_refresh_session_only: bool = True
+    # APScheduler poll interval (seconds). Actual LLM gated by weekend + min_interval.
+    # Default 6h so weekend windows are not missed (was 7d when session-gated).
+    universe_refresh_seconds: int = 21_600
+    # When true, Universe Manager LLM runs only Sat/Sun in operator_timezone
+    # (default Australia/Brisbane) so weekly pool work avoids weekday trading tokens.
+    universe_refresh_weekend_only: bool = True
+    # When true (and weekend_only is false), skip periodic refresh outside
+    # premarket→after-hours. Ignored when universe_refresh_weekend_only=true.
+    universe_refresh_session_only: bool = False
 
     # Extra symbols AI may add beyond TRADE_ALLOWLIST (empty → built-in curated pool).
     universe_candidate_pool: Annotated[list[str], NoDecode] = Field(default_factory=list)

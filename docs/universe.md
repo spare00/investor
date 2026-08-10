@@ -44,7 +44,15 @@ Dashboard Overview renders the same snapshot under **Universe** (mode, focus chi
 
 ## Scheduler
 
-When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler also runs `universe_refresh` every `UNIVERSE_REFRESH_SECONDS` (default 7d backup). **Universe Manager LLM** is capped by `UNIVERSE_REFRESH_MIN_INTERVAL_DAYS` (default **7**): between LLM runs, premarket/scheduler only rebuild focus + hygiene without the model so daily trading budget is not burned on watchlist churn. With `UNIVERSE_REFRESH_SESSION_ONLY=true` (default), scheduler ticks skip overnight `BEFORE_PREMARKET`. Premarket still applies post-analysis priority boosts (no second LLM). Manual `POST /universe/refresh` with `{"force": true}` bypasses the weekly gate.
+When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler polls `universe_refresh` every `UNIVERSE_REFRESH_SECONDS` (default **6h**). **Universe Manager LLM** runs only when:
+
+1. `UNIVERSE_REFRESH_WEEKEND_ONLY=true` (default) — operator TZ weekend (Sat/Sun, default `Australia/Brisbane`), and
+2. at least `UNIVERSE_REFRESH_MIN_INTERVAL_DAYS` (default **7**) since the last LLM focus snapshot.
+
+Between LLM runs (and on weekdays), premarket/scheduler only rebuild focus + hygiene without the model so daily trading tokens are not burned on watchlist churn. Legacy `UNIVERSE_REFRESH_SESSION_ONLY` applies only when weekend-only is off. Manual `POST /universe/refresh` with `{"force": true}` bypasses weekend + weekly gates.
+
+Dual-book: seed = `TRADE_ALLOWLIST` ∪ `TRADE_ALLOWLIST_AU`; curated candidates include liquid US + ASX names when `ENABLED_VENUES` includes AU. Entry/collection remain venue-scoped.
+
 
 ## Persistence
 

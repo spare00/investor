@@ -66,8 +66,20 @@ _UNIVERSE_REFRESH_PHASES = frozenset(
 )
 
 
+def _is_operator_weekend(cfg: Settings, now: datetime | None = None) -> bool:
+    """Saturday/Sunday in operator_timezone (default Australia/Brisbane)."""
+    from app.universe.schedule import is_operator_weekend
+
+    return is_operator_weekend(cfg, now)
+
 def _universe_refresh_allowed_now(cfg: Settings, now: datetime | None = None) -> bool:
-    """Whether a periodic Universe Manager call should run at this clock time."""
+    """Whether a periodic Universe Manager poll should run at this clock time.
+
+    Weekend-only (default) keeps the weekly LLM off weekday trading sessions.
+    Session-only is a legacy fallback when weekend_only is false.
+    """
+    if bool(cfg.universe_refresh_weekend_only):
+        return _is_operator_weekend(cfg, now)
     if not bool(cfg.universe_refresh_session_only):
         return True
     from app.market.calendar import MarketCalendarService

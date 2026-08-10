@@ -25,6 +25,14 @@ class UniverseManagerInput(StrictModel):
     current_watchlist: list[dict] = Field(default_factory=list)
     holdings: list[str] = Field(default_factory=list)
     seed_pool: list[str] = Field(default_factory=list)
+    seed_pool_by_venue: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Allowlist seeds keyed by venue (US / AU)",
+    )
+    enabled_venues: list[str] = Field(
+        default_factory=list,
+        description="Active books this firm runs (e.g. US, AU)",
+    )
     candidate_pool: list[str] = Field(
         default_factory=list,
         description="Bounded liquid names beyond seed the manager may add",
@@ -36,7 +44,7 @@ class UniverseManagerInput(StrictModel):
     focus_limit: int = 12
     objective: str = (
         "Maximize expected return while minimizing loss via horizon-appropriate "
-        "selection; never review the entire market each session."
+        "selection across enabled venues; never review the entire market each session."
     )
     recent_outcomes: dict[str, object] = Field(
         default_factory=dict,

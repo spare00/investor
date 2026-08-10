@@ -73,6 +73,7 @@ async def test_refresh_skips_llm_within_weekly_window(session: AsyncSession) -> 
         universe_manager_enabled=True,
         universe_mode="dynamic",
         universe_refresh_min_interval_days=7,
+        universe_refresh_weekend_only=False,
         trade_allowlist=["SPY", "QQQ"],
     )
     agent = _StubAgent()
@@ -90,6 +91,7 @@ async def test_refresh_runs_llm_when_week_elapsed(session: AsyncSession) -> None
         universe_manager_enabled=True,
         universe_mode="dynamic",
         universe_refresh_min_interval_days=7,
+        universe_refresh_weekend_only=False,
         trade_allowlist=["SPY", "QQQ"],
         universe_screener_enabled=False,
     )
@@ -107,11 +109,57 @@ async def test_refresh_force_bypasses_weekly_gate(session: AsyncSession) -> None
         universe_manager_enabled=True,
         universe_mode="dynamic",
         universe_refresh_min_interval_days=7,
+        universe_refresh_weekend_only=False,
         trade_allowlist=["SPY", "QQQ"],
         universe_screener_enabled=False,
     )
     agent = _StubAgent()
     svc = UniverseService(session, settings=settings, agent=agent)  # type: ignore[arg-type]
     result = await svc.refresh(holdings=[], force=True)
+    assert result["skipped"] is False
+    assert agent.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_skips_llm_on_weekday_when_weekend_only(session: AsyncSession) -> None:
+    """Weekday + weekend_only → no LLM even if weekly interval elapsed."""
+    from unittest.mock import patch
+
+    await _seed_llm_focus(session, days_ago=8)
+    settings = Settings(
+        universe_manager_enabled=True,
+        universe_mode="dynamic",
+        universe_refresh_min_interval_days=7,
+        universe_refresh_weekend_only=True,
+        operator_timezone="Australia/Brisbane",
+        trade_allowlist=["SPY", "QQQ"],
+        universe_screener_enabled=False,
+    )
+    agent = _StubAgent()
+    svc = UniverseService(session, settings=settings, agent=agent)  # type: ignore[arg-type]
+    with patch("app.universe.schedule.is_operator_weekend", return_value=False):
+        result = await svc.refresh(holdings=[])
+    assert result["skipped"] is True
+    assert result["reason"] == "weekend_only"
+    assert agent.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_refresh_runs_llm_on_weekend_when_due(session: AsyncSession) -> None:
+    from unittest.mock import patch
+
+    await _seed_llm_focus(session, days_ago=8)
+    settings = Settings(
+        universe_manager_enabled=True,
+        universe_mode="dynamic",
+        universe_refresh_min_interval_days=7,
+        universe_refresh_weekend_only=True,
+        trade_allowlist=["SPY", "QQQ"],
+        universe_screener_enabled=False,
+    )
+    agent = _StubAgent()
+    svc = UniverseService(session, settings=settings, agent=agent)  # type: ignore[arg-type]
+    with patch("app.universe.schedule.is_operator_weekend", return_value=True):
+        result = await svc.refresh(holdings=[])
     assert result["skipped"] is False
     assert agent.calls == 1

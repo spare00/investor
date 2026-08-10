@@ -17,18 +17,20 @@ from app.universe.horizons import UniverseHorizon
 class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput]):
     name = AgentName.UNIVERSE_MANAGER
     prompt_file = "system_v1.md"
-    prompt_version = "1.0.0"
+    prompt_version = "1.1.0"
 
     def output_model(self) -> type[UniverseManagerOutput]:
         return UniverseManagerOutput
 
     def build_user_prompt(self, payload: UniverseManagerInput) -> str:
         return (
-            "Maintain the horizon-grouped watchlist and today's focus set. "
-            "Prefer seed_pool, then candidate_pool, then current watchlist. "
+            "Maintain the horizon-grouped watchlist and focus set across enabled venues "
+            "(US and/or AU). Prefer seed_pool / seed_pool_by_venue, then candidate_pool, "
+            "then current watchlist. Cover both books when dual-venue is enabled. "
             "You may add liquid names from candidate_pool that fit a horizon book. "
-            "Do not invent obscure tickers. Optimize for max return / min loss "
-            "via selection quality — do not scan the whole market.\n\n"
+            "Do not invent obscure tickers. Use market_regime, themes, and recent_outcomes "
+            "to rotate toward fit names and pause chronic losers. Optimize for max return / "
+            "min loss via selection quality — do not scan the whole market.\n\n"
             f"{dump_for_prompt(payload)}"
         )
 
@@ -38,7 +40,7 @@ class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput
         seed = [s.upper() for s in payload.seed_pool] or [
             str(x.get("symbol", "")).upper() for x in payload.current_watchlist if x.get("symbol")
         ]
-        indexes = {"SPY", "QQQ", "IWM", "DIA"}
+        indexes = {"SPY", "QQQ", "IWM", "DIA", "VAS", "IOZ", "NDQ", "JPEQ"}
         for i, sym in enumerate(seed[: payload.watchlist_limit]):
             if not sym:
                 continue

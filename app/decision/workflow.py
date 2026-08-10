@@ -279,6 +279,10 @@ class WorkflowService:
                 )
                 if refreshed.get("skipped") and refreshed.get("reason") == "min_interval":
                     notes.append("universe_refresh_deferred_weekly")
+                elif refreshed.get("skipped") and refreshed.get("reason") == "weekend_only":
+                    notes.append("universe_refresh_deferred_weekend")
+                elif refreshed.get("skipped"):
+                    notes.append(f"universe_refresh_skipped:{refreshed.get('reason')}")
                 else:
                     notes.append("universe_refreshed")
                 try:

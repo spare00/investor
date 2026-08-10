@@ -44,7 +44,11 @@ def _settings_cache() -> None:
 
 
 def test_curated_pool_expands_beyond_seed() -> None:
-    settings = Settings(trade_allowlist=["SPY"], universe_candidate_pool=[])
+    settings = Settings(
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=[],
+        enabled_venues=["US"],
+    )
     pool = curated_candidate_pool(settings)
     assert "JPM" in pool
     assert "SPY" not in pool or True
@@ -54,10 +58,33 @@ def test_curated_pool_expands_beyond_seed() -> None:
     assert "ZZZZ" not in allowed
 
 
+def test_dual_venue_seed_and_au_candidates() -> None:
+    from app.universe.candidates import combined_seed_pool
+
+    settings = Settings(
+        trade_allowlist=["SPY", "QQQ"],
+        trade_allowlist_au=["BHP", "VAS"],
+        universe_candidate_pool=[],
+        enabled_venues=["US", "AU"],
+    )
+    seed = combined_seed_pool(settings)
+    assert "SPY" in seed and "BHP" in seed
+    pool = curated_candidate_pool(settings)
+    assert "JPM" in pool
+    assert "CSL" in pool
+    allowed = addable_universe(settings, known_symbols=set())
+    assert "VAS" in allowed
+    assert "CSL" in allowed
+
+
 def test_theme_ranking_boosts_matching_names() -> None:
     from app.universe.candidates import ranked_candidate_pool
 
-    settings = Settings(trade_allowlist=["SPY"], universe_candidate_pool=[])
+    settings = Settings(
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=[],
+        enabled_venues=["US"],
+    )
     ranked = ranked_candidate_pool(settings, themes=["semiconductor"])
     assert ranked[0] in {"SMH", "SOXX", "MU", "INTC", "AMD", "AVGO"}
     # Non-theme names still present later
@@ -156,6 +183,7 @@ def test_candidate_adds_can_be_disabled() -> None:
         trade_allowlist=["SPY"],
         universe_allow_candidate_adds=False,
         universe_candidate_pool=["JPM"],
+        enabled_venues=["US"],
     )
     allowed = addable_universe(settings, known_symbols={"NVDA"})
     assert allowed == {"SPY", "NVDA"}

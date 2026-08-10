@@ -1,4 +1,4 @@
-"""Universe refresh session gate + notes coercion (overnight LLM burn fixes)."""
+"""Universe refresh session / weekend gates."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from app.core.config import Settings
 from app.core.scheduler import _universe_refresh_allowed_now
 from app.schemas.universe_manager import UniverseManagerOutput
+from app.universe.schedule import is_operator_weekend
 
 
 def test_notes_string_coerced_to_list() -> None:
@@ -35,8 +36,10 @@ def test_notes_empty_string_becomes_empty_list() -> None:
 def test_universe_refresh_skipped_before_premarket() -> None:
     # Wednesday 2026-08-05 02:30 ET = deep overnight before 04:00 premarket
     settings = Settings(
+        universe_refresh_weekend_only=False,
         universe_refresh_session_only=True,
         market_timezone="America/New_York",
+        enabled_venues=["US"],
     )
     now = datetime(2026, 8, 5, 6, 30, tzinfo=UTC)  # 02:30 ET
     assert _universe_refresh_allowed_now(settings, now) is False
@@ -44,8 +47,10 @@ def test_universe_refresh_skipped_before_premarket() -> None:
 
 def test_universe_refresh_allowed_during_premarket() -> None:
     settings = Settings(
+        universe_refresh_weekend_only=False,
         universe_refresh_session_only=True,
         market_timezone="America/New_York",
+        enabled_venues=["US"],
     )
     # 05:00 ET on a trading Wednesday
     now = datetime(2026, 8, 5, 9, 0, tzinfo=UTC)
@@ -55,8 +60,31 @@ def test_universe_refresh_allowed_during_premarket() -> None:
 
 def test_universe_refresh_session_only_off_allows_overnight() -> None:
     settings = Settings(
+        universe_refresh_weekend_only=False,
         universe_refresh_session_only=False,
         market_timezone="America/New_York",
     )
     now = datetime(2026, 8, 5, 6, 30, tzinfo=UTC)
     assert _universe_refresh_allowed_now(settings, now) is True
+
+
+def test_weekend_only_allows_saturday_bne() -> None:
+    settings = Settings(
+        universe_refresh_weekend_only=True,
+        operator_timezone="Australia/Brisbane",
+    )
+    # Saturday 2026-08-08 10:00 BNE
+    now = datetime(2026, 8, 8, 0, 0, tzinfo=UTC)
+    assert is_operator_weekend(settings, now) is True
+    assert _universe_refresh_allowed_now(settings, now) is True
+
+
+def test_weekend_only_blocks_monday_bne() -> None:
+    settings = Settings(
+        universe_refresh_weekend_only=True,
+        operator_timezone="Australia/Brisbane",
+    )
+    # Monday 2026-08-10 12:00 BNE = 02:00 UTC
+    now = datetime(2026, 8, 10, 2, 0, tzinfo=UTC)
+    assert is_operator_weekend(settings, now) is False
+    assert _universe_refresh_allowed_now(settings, now) is False

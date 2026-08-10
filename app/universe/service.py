@@ -367,13 +367,30 @@ class UniverseService:
         """Run Universe Manager and persist watchlist + focus.
 
         LLM runs at most every ``universe_refresh_min_interval_days`` (default 7)
-        unless ``force=True``. Between LLM runs, rebuilds focus without the model
-        so premarket/scheduler do not burn daily trading budget.
+        and, by default, only on operator-timezone weekends unless ``force=True``.
+        Between LLM runs, rebuilds focus without the model so premarket/scheduler
+        do not burn weekday trading budget.
         """
         await self.ensure_seeded()
         if not self.settings.universe_manager_enabled:
             focus = await self.build_focus_without_llm(holdings=holdings or [], session_date=session_date)
             return {"skipped": True, "reason": "universe_manager_disabled", "focus": focus}
+
+        if not force and bool(self.settings.universe_refresh_weekend_only):
+            from app.universe.schedule import is_operator_weekend
+
+            if not is_operator_weekend(self.settings):
+                focus = await self.build_focus_without_llm(
+                    holdings=holdings or [], session_date=session_date
+                )
+                hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
+                logger.info("universe_refresh_deferred_weekend")
+                return {
+                    "skipped": True,
+                    "reason": "weekend_only",
+                    "focus": focus,
+                    "hygiene": hygiene,
+                }
 
         if not force and not await self.llm_refresh_due():
             last = await self.last_llm_refresh_at()
@@ -407,14 +424,26 @@ class UniverseService:
         screened, screen_meta = await self._screened_candidate_pool(
             themes=themes, market_regime=market_regime
         )
+        from app.market.venues import Venue, enabled_venues
+        from app.universe.candidates import combined_seed_pool
         from app.universe.outcomes import recent_outcome_stats
 
         outcomes = await recent_outcome_stats(self.session, lookback_days=90)
+        venues = [v.value for v in enabled_venues(self.settings)]
+        seed_by_venue: dict[str, list[str]] = {
+            Venue.US.value: [s.upper() for s in self.settings.trade_allowlist if s.strip()],
+        }
+        if Venue.AU in enabled_venues(self.settings):
+            seed_by_venue[Venue.AU.value] = [
+                s.upper() for s in self.settings.trade_allowlist_au if s.strip()
+            ]
         payload = UniverseManagerInput(
             as_of=utc_now(),
             current_watchlist=[self._row_dict(r) for r in paused],
             holdings=[h.upper() for h in (holdings or [])],
-            seed_pool=list(self.settings.trade_allowlist),
+            seed_pool=combined_seed_pool(self.settings),
+            seed_pool_by_venue=seed_by_venue,
+            enabled_venues=venues,
             candidate_pool=screened,
             market_regime=market_regime,
             themes=themes or [],
@@ -439,6 +468,7 @@ class UniverseService:
                 "quality": out.data_quality_score,
                 "screener": screen_meta,
                 "hygiene": hygiene,
+                "enabled_venues": venues,
                 "outcomes_summary": {
                     "by_horizon": outcomes.get("by_horizon"),
                     "by_source": outcomes.get("by_source"),
@@ -615,7 +645,7 @@ class UniverseService:
             if not sym:
                 continue
             # Soft guard: seed ∪ screened candidates ∪ already-known watchlist
-            from app.universe.candidates import addable_universe
+            from app.universe.candidates import addable_universe, venue_for_universe_symbol
 
             allowed_new = addable_universe(
                 self.settings,
@@ -643,6 +673,7 @@ class UniverseService:
                     row.thesis = prop.thesis or row.thesis
                     row.invalidation = prop.invalidation or row.invalidation
                 continue
+            venue_tag = venue_for_universe_symbol(self.settings, sym)
             if row is None:
                 row = WatchlistSymbol(
                     id=uuid4(),
@@ -654,7 +685,7 @@ class UniverseService:
                     invalidation=prop.invalidation,
                     source="universe_manager",
                     last_reviewed_at=now,
-                    payload={"rationale": prop.rationale},
+                    payload={"rationale": prop.rationale, "venue": venue_tag},
                 )
                 self.session.add(row)
                 by_sym[sym] = row
@@ -668,7 +699,11 @@ class UniverseService:
                     row.invalidation = prop.invalidation
                 row.source = "universe_manager"
                 row.last_reviewed_at = now
-                row.payload = {**(row.payload or {}), "rationale": prop.rationale}
+                row.payload = {
+                    **(row.payload or {}),
+                    "rationale": prop.rationale,
+                    "venue": (row.payload or {}).get("venue") or venue_tag,
+                }
 
         # Enforce watchlist limit by pausing lowest priority actives
         actives = sorted(
