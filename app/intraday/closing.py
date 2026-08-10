@@ -230,6 +230,8 @@ class ClosingService:
                 "reason": rationale,
                 "lifecycle_id": str(lc.id),
                 "action": action,
+                "venue": getattr(lc, "venue", None) or self.venue.value,
+                "con_id": int(getattr(lc, "con_id", 0) or 0) or None,
             },
         )
         self.session.add(intent)

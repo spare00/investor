@@ -58,8 +58,11 @@ class SettlementService:
 
         day_start = datetime.fromisoformat(day).replace(tzinfo=UTC)
         day_end = day_start + timedelta(days=1)
-        orders = list((await self.session.execute(select(Order))).scalars().all())
+        all_orders = list((await self.session.execute(select(Order))).scalars().all())
+        orders = [o for o in all_orders if self._order_venue(o) == book]
+        order_ids = {o.id for o in orders}
         executions = list((await self.session.execute(select(Execution))).scalars().all())
+        executions = [e for e in executions if e.order_id in order_ids]
         # Prefer session-day executions when timestamps exist; else keep all (fixture/offline)
         day_execs = [
             e
@@ -236,3 +239,8 @@ class SettlementService:
             if row_venue == book:
                 return row
         return None
+
+    @staticmethod
+    def _order_venue(order: Order) -> str:
+        payload = order.raw_payload if isinstance(order.raw_payload, dict) else {}
+        return str(payload.get("venue") or "US").upper()

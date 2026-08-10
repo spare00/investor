@@ -116,7 +116,6 @@ class ExecutionValidator:
         intents: list[ValidatedOrderIntent] = []
         horizons = horizon_by_symbol or {}
         seen = seen_idempotency_keys or set()
-        held_syms = [p.symbol for p in portfolio.positions if p.quantity]
 
         for plan in decision.symbol_actions:
             if plan.action in {SymbolAction.HOLD, SymbolAction.NO_TRADE, SymbolAction.STAY_CASH}:
@@ -129,6 +128,12 @@ class ExecutionValidator:
                 if entry_universe is not None
                 else self.settings.allowlist_for_venue(plan_venue)
             )
+            held_syms = [
+                p.symbol
+                for p in portfolio.positions
+                if p.quantity
+                and (getattr(p, "venue", None) or "US").upper() == plan_venue
+            ]
             result = self._validate_plan(
                 decision,
                 plan,
@@ -194,7 +199,11 @@ class ExecutionValidator:
             return f"{symbol}:missing_stop_or_invalidation"
 
         horizons = horizon_by_symbol or {}
-        held = held_symbols or [p.symbol for p in portfolio.positions if p.quantity]
+        held = (
+            list(held_symbols)
+            if held_symbols is not None
+            else [p.symbol for p in portfolio.positions if p.quantity]
+        )
         if plan.action in ENTRY_ACTIONS:
             cap = horizon_cap_violation(
                 symbol=symbol,

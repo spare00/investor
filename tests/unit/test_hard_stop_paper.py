@@ -240,6 +240,49 @@ async def test_monitor_emergency_emits_alert(session: AsyncSession, monkeypatch:
 
 
 @pytest.mark.asyncio
+async def test_hard_stop_exit_intent_stamps_venue(session: AsyncSession) -> None:
+    from uuid import UUID
+
+    from app.models import OrderIntent
+
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        broker_environment="paper",
+        enable_intraday_monitoring=True,
+        enable_broker_orders=False,
+        auto_execute_hard_stops=False,
+        intraday_operation_mode="MANUAL_APPROVAL",
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="BHP",
+            status="OPEN",
+            quantity=2,
+            average_entry_price=40,
+            current_price=40,
+            stop_price=39,
+            overnight_allowed=True,
+            venue="AU",
+            con_id=4242,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+    rows = await IntradayService(session, settings=settings).monitor_all(
+        prices={"BHP": 38.0}, venue="AU"
+    )
+    hit = next(r for r in rows if r["symbol"] == "BHP")
+    assert hit.get("exit_intent_id")
+    intent = await session.get(OrderIntent, UUID(hit["exit_intent_id"]))
+    assert intent is not None
+    meta = intent.metadata_json or {}
+    assert meta.get("venue") == "AU"
+    assert meta.get("con_id") == 4242
+
+
+@pytest.mark.asyncio
 async def test_monitor_all_scopes_to_venue(session: AsyncSession) -> None:
     settings = Settings(
         app_env="test",

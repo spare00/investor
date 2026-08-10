@@ -527,3 +527,60 @@ def test_validator_blocks_horizon_cap() -> None:
     )
     assert result.approved is False
     assert any("horizon_cap" in r for r in result.rejections)
+
+
+def test_validator_horizon_cap_scopes_held_by_venue() -> None:
+    """AU scalp holdings must not consume US scalp slots."""
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.BUY,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="IWM",
+                action=SymbolAction.BUY,
+                confidence=70,
+                target_position_pct=5,
+                stop_loss=190,
+                thesis="us scalp",
+                invalidation="break",
+                entry_zone=PriceZone(min=200, max=201),
+            )
+        ],
+        cash_target_pct=50,
+        risk_approval=True,
+    )
+    result = ExecutionValidator(controls=TradingControls()).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=100_000,
+            cash=50_000,
+            cash_pct=50,
+            gross_exposure_pct=50,
+            positions=[
+                PositionRiskView(
+                    symbol="BHP",
+                    quantity=10,
+                    market_value=5000,
+                    sector="Materials",
+                    weight_pct=5,
+                    venue="AU",
+                ),
+                PositionRiskView(
+                    symbol="CBA",
+                    quantity=10,
+                    market_value=5000,
+                    sector="Financials",
+                    weight_pct=5,
+                    venue="AU",
+                ),
+            ],
+        ),
+        latest_prices={"IWM": 200},
+        data_quality_score=0.9,
+        entry_universe={"IWM", "BHP", "CBA"},
+        horizon_by_symbol={"BHP": "scalp", "CBA": "scalp", "IWM": "scalp"},
+    )
+    assert result.approved is True
+    assert len(result.intents) == 1

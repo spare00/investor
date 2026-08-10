@@ -433,6 +433,8 @@ class ExecutionService:
                 "intent_id": str(intent.id),
                 "broker": result.raw,
                 "state": InternalOrderState.SUBMITTED.value,
+                "venue": venue,
+                "con_id": con_id,
             }
             intent.status = IntentStatus.SUBMITTED.value
             # Preserve horizon-aware exit policy from intent creation; refresh stop.

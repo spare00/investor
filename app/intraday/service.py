@@ -238,7 +238,14 @@ class IntradayService:
             status=IntentStatus.CREATED.value if caps.can_approve else "DRAFT",
             thesis=reason,
             exit_policy=dict(lc.exit_policy or {}),
-            metadata_json={"source": "intraday", "reason": reason, "lifecycle_id": str(lc.id)},
+            metadata_json={
+                "source": "intraday",
+                "reason": reason,
+                "lifecycle_id": str(lc.id),
+                "venue": getattr(lc, "venue", None)
+                or venue_for_symbol(lc.symbol, self.settings).value,
+                "con_id": int(getattr(lc, "con_id", 0) or 0) or None,
+            },
         )
         # Default fail-closed: hard stops wait for approval unless auto-submit is armed.
         if reason == "hard_stop" and not self._should_auto_submit_hard_stops(caps):
