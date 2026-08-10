@@ -37,7 +37,8 @@ PRIMARY_VENUE=US          # default order routing / briefing calendar
 TRADE_ALLOWLIST_AU=BHP,CBA,VAS,IOZ,NDQ,JPEQ
 ```
 
-Watchlist seeding adds missing AU allowlist symbols with `payload.venue=AU`. Daily analysis for an AU run uses `entry_universe(venue=AU)`. IBKR closes stamp venue from position exchange/currency.
+- Cap exposure within one venue book via `MAX_VENUE_GROSS_PCT` (default 50%).
+- Daily/intraday collection is scoped to `collection_universe(venue=…)` (AU uses `VAS`, not forced US indexes).
 
 Registry: `app.market.venues` (`venue_for_symbol`, `enabled_venues`). Factory: `MarketCalendarService(..., venue=)` / `get_market_calendar(venue=)`.
 

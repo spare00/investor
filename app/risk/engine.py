@@ -24,6 +24,7 @@ def limits_from_settings(settings: Settings | None = None) -> RiskLimits:
         max_position_pct=cfg.max_position_pct,
         max_sector_pct=cfg.max_sector_pct,
         max_gross_exposure_pct=cfg.max_gross_exposure_pct,
+        max_venue_gross_pct=cfg.max_venue_gross_pct,
         min_cash_pct=cfg.min_cash_pct,
         risk_per_trade_pct=cfg.risk_per_trade_pct,
         daily_max_loss_pct=cfg.daily_max_loss_pct,
@@ -71,6 +72,21 @@ class DeterministicRiskEngine:
         if equity <= 0:
             return 0.0
         current = sum(p.market_value for p in positions if p.sector == sector)
+        return (current + additional_notional) / equity * 100.0
+
+    def venue_exposure_pct(
+        self,
+        positions: list[PositionRiskView],
+        equity: float,
+        venue: str,
+        additional_notional: float = 0.0,
+    ) -> float:
+        if equity <= 0:
+            return 0.0
+        want = (venue or "US").upper()
+        current = sum(
+            abs(p.market_value) for p in positions if (p.venue or "US").upper() == want
+        )
         return (current + additional_notional) / equity * 100.0
 
     def position_size(
@@ -335,6 +351,22 @@ class DeterministicRiskEngine:
                 sector_pct <= self.limits.max_sector_pct + 1e-9,
                 f"Projected sector {trade.sector} {sector_pct:.2f}%",
                 sector_pct=sector_pct,
+            )
+
+            from app.market.venues import venue_for_symbol
+
+            trade_venue = venue_for_symbol(symbol).value
+            venue_pct = self.venue_exposure_pct(
+                portfolio.positions,
+                portfolio.equity,
+                trade_venue,
+                additional_notional=notional,
+            )
+            add(
+                VetoCode.MAX_VENUE_GROSS_EXPOSURE,
+                venue_pct <= self.limits.max_venue_gross_pct + 1e-9,
+                f"Projected venue {trade_venue} {venue_pct:.2f}%",
+                venue_pct=venue_pct,
             )
 
             projected_gross = portfolio.gross_exposure_pct + (

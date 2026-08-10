@@ -105,6 +105,34 @@ def test_summarize_venue_books() -> None:
     assert books["AU"]["market_value"] == 600
 
 
+def test_collection_universe_au_uses_vas_not_spy(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core.database import Base
+    from app.universe.service import UniverseService
+
+    monkeypatch.setenv("ENABLED_VENUES", "US,AU")
+    monkeypatch.setenv("UNIVERSE_MODE", "static")
+    clear_settings_cache()
+
+    async def _run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            univ = UniverseService(session, settings=get_settings())
+            symbols = await univ.collection_universe(venue="AU")
+            assert "VAS" in symbols
+            assert "SPY" not in symbols
+            assert "BHP" in symbols or "JPEQ" in symbols
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
 def test_dual_venue_prepare_distinct_job_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
 

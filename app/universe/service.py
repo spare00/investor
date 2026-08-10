@@ -127,27 +127,52 @@ class UniverseService:
         rows = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
         return {r.symbol.upper(): r.horizon for r in rows if r.status == "active"}
 
-    async def collection_universe(self, holdings: list[str] | None = None) -> list[str]:
+    async def collection_universe(
+        self,
+        holdings: list[str] | None = None,
+        *,
+        venue: str | None = None,
+    ) -> list[str]:
         """Symbols to collect/analyze this cycle: holdings ∪ focus (or watchlist capped)."""
+        from app.market.venues import Venue, parse_venue
+
+        want = parse_venue(venue)
         held = sorted({h.upper() for h in (holdings or []) if h})
-        bench = (self.settings.primary_benchmark or "SPY").upper()
+        if want == Venue.AU:
+            bench = (self.settings.primary_benchmark_au or "VAS").upper()
+            allow = self.settings.allowlist_for_venue(Venue.AU)
+        elif want == Venue.US:
+            bench = (self.settings.primary_benchmark or "SPY").upper()
+            allow = self.settings.allowlist_for_venue(Venue.US)
+        else:
+            bench = (self.settings.primary_benchmark or "SPY").upper()
+            allow = None
+
         if not self.is_dynamic():
-            return sorted({*self.settings.trade_allowlist, *held, bench})
+            base = set(allow) if allow is not None else set(self.settings.trade_allowlist)
+            return sorted({*base, *held, bench})
 
         await self.ensure_seeded()
         active_set = {r.symbol.upper() for r in await self.list_active()}
-        allowed = active_set | set(held) | {bench}
+        if allow is not None:
+            active_set &= set(allow)
+            held_scoped = [h for h in held if h in allow or h == bench]
+        else:
+            held_scoped = held
+        allowed = active_set | set(held_scoped) | {bench}
         latest = await self._latest_focus()
         if latest and latest.symbols:
             # Drop sold / paused names that lingered in an older focus snapshot.
             focus = [str(s).upper() for s in latest.symbols if str(s).upper() in allowed]
-            if focus or held:
-                return sorted({*focus, *held, bench})
+            if focus or held_scoped:
+                return sorted({*focus, *held_scoped, bench})
 
         active = await self.list_active()
+        if allow is not None:
+            active = [r for r in active if r.symbol.upper() in allow]
         ranked = sorted(active, key=lambda r: (-r.priority, r.symbol))
         focus = [r.symbol.upper() for r in ranked[: self.settings.universe_focus_limit]]
-        return sorted({*focus, *held, bench})
+        return sorted({*focus, *held_scoped, bench})
 
     async def snapshot(self) -> dict[str, Any]:
         await self.ensure_seeded()

@@ -147,6 +147,8 @@ class WorkflowService:
                     market_value=p.market_value,
                     sector=p.sector,
                     weight_pct=p.weight_pct,
+                    venue=getattr(p, "venue", None) or "US",
+                    currency=getattr(p, "currency", None),
                 )
                 for p in portfolio.positions
             ],
@@ -298,8 +300,11 @@ class WorkflowService:
         else:
             await univ.build_focus_without_llm(holdings=held)
 
-        universe = await univ.collection_universe(holdings=held)
-        entry_universe = await univ.entry_universe()
+        from app.market.venues import resolve_venue
+
+        book = resolve_venue(self.settings).value
+        universe = await univ.collection_universe(holdings=held, venue=book)
+        entry_universe = await univ.entry_universe(venue=book)
         horizons = await univ.horizon_by_symbol()
 
         collection = await DataCollectionService(

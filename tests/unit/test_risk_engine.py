@@ -23,6 +23,7 @@ def engine() -> DeterministicRiskEngine:
             max_position_pct=10.0,
             max_sector_pct=30.0,
             max_gross_exposure_pct=70.0,
+            max_venue_gross_pct=50.0,
             min_cash_pct=30.0,
             risk_per_trade_pct=0.5,
             daily_max_loss_pct=1.5,
@@ -351,3 +352,64 @@ class TestApprovedPath:
         assert result.hard_vetoes == []
         assert result.adjusted_quantity is not None
         assert result.adjusted_quantity > 0
+
+
+class TestVenueGrossCap:
+    def test_venue_cap_blocks_same_book(
+        self, engine: DeterministicRiskEngine, portfolio: PortfolioRiskView
+    ) -> None:
+        portfolio.equity = 100_000
+        portfolio.cash = 50_000
+        portfolio.cash_pct = 50.0
+        portfolio.gross_exposure_pct = 45.0
+        portfolio.positions = [
+            PositionRiskView(
+                symbol="BHP",
+                quantity=100,
+                market_value=45_000,
+                sector="Materials",
+                weight_pct=45.0,
+                venue="AU",
+                currency="AUD",
+            )
+        ]
+        trade = _buy(qty=100, price=100.0, stop=95.0, symbol="CBA", sector="Financials")
+        result = engine.evaluate_pretrade(
+            portfolio,
+            trade,
+            allowlist={"CBA"},
+            data_quality_score=0.95,
+            market_session_clear=True,
+            broker_data_consistent=True,
+        )
+        assert result.approved is False
+        assert VetoCode.MAX_VENUE_GROSS_EXPOSURE.value in result.hard_vetoes
+
+    def test_other_venue_does_not_count(
+        self, engine: DeterministicRiskEngine, portfolio: PortfolioRiskView
+    ) -> None:
+        portfolio.equity = 100_000
+        portfolio.cash = 60_000
+        portfolio.cash_pct = 60.0
+        portfolio.gross_exposure_pct = 40.0
+        portfolio.positions = [
+            PositionRiskView(
+                symbol="AAPL",
+                quantity=100,
+                market_value=40_000,
+                sector="Technology",
+                weight_pct=40.0,
+                venue="US",
+                currency="USD",
+            )
+        ]
+        trade = _buy(qty=50, price=100.0, stop=95.0, symbol="BHP", sector="Materials")
+        result = engine.evaluate_pretrade(
+            portfolio,
+            trade,
+            allowlist={"BHP"},
+            data_quality_score=0.95,
+            market_session_clear=True,
+            broker_data_consistent=True,
+        )
+        assert VetoCode.MAX_VENUE_GROSS_EXPOSURE.value not in result.hard_vetoes

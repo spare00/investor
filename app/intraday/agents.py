@@ -124,9 +124,12 @@ class IntradayAgentService:
                 if abs(p.quantity or 0) > 1e-12
             ] or [s.upper() for s in open_syms]
 
-            entry_universe = await univ.entry_universe()
+            from app.market.venues import resolve_venue
+
+            book = resolve_venue(self.settings).value
+            entry_universe = await univ.entry_universe(venue=book)
             horizons = await univ.horizon_by_symbol()
-            universe = await univ.collection_universe(holdings=held)
+            universe = await univ.collection_universe(holdings=held, venue=book)
 
             collection = await DataCollectionService(
                 self.session, persist=False, persist_markets=True

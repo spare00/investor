@@ -129,15 +129,25 @@ class DataCollectionPipeline:
         symbols: list[str] | None = None,
         workflow_id: UUID | None = None,
         cutoff: datetime | None = None,
+        venue: str | None = None,
     ) -> DataLayerResult:
+        from app.market.venues import Venue, parse_venue
+
         started = datetime.now(UTC)
         run_id = uuid4()
         wf = workflow_id or run_id
-        universe = symbols or list(self.settings.trade_allowlist)
-        index = ["SPY", "QQQ", "IWM", "DIA"]
-        for s in index:
-            if s not in universe:
-                universe = [s, *universe]
+        book = parse_venue(venue)
+        if symbols is not None:
+            universe = list(symbols)
+        elif book == Venue.AU:
+            universe = list(self.settings.trade_allowlist_au)
+        else:
+            universe = list(self.settings.trade_allowlist)
+        # US index overlays only for US (or unscoped) books — avoid SPY noise on ASX runs.
+        if book != Venue.AU:
+            for s in ("SPY", "QQQ", "IWM", "DIA"):
+                if s not in universe:
+                    universe = [s, *universe]
 
         result = DataLayerResult(
             collection_run_id=run_id,

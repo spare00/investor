@@ -41,6 +41,8 @@ def portfolio_to_risk_view(portfolio: PortfolioStateInput) -> PortfolioRiskView:
                 market_value=p.market_value,
                 sector=p.sector,
                 weight_pct=p.weight_pct,
+                venue=getattr(p, "venue", None) or "US",
+                currency=getattr(p, "currency", None),
             )
             for p in portfolio.positions
         ],

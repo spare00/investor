@@ -202,23 +202,8 @@ class DailyWorkflowService:
                 )
             ):
                 raise DailyWorkflowError("external_data_required_when_execution_armed")
-            data = await DataCollectionPipeline(
-                self.session,
-                settings=self.settings,
-                fixture_mode=use_fixtures,
-            ).collect("PREMARKET", workflow_id=run.id)
-            collection = data.legacy_bundle
-            if collection is None:
-                collection = await DataCollectionService(
-                    self.session, settings=self.settings, persist=True
-                ).collect_premarket(workflow_id=run.id)
-            if data.fail_closed:
-                meta = dict(run.metadata_json or {})
-                meta["data_fail_closed"] = True
-                meta["data_fail_closed_reasons"] = data.fail_closed_reasons
-                meta["collection_run_id"] = str(data.collection_run_id)
-                run.metadata_json = meta
             from app.execution.position_manager import PositionManager
+            from app.universe.service import UniverseService
 
             try:
                 portfolio, portfolio_note = await PositionManager(
@@ -226,6 +211,36 @@ class DailyWorkflowService:
                 ).load_for_risk()
             except Exception as exc:  # noqa: BLE001
                 raise DailyWorkflowError(f"portfolio_sync_failed:{exc}") from exc
+
+            holdings = [p.symbol for p in (portfolio.positions or []) if p.quantity]
+            univ = UniverseService(self.session, settings=self.settings)
+            collect_symbols = await univ.collection_universe(
+                holdings=holdings, venue=self.venue.value
+            )
+
+            data = await DataCollectionPipeline(
+                self.session,
+                settings=self.settings,
+                fixture_mode=use_fixtures,
+            ).collect(
+                "PREMARKET",
+                workflow_id=run.id,
+                symbols=collect_symbols,
+                venue=self.venue.value,
+            )
+            collection = data.legacy_bundle
+            if collection is None:
+                collection = await DataCollectionService(
+                    self.session, settings=self.settings, persist=True
+                ).collect_premarket(workflow_id=run.id, symbols=collect_symbols)
+            if data.fail_closed:
+                meta = dict(run.metadata_json or {})
+                meta["data_fail_closed"] = True
+                meta["data_fail_closed_reasons"] = data.fail_closed_reasons
+                meta["collection_run_id"] = str(data.collection_run_id)
+                meta["collection_symbols"] = collect_symbols
+                meta["venue"] = self.venue.value
+                run.metadata_json = meta
             analysis = await AgentPipeline(settings=self.settings, llm=llm).run_from_collection(
                 collection,
                 portfolio=portfolio,
@@ -237,9 +252,7 @@ class DailyWorkflowService:
             await AuditService(self.session).persist_analysis(analysis)
             prices = {m.symbol: m.last for m in collection.markets}
             from app.execution.firm_execution import materialize_cio_decision
-            from app.universe.service import UniverseService
 
-            univ = UniverseService(self.session, settings=self.settings)
             entry_universe = await univ.entry_universe(venue=self.venue.value)
             hz_map = await univ.horizon_by_symbol()
 

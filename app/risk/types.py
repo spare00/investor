@@ -15,6 +15,7 @@ class VetoCode(StrEnum):
     MAX_SECTOR_PCT = "max_sector_pct"
     MIN_CASH_PCT = "min_cash_pct"
     MAX_GROSS_EXPOSURE = "max_gross_exposure"
+    MAX_VENUE_GROSS_EXPOSURE = "max_venue_gross_exposure"
     MAX_OPEN_POSITIONS = "max_open_positions"
     CONSECUTIVE_LOSSES_COOLDOWN = "consecutive_losses_cooldown"
     CONSECUTIVE_LOSSES_HALT = "consecutive_losses_halt"
@@ -39,6 +40,7 @@ class RiskLimits:
     max_position_pct: float = 10.0
     max_sector_pct: float = 30.0
     max_gross_exposure_pct: float = 70.0
+    max_venue_gross_pct: float = 50.0
     min_cash_pct: float = 30.0
     risk_per_trade_pct: float = 0.5
     daily_max_loss_pct: float = 1.5
