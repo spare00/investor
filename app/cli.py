@@ -168,6 +168,10 @@ async def _broker_cmd(action: str) -> dict:
             "enable_broker_orders": settings.enable_broker_orders,
             "health": None if health is None else health.model_dump(mode="json"),
         }
+    if action == "ping":
+        if not hasattr(broker, "ping"):
+            raise SystemExit("broker_ping_not_supported_for_provider")
+        return await broker.ping()  # type: ignore[misc]
     if action == "account":
         if hasattr(broker, "get_account_canonical"):
             return (await broker.get_account_canonical()).model_dump(mode="json")
@@ -341,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
 
     broker = sub.add_parser("broker")
     bsub = broker.add_subparsers(dest="broker_cmd", required=True)
-    for name in ("status", "account", "positions", "orders"):
+    for name in ("status", "ping", "account", "positions", "orders"):
         bsub.add_parser(name)
 
     execution = sub.add_parser("execution")

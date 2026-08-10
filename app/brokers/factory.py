@@ -34,4 +34,14 @@ def get_broker(settings: Settings | None = None) -> BrokerClient:
 
         return AlpacaBroker(cfg)
 
+    if provider == "ibkr":
+        if not cfg.enable_broker_connection:
+            logger.warning("ibkr_requested_but_connection_disabled_using_mock")
+            return MockBroker(seed=cfg.mock_broker_seed, starting_cash=cfg.starting_cash)
+        if cfg.broker_environment.lower() != "paper":
+            raise BrokerError("ibkr_requires_paper_environment")
+        from app.brokers.ibkr import IbkrBroker
+
+        return IbkrBroker(cfg)
+
     raise BrokerError(f"unknown_broker_provider:{provider}")

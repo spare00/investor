@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     alpaca_base_url: str = "https://paper-api.alpaca.markets"
     alpaca_data_url: str = "https://data.alpaca.markets"
 
+    # Interactive Brokers (TWS API via local Gateway / TWS — paper first)
+    ibkr_host: str = "127.0.0.1"
+    ibkr_port: int = 4002  # Gateway paper default; TWS paper often 7497
+    ibkr_client_id: int = 1
+    ibkr_account: str = ""  # e.g. DUR804020 — optional if only one managed account
+    ibkr_default_exchange: str = "SMART"
+    ibkr_default_currency: str = "USD"
+    # Refuse common live Gateway/TWS ports unless explicitly allowed.
+    ibkr_allow_live_ports: bool = False
+
     # LLM
     llm_base_url: str = "https://api.openai.com/v1"
     llm_api_key: SecretStr | None = None
@@ -198,7 +208,7 @@ class Settings(BaseSettings):
     enable_broker_orders: bool = False
 
     # Phase 5 broker / execution (safe defaults)
-    broker_provider: str = "mock"  # mock | alpaca
+    broker_provider: str = "mock"  # mock | alpaca | ibkr
     broker_environment: str = "paper"  # paper only in Phase 5
     enable_broker_connection: bool = False
     # Trading safety — agent firm paper path (Live always blocked)

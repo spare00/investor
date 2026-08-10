@@ -28,6 +28,7 @@ dependencies = [
     "pandas>=2.2.3",
     "numpy>=2.1.0",
     "tenacity>=9.0.0",
+    "ib_async>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +46,9 @@ yfinance = [
 ]
 alpaca = [
     "alpaca-py>=0.33.0",
+]
+ibkr = [
+    "ib_async>=2.0.0",
 ]
 
 [project.scripts]

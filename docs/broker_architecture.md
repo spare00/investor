@@ -19,7 +19,8 @@ CIO Decision
 | Provider | Purpose |
 |----------|---------|
 | `mock` (default) | Offline deterministic fills; full unit/E2E without network |
-| `alpaca` | Paper trading HTTP adapter (`https://paper-api.alpaca.markets`) |
+| `alpaca` | Paper trading HTTP adapter (`https://paper-api.alpaca.markets`) — legacy; see tag `alpaca-paper-final` |
+| `ibkr` | Paper trading via TWS API + local IB Gateway (see `docs/ibkr_paper.md`) |
 
 Factory: `app/brokers/factory.py`. Live environment / `ENABLE_LIVE_TRADING=true` raises immediately.
 
