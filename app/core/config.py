@@ -162,6 +162,10 @@ class Settings(BaseSettings):
     # Pause active watchlist names that fail the liquidity screen (never pause holdings).
     universe_screener_pause_illiquid: bool = True
 
+    # ASX entry allowlist (separate from US TRADE_ALLOWLIST). Empty → no AU new entries.
+    trade_allowlist_au: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["BHP", "CBA", "VAS", "IOZ", "NDQ", "JPEQ"]
+    )
     trade_allowlist: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
             "SPY",
@@ -192,6 +196,8 @@ class Settings(BaseSettings):
     # Phase 3 market / daily workflow
     # Primary trading book. US keeps NYSE/ET; AU uses ASX / Australia/Sydney.
     primary_venue: str = "US"  # US | AU
+    # Scheduler prepares/dispatches each listed venue (non-overlapping sessions in BNE).
+    enabled_venues: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["US"])
     market_calendar: str = "NYSE"
     market_timezone: str = "America/New_York"
     operator_timezone: str = "Australia/Brisbane"
@@ -331,6 +337,8 @@ class Settings(BaseSettings):
     @field_validator(
         "api_cors_origins",
         "trade_allowlist",
+        "trade_allowlist_au",
+        "enabled_venues",
         "universe_candidate_pool",
         "market_data_provider_priority",
         "news_provider_priority",
@@ -342,10 +350,15 @@ class Settings(BaseSettings):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
 
-    @field_validator("trade_allowlist", "universe_candidate_pool", mode="after")
+    @field_validator("trade_allowlist", "trade_allowlist_au", "universe_candidate_pool", mode="after")
     @classmethod
     def _normalize_symbols(cls, value: list[str]) -> list[str]:
         return [symbol.upper() for symbol in value]
+
+    @field_validator("enabled_venues", mode="after")
+    @classmethod
+    def _normalize_venues(cls, value: list[str]) -> list[str]:
+        return [str(v).strip().upper() for v in value if str(v).strip()]
 
     @model_validator(mode="after")
     def _reject_unsafe_live_default(self) -> Settings:
@@ -374,6 +387,15 @@ class Settings(BaseSettings):
         return token == expected_token
 
     def allowlist_set(self) -> set[str]:
+        return set(self.trade_allowlist)
+
+    def allowlist_for_venue(self, venue: str | None = None) -> set[str]:
+        """Entry allowlist for a venue (defaults to primary)."""
+        from app.market.venues import Venue, parse_venue, resolve_venue
+
+        v = parse_venue(venue) if venue else resolve_venue(self)
+        if v == Venue.AU:
+            return set(self.trade_allowlist_au)
         return set(self.trade_allowlist)
 
 

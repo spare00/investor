@@ -95,9 +95,9 @@ async def test_prepare_trading_day_plans_jobs(session: AsyncSession) -> None:
     assert result["current_state"] == DailyWorkflowState.PREMARKET_PREPARATION.value
     jobs = await svc.planned_jobs("2026-08-03")
     keys = {j["job_key"] for j in jobs}
-    assert "premarket_analysis" in keys
-    assert "closing_window" in keys
-    assert "postmarket_review" in keys
+    assert "US:premarket_analysis" in keys
+    assert "US:closing_window" in keys
+    assert "US:postmarket_review" in keys
 
 
 @pytest.mark.asyncio
@@ -114,7 +114,7 @@ async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSess
     svc = DailyWorkflowService(session, settings=settings)
     await svc.prepare(session_date="2026-08-03")
     jobs = await svc.planned_jobs("2026-08-03")
-    intra = [j for j in jobs if j["job_key"].startswith("intraday_eval_")]
+    intra = [j for j in jobs if j["job_key"].startswith("US:intraday_eval_")]
     assert len(intra) >= 2
     t0 = datetime.fromisoformat(intra[0]["planned_at"])
     t1 = datetime.fromisoformat(intra[1]["planned_at"])
@@ -137,7 +137,7 @@ async def test_replan_intraday_jobs_after_horizon_change(session: AsyncSession) 
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-08-03")
     before = await svc.planned_jobs("2026-08-03")
-    before_intra = [j for j in before if j["job_key"].startswith("intraday_eval_")]
+    before_intra = [j for j in before if j["job_key"].startswith("US:intraday_eval_")]
     assert before_intra
 
     # Collapse active books to medium-only → coarser plan on replan.
@@ -155,7 +155,7 @@ async def test_replan_intraday_jobs_after_horizon_change(session: AsyncSession) 
     after_planned = [
         j
         for j in after
-        if j["job_key"].startswith("intraday_eval_") and j["status"] == "planned"
+        if j["job_key"].startswith("US:intraday_eval_") and j["status"] == "planned"
     ]
     assert after_planned
     # Medium + budget → fewer remaining ticks than original full-day scalp plan
@@ -167,7 +167,7 @@ async def test_early_close_job_uses_session_close(session: AsyncSession) -> None
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-11-27")
     jobs = await svc.planned_jobs("2026-11-27")
-    closing = next(j for j in jobs if j["job_key"] == "closing_window")
+    closing = next(j for j in jobs if j["job_key"] == "US:closing_window")
     planned = datetime.fromisoformat(closing["planned_at"])
     if planned.tzinfo is None:
         planned = planned.replace(tzinfo=UTC)
@@ -338,8 +338,8 @@ async def test_catch_up_marks_planned_premarket_jobs_completed(session: AsyncSes
         )
     ).scalars().all()
     by_key = {j.job_key: j for j in jobs}
-    assert by_key["premarket_analysis"].status == "planned"
-    assert by_key["preopen_revalidation"].status == "planned"
+    assert by_key["US:premarket_analysis"].status == "planned"
+    assert by_key["US:preopen_revalidation"].status == "planned"
 
     # Near open from PREMARKET_PREPARATION — catch-up runs analysis+revalidate.
     now = datetime(2026, 8, 4, 13, 25, tzinfo=UTC)  # 09:25 ET
@@ -348,12 +348,12 @@ async def test_catch_up_marks_planned_premarket_jobs_completed(session: AsyncSes
     )
     assert "analysis" in (out.get("catch_up") or {}).get("steps", [])
     assert "revalidate" in (out.get("catch_up") or {}).get("steps", [])
-    await session.refresh(by_key["premarket_analysis"])
-    await session.refresh(by_key["preopen_revalidation"])
-    assert by_key["premarket_analysis"].status == "completed"
-    assert by_key["preopen_revalidation"].status == "completed"
-    assert "premarket_analysis" in (out.get("catch_up") or {}).get("jobs_marked", [])
-    assert "preopen_revalidation" in (out.get("catch_up") or {}).get("jobs_marked", [])
+    await session.refresh(by_key["US:premarket_analysis"])
+    await session.refresh(by_key["US:preopen_revalidation"])
+    assert by_key["US:premarket_analysis"].status == "completed"
+    assert by_key["US:preopen_revalidation"].status == "completed"
+    assert "US:premarket_analysis" in (out.get("catch_up") or {}).get("jobs_marked", [])
+    assert "US:preopen_revalidation" in (out.get("catch_up") or {}).get("jobs_marked", [])
 
 
 @pytest.mark.asyncio
@@ -529,11 +529,11 @@ def test_coalesce_keeps_latest_intraday_only() -> None:
 async def test_scheduler_bootstrap_prepares_sessions(session: AsyncSession) -> None:
     from app.core.scheduler import _ensure_sessions_prepared
 
-    svc = DailyWorkflowService(session, settings=get_settings())
-    prepared = await _ensure_sessions_prepared(svc, get_settings())
+    prepared = await _ensure_sessions_prepared(session, get_settings())
     assert len(prepared) == 2
+    assert all(p.startswith("US:") for p in prepared)
     # Idempotent
-    again = await _ensure_sessions_prepared(svc, get_settings())
+    again = await _ensure_sessions_prepared(session, get_settings())
     assert again == prepared
 
 

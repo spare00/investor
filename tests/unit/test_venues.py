@@ -74,5 +74,46 @@ def test_us_calendar_unchanged_default() -> None:
 
 def test_ib_qualify_candidates_prefer_au() -> None:
     pairs = ib_qualify_candidates(get_settings(), venue=Venue.AU)
-    assert pairs[0] == ("ASX", "AUD")
+    assert pairs[0] == ("SMART", "AUD")
+    assert ("ASX", "AUD") in pairs
     assert ("SMART", "USD") in pairs
+
+
+def test_dual_venue_prepare_distinct_job_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core.database import Base
+    from app.execution.safety_controls import trading_controls
+    from app.workflow.daily import DailyWorkflowService
+
+    trading_controls.clear_emergency()
+    if trading_controls.snapshot().state.value != "active":
+        trading_controls.resume("test_reset")
+    monkeypatch.setenv("ENABLED_VENUES", "US,AU")
+    clear_settings_cache()
+    settings = get_settings()
+
+    async def _run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            us = DailyWorkflowService(session, settings=settings, venue="US")
+            au = DailyWorkflowService(session, settings=settings, venue="AU")
+            day = "2026-08-10"
+            await us.prepare(session_date=day)
+            await au.prepare(session_date=day)
+            all_jobs = await us.planned_jobs(session_date=day)
+            us_jobs = {j["job_key"] for j in all_jobs if j["job_key"].startswith("US:")}
+            au_jobs = {j["job_key"] for j in all_jobs if j["job_key"].startswith("AU:")}
+            assert "US:premarket_analysis" in us_jobs
+            assert "AU:premarket_analysis" in au_jobs
+            assert us_jobs.isdisjoint(au_jobs)
+            assert (await us.get_current(day)).calendar_name == "NYSE"
+            assert (await au.get_current(day)).calendar_name == "ASX"
+        await engine.dispose()
+
+    asyncio.run(_run())

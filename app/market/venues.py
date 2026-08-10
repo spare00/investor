@@ -47,7 +47,8 @@ VENUE_SPECS: dict[Venue, VenueSpec] = {
         calendar_code="XASX",
         timezone="Australia/Sydney",
         currency="AUD",
-        ib_exchange="ASX",
+        # Prefer SMART routing; direct ASX may trip Gateway precautionary error 10311.
+        ib_exchange="SMART",
         # ASX pre-open auction typically from ~07:00 local.
         premarket_start=time(7, 0),
         postmarket_end=time(16, 10),
@@ -132,3 +133,57 @@ def ib_qualify_candidates(
         seen.add(pair)
         out.append(pair)
     return out
+
+
+def enabled_venues(settings: Settings | None = None) -> list[Venue]:
+    """Venues the scheduler should prepare/dispatch (defaults to primary only)."""
+    cfg = settings or get_settings()
+    raw = list(getattr(cfg, "enabled_venues", None) or [])
+    out: list[Venue] = []
+    seen: set[Venue] = set()
+    for item in raw:
+        try:
+            v = parse_venue(item)
+        except ValueError:
+            continue
+        if v is None or v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    if not out:
+        out = [resolve_venue(cfg)]
+    return out
+
+
+def run_calendar_name(venue: Venue | str, settings: Settings | None = None) -> str:
+    """Persistable calendar_name for DailyWorkflowRun uniqueness."""
+    v = parse_venue(venue) or Venue.US
+    if v == Venue.AU:
+        return "ASX"
+    cfg = settings or get_settings()
+    return (cfg.market_calendar or "NYSE").upper()
+
+
+def scoped_job_key(venue: Venue | str, base: str) -> str:
+    """Prefix scheduled job keys so US/AU session dates can coexist."""
+    v = parse_venue(venue) or Venue.US
+    base = str(base).strip()
+    if base.startswith(f"{v.value}:"):
+        return base
+    return f"{v.value}:{base}"
+
+
+def parse_scoped_job_key(job_key: str) -> tuple[Venue, str]:
+    """Split ``US:premarket_analysis`` → (US, premarket_analysis). Legacy unprefixed → US."""
+    text = str(job_key or "")
+    if ":" in text:
+        head, rest = text.split(":", 1)
+        try:
+            return Venue(head.upper()), rest
+        except ValueError:
+            pass
+    return Venue.US, text
+
+
+def job_key_base(job_key: str) -> str:
+    return parse_scoped_job_key(job_key)[1]

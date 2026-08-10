@@ -71,9 +71,13 @@ def _universe_refresh_allowed_now(cfg: Settings, now: datetime | None = None) ->
     if not bool(cfg.universe_refresh_session_only):
         return True
     from app.market.calendar import MarketCalendarService
+    from app.market.venues import enabled_venues
 
-    status = MarketCalendarService(cfg).get_market_status(now)
-    return status.phase in _UNIVERSE_REFRESH_PHASES
+    for venue in enabled_venues(cfg):
+        status = MarketCalendarService(cfg, venue=venue).get_market_status(now)
+        if status.phase in _UNIVERSE_REFRESH_PHASES:
+            return True
+    return False
 
 
 def _broker_recon_enabled(cfg: Settings) -> bool:
@@ -84,39 +88,57 @@ def _broker_recon_enabled(cfg: Settings) -> bool:
 
 
 def _coalesce_due_jobs(due: list[Any]) -> list[Any]:
-    """Keep only the latest overdue intraday_eval_* job; mark older ones skipped."""
-    other = [j for j in due if not str(j.job_key).startswith("intraday_eval")]
-    intra = [j for j in due if str(j.job_key).startswith("intraday_eval")]
-    if len(intra) <= 1:
-        return due
-    keep = max(intra, key=lambda j: j.planned_at)
-    for job in intra:
-        if job is keep:
+    """Keep only the latest overdue intraday_eval_* job per venue; mark older ones skipped."""
+    from collections import defaultdict
+
+    from app.market.venues import job_key_base, parse_scoped_job_key
+
+    other: list[Any] = []
+    by_venue: dict[Any, list[Any]] = defaultdict(list)
+    for job in due:
+        venue, _ = parse_scoped_job_key(job.job_key)
+        if job_key_base(job.job_key).startswith("intraday_eval"):
+            by_venue[venue].append(job)
+        else:
+            other.append(job)
+    keep_intra: list[Any] = []
+    for jobs in by_venue.values():
+        if len(jobs) <= 1:
+            keep_intra.extend(jobs)
             continue
-        job.status = "skipped"
-        job.error = "coalesced_stale_intraday"
-        job.completed_at = datetime.now(UTC)
-    out = other + [keep]
+        keep = max(jobs, key=lambda j: j.planned_at)
+        for job in jobs:
+            if job is keep:
+                keep_intra.append(job)
+                continue
+            job.status = "skipped"
+            job.error = "coalesced_stale_intraday"
+            job.completed_at = datetime.now(UTC)
+    out = other + keep_intra
     out.sort(key=lambda j: j.planned_at)
     return out
 
 
-async def _ensure_sessions_prepared(svc: Any, settings: Settings) -> list[str]:
-    """Idempotently prepare today + next trading day so planned jobs exist unattended."""
-    from app.market.calendar import MarketCalendarService
+async def _ensure_sessions_prepared(session: Any, settings: Settings) -> list[str]:
+    """Idempotently prepare today + next trading day per enabled venue."""
+    from app.market.venues import enabled_venues
+    from app.workflow.daily import DailyWorkflowService
 
-    cal = MarketCalendarService(settings)
-    today = datetime.now(UTC).astimezone(cal.market_tz).date()
-    targets = sorted({today, cal.get_next_trading_day(today)})
     prepared: list[str] = []
-    for day in targets:
-        result = await svc.prepare(session_date=day.isoformat())
-        prepared.append(day.isoformat())
-        logger.info(
-            "scheduler_session_prepared",
-            session_date=day.isoformat(),
-            note=result.get("note") or result.get("current_state"),
-        )
+    for venue in enabled_venues(settings):
+        svc = DailyWorkflowService(session, settings=settings, owner="scheduler", venue=venue)
+        today = datetime.now(UTC).astimezone(svc.calendar.market_tz).date()
+        targets = sorted({today, svc.calendar.get_next_trading_day(today)})
+        for day in targets:
+            result = await svc.prepare(session_date=day.isoformat())
+            label = f"{venue.value}:{day.isoformat()}"
+            prepared.append(label)
+            logger.info(
+                "scheduler_session_prepared",
+                venue=venue.value,
+                session_date=day.isoformat(),
+                note=result.get("note") or result.get("current_state"),
+            )
     return prepared
 
 
@@ -142,9 +164,10 @@ async def _dispatch_due_jobs() -> None:
             logger.info("scheduler_dispatch_lease_held")
             return
         try:
-            svc = DailyWorkflowService(session, settings=settings, owner="scheduler")
+            from app.market.venues import enabled_venues, parse_scoped_job_key
+
             try:
-                await _ensure_sessions_prepared(svc, settings)
+                await _ensure_sessions_prepared(session, settings)
                 await session.commit()
             except DailyWorkflowError as exc:
                 logger.warning("scheduler_prepare_skipped", error=str(exc))
@@ -154,12 +177,20 @@ async def _dispatch_due_jobs() -> None:
                 await session.rollback()
                 return
 
-            # Near open / already open with incomplete prep → catch up (throttled).
+            # Near open / already open with incomplete prep → catch up (throttled) per venue.
             try:
                 fake = not bool(settings.llm_api_key)
-                catch = await svc.catch_up_to_intraday(fake_llm=fake, now=now)
-                if not (catch.get("catch_up") or {}).get("skipped", True):
-                    logger.info("scheduler_session_catch_up", **(catch.get("catch_up") or {}))
+                for venue in enabled_venues(settings):
+                    svc = DailyWorkflowService(
+                        session, settings=settings, owner="scheduler", venue=venue
+                    )
+                    catch = await svc.catch_up_to_intraday(fake_llm=fake, now=now)
+                    if not (catch.get("catch_up") or {}).get("skipped", True):
+                        logger.info(
+                            "scheduler_session_catch_up",
+                            venue=venue.value,
+                            **(catch.get("catch_up") or {}),
+                        )
                 await session.commit()
             except DailyWorkflowError as exc:
                 logger.warning("scheduler_catch_up_skipped", error=str(exc))
@@ -187,6 +218,7 @@ async def _dispatch_due_jobs() -> None:
                 return planned <= now
 
             due = _coalesce_due_jobs([j for j in candidates if _due(j.planned_at)][:20])
+            services: dict[str, Any] = {}
             for job in due:
                 if job.status != "planned":
                     continue
@@ -201,12 +233,18 @@ async def _dispatch_due_jobs() -> None:
                     job.status = "running"
                     job.started_at = now
                     await session.flush()
-                    await _run_job_action(svc, job.job_key, job.session_date)
+                    venue, _ = parse_scoped_job_key(job.job_key)
+                    if venue.value not in services:
+                        services[venue.value] = DailyWorkflowService(
+                            session, settings=settings, owner="scheduler", venue=venue
+                        )
+                    await _run_job_action(services[venue.value], job.job_key, job.session_date)
                     job.status = "completed"
                     job.completed_at = datetime.now(UTC)
                     entry = {
                         "job": job.job_key,
                         "session_date": job.session_date,
+                        "venue": venue.value,
                         "status": "completed",
                         "at": job.completed_at.isoformat(),
                     }
@@ -217,10 +255,12 @@ async def _dispatch_due_jobs() -> None:
                 except DailyWorkflowError as exc:
                     job.status = "skipped"
                     job.error = str(exc)
+                    job.completed_at = datetime.now(UTC)
                     logger.warning("scheduler_job_skipped", job=job.job_key, error=str(exc))
                 except Exception as exc:  # noqa: BLE001
                     job.status = "failed"
-                    job.error = str(exc)
+                    job.error = str(exc)[:500]
+                    job.completed_at = datetime.now(UTC)
                     logger.exception("scheduler_job_failed", job=job.job_key)
                 finally:
                     try:
@@ -237,19 +277,22 @@ async def _dispatch_due_jobs() -> None:
 
 
 async def _run_job_action(svc: Any, job_key: str, session_date: str) -> None:
+    from app.market.venues import job_key_base
+
     settings = get_settings()
     fake = not bool(settings.llm_api_key)
-    if job_key == "premarket_preparation":
+    action = job_key_base(job_key)
+    if action == "premarket_preparation":
         await svc.prepare(session_date=session_date)
-    elif job_key == "premarket_analysis":
+    elif action == "premarket_analysis":
         await svc.run_analysis(session_date=session_date, fake_llm=fake)
-    elif job_key == "preopen_revalidation":
+    elif action == "preopen_revalidation":
         await svc.revalidate(session_date=session_date, fake_llm=fake)
-    elif job_key.startswith("intraday_eval"):
+    elif action.startswith("intraday_eval"):
         await svc.evaluate_intraday(session_date=session_date, trigger="interval", fake_llm=fake)
-    elif job_key == "closing_window":
+    elif action == "closing_window":
         await svc.start_closing(session_date=session_date)
-    elif job_key == "postmarket_review":
+    elif action == "postmarket_review":
         await svc.run_postmarket(session_date=session_date)
     else:
         logger.warning("unknown_scheduled_job", job_key=job_key)
@@ -294,11 +337,15 @@ async def _refresh_universe() -> None:
                 result = await svc.refresh(holdings=holdings)
                 replan: dict[str, Any] = {}
                 try:
+                    from app.market.venues import enabled_venues
                     from app.workflow.daily import DailyWorkflowService
 
-                    replan = await DailyWorkflowService(
-                        session, settings=settings, owner="scheduler"
-                    ).replan_intraday_jobs()
+                    replan = {}
+                    for venue in enabled_venues(settings):
+                        part = await DailyWorkflowService(
+                            session, settings=settings, owner="scheduler", venue=venue
+                        ).replan_intraday_jobs()
+                        replan[venue.value] = part
                 except Exception:  # noqa: BLE001
                     logger.exception("universe_refresh_replan_failed")
                     replan = {"skipped": True, "reason": "replan_failed"}

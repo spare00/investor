@@ -17,6 +17,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.execution.safety_controls import TradingControls, trading_controls
 from app.execution.validation import ExecutionValidationResult, ValidatedOrderIntent
+from app.market.venues import resolve_venue
 from app.models import Execution, Order
 from app.storage.repositories import SystemEventRepository
 
@@ -143,7 +144,10 @@ class OrderManager:
             status="pending_submit",
             decision_id=decision_id or UUID(intent.decision_id),
             submitted_at=None,
-            raw_payload={"thesis": intent.thesis},
+            raw_payload={
+                "thesis": intent.thesis,
+                "venue": intent.venue or resolve_venue(self.settings).value,
+            },
         )
         self.session.add(row)
         await self.session.flush()
@@ -153,6 +157,7 @@ class OrderManager:
             limit_price = intent.limit_price
             if order_type in {"limit", "stop_limit"} and limit_price is None:
                 raise BrokerError(f"{intent.symbol}: limit order missing limit_price")
+            venue = intent.venue or (row.raw_payload or {}).get("venue")
             result = await self.broker.submit_order(
                 OrderRequest(
                     symbol=intent.symbol,
@@ -162,6 +167,7 @@ class OrderManager:
                     limit_price=limit_price,
                     stop_price=intent.stop_price,
                     idempotency_key=intent.idempotency_key,
+                    venue=str(venue) if venue else None,
                 )
             )
         except TimeoutError as exc:

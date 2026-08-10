@@ -383,6 +383,9 @@ class ExecutionService:
             raise BrokerError("quantity_zero")
 
         assert_order_transition(InternalOrderState.APPROVED, InternalOrderState.SUBMITTING)
+        from app.market.venues import resolve_venue
+
+        venue = str((intent.metadata_json or {}).get("venue") or resolve_venue(self.settings).value)
         order_row = Order(
             id=uuid4(),
             broker_order_id=None,
@@ -396,7 +399,11 @@ class ExecutionService:
             status=InternalOrderState.SUBMITTING.value,
             decision_id=intent.decision_id,
             submitted_at=datetime.now(UTC),
-            raw_payload={"intent_id": str(intent.id), "state": InternalOrderState.SUBMITTING.value},
+            raw_payload={
+                "intent_id": str(intent.id),
+                "state": InternalOrderState.SUBMITTING.value,
+                "venue": venue,
+            },
         )
         self.session.add(order_row)
         await self.session.flush()
@@ -411,6 +418,7 @@ class ExecutionService:
                     limit_price=intent.entry_price,
                     stop_price=intent.stop_price,
                     idempotency_key=client_order_id,
+                    venue=venue,
                 )
             )
             order_row.broker_order_id = result.broker_order_id

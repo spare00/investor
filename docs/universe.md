@@ -20,7 +20,7 @@ Policies live in `app/universe/horizons.py` (capacity, re-eval cadence, liquidit
 - `UNIVERSE_MODE=dynamic` (default): active watchlist gates **new entries**; collection uses focus ∪ holdings.
 - `UNIVERSE_MODE=static`: legacy allowlist-only behavior.
 
-`TRADE_ALLOWLIST` seeds the watchlist. A curated **candidate pool** (or `UNIVERSE_CANDIDATE_POOL`) expands what the AI may add; a **liquidity screener** then filters that pool by ADV / spread / price before the manager sees it. On refresh, active watchlist names that fail the same screen are **paused** (holdings exempt). Unknown invented tickers are still rejected.
+`TRADE_ALLOWLIST` seeds the US watchlist. `TRADE_ALLOWLIST_AU` is the ASX entry allowlist (separate book; empty disables AU new entries). Venue routing uses `PRIMARY_VENUE` / `ENABLED_VENUES` — see `docs/market_calendar.md`.
 
 ## Closing / overnight
 

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from app.core.config import Settings, get_settings
 from app.execution.safety_controls import TradingControls, trading_controls
+from app.market.venues import resolve_venue
 from app.risk import DeterministicRiskEngine, PortfolioRiskView, TradeIntent, limits_from_settings
 from app.schemas.cio import CIODecision, SymbolActionPlan
 from app.schemas.common import PortfolioAction, SymbolAction
@@ -38,6 +39,7 @@ class ValidatedOrderIntent:
     idempotency_key: str
     decision_id: str
     thesis: str
+    venue: str | None = None  # US | AU
 
 
 @dataclass(slots=True)
@@ -111,7 +113,12 @@ class ExecutionValidator:
             return ExecutionValidationResult(approved=True, intents=[], rejections=[])
 
         intents: list[ValidatedOrderIntent] = []
-        allowlist = entry_universe if entry_universe is not None else self.settings.allowlist_set()
+        default_venue = resolve_venue(self.settings).value
+        allowlist = (
+            entry_universe
+            if entry_universe is not None
+            else self.settings.allowlist_for_venue(default_venue)
+        )
         horizons = horizon_by_symbol or {}
         seen = seen_idempotency_keys or set()
         held_syms = [p.symbol for p in portfolio.positions if p.quantity]
@@ -320,4 +327,5 @@ class ExecutionValidator:
             idempotency_key=key,
             decision_id=str(decision.decision_id),
             thesis=plan.thesis,
+            venue=resolve_venue(self.settings).value,
         )

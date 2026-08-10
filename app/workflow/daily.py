@@ -51,15 +51,25 @@ class DailyWorkflowService:
         settings: Settings | None = None,
         controls: TradingControls | None = None,
         owner: str = "daily-workflow",
+        venue: str | None = None,
     ) -> None:
+        from app.market.venues import resolve_venue, run_calendar_name
+
         self.session = session
         self.settings = settings or get_settings()
         self.controls = controls or trading_controls
-        self.calendar = MarketCalendarService(self.settings)
+        self.venue = resolve_venue(self.settings, venue=venue)
+        self.run_calendar_name = run_calendar_name(self.venue, self.settings)
+        self.calendar = MarketCalendarService(self.settings, venue=self.venue)
         self.leases = LeaseService(session, self.settings)
         self.revalidation = RevalidationService(session, settings=self.settings, calendar=self.calendar)
         self.closing = ClosingPolicyEngine()
         self.owner = owner
+
+    def _jk(self, base: str) -> str:
+        from app.market.venues import scoped_job_key
+
+        return scoped_job_key(self.venue, base)
 
     def _broker_guard(self) -> None:
         """Warn if Live is misconfigured; never silently ignore paper automation flags."""
@@ -81,7 +91,7 @@ class DailyWorkflowService:
             await self.session.execute(
                 select(DailyWorkflowRun).where(
                     DailyWorkflowRun.session_date == session_date,
-                    DailyWorkflowRun.calendar_name == self.settings.market_calendar,
+                    DailyWorkflowRun.calendar_name == self.run_calendar_name,
                 )
             )
         ).scalar_one_or_none()
@@ -94,7 +104,7 @@ class DailyWorkflowService:
             if session_date
             else now.astimezone(self.calendar.market_tz).date()
         )
-        lease_key = f"daily:{self.settings.market_calendar}:{day.isoformat()}:prepare"
+        lease_key = f"daily:{self.run_calendar_name}:{day.isoformat()}:prepare"
         await self.leases.acquire(lease_key, self.owner)
         try:
             if self.controls.snapshot().state.value == "emergency_stop":
@@ -109,14 +119,14 @@ class DailyWorkflowService:
                 run = DailyWorkflowRun(
                     id=uuid4(),
                     session_date=day.isoformat(),
-                    calendar_name=self.settings.market_calendar,
+                    calendar_name=self.run_calendar_name,
                     current_state=DailyWorkflowState.NON_TRADING_DAY.value,
                     status=WorkflowRunStatus.COMPLETED.value,
                     started_at=now,
                     completed_at=now,
                     timezone=str(self.calendar.market_tz),
                     early_close=False,
-                    metadata_json={"note": "non_trading_day"},
+                    metadata_json={"note": "non_trading_day", "venue": self.venue.value},
                 )
                 self.session.add(run)
                 await self.session.flush()
@@ -135,7 +145,7 @@ class DailyWorkflowService:
             run = DailyWorkflowRun(
                 id=uuid4(),
                 session_date=day.isoformat(),
-                calendar_name=self.settings.market_calendar,
+                calendar_name=self.run_calendar_name,
                 current_state=DailyWorkflowState.PREMARKET_PREPARATION.value,
                 status=WorkflowRunStatus.RUNNING.value,
                 started_at=now,
@@ -143,7 +153,7 @@ class DailyWorkflowService:
                 market_open_at=session.regular_open,
                 market_close_at=session.regular_close,
                 early_close=session.is_early_close,
-                metadata_json={"session": session.to_dict()},
+                metadata_json={"session": session.to_dict(), "venue": self.venue.value},
             )
             self.session.add(run)
             await self.session.flush()
@@ -465,7 +475,7 @@ class DailyWorkflowService:
         }:
             mopped = await self._complete_planned_jobs(
                 run.session_date,
-                ["premarket_analysis", "preopen_revalidation"],
+                [self._jk("premarket_analysis"), self._jk("preopen_revalidation")],
                 now=now,
                 note="catch_up_already_ready",
             )
@@ -551,12 +561,12 @@ class DailyWorkflowService:
     ) -> list[str]:
         keys: list[str] = []
         if "analysis" in steps:
-            keys.append("premarket_analysis")
+            keys.append(self._jk("premarket_analysis"))
         if "revalidate" in steps:
             # Analysis already happened before revalidate in the catch-up path.
-            if "premarket_analysis" not in keys:
-                keys.append("premarket_analysis")
-            keys.append("preopen_revalidation")
+            if self._jk("premarket_analysis") not in keys:
+                keys.append(self._jk("premarket_analysis"))
+            keys.append(self._jk("preopen_revalidation"))
         return await self._complete_planned_jobs(
             session_date, keys, now=now, note="catch_up"
         )
@@ -1189,23 +1199,23 @@ class DailyWorkflowService:
         cfg = self.settings
         plans = [
             (
-                "premarket_preparation",
+                self._jk("premarket_preparation"),
                 open_t - timedelta(minutes=cfg.premarket_preparation_minutes_before_open),
             ),
             (
-                "premarket_analysis",
+                self._jk("premarket_analysis"),
                 open_t - timedelta(minutes=cfg.premarket_analysis_minutes_before_open),
             ),
             (
-                "preopen_revalidation",
+                self._jk("preopen_revalidation"),
                 open_t - timedelta(minutes=cfg.preopen_revalidation_minutes_before_open),
             ),
             (
-                "closing_window",
+                self._jk("closing_window"),
                 close_t - timedelta(minutes=cfg.closing_window_minutes_before_close),
             ),
             (
-                "postmarket_review",
+                self._jk("postmarket_review"),
                 close_t + timedelta(minutes=cfg.postmarket_review_minutes_after_close),
             ),
         ]
@@ -1293,7 +1303,7 @@ class DailyWorkflowService:
                 await self.session.execute(
                     select(ScheduledJobRecord).where(
                         ScheduledJobRecord.session_date == run.session_date,
-                        ScheduledJobRecord.job_key.like("intraday_eval_%"),
+                        ScheduledJobRecord.job_key.like(self._jk("intraday_eval_") + "%"),
                     )
                 )
             )
@@ -1316,7 +1326,7 @@ class DailyWorkflowService:
         idx = max_idx + 1
         created = 0
         while cursor < end:
-            key = f"intraday_eval_{idx}"
+            key = self._jk(f"intraday_eval_{idx}")
             collision = next((r for r in existing if r.job_key == key), None)
             if collision is None:
                 self.session.add(
@@ -1327,7 +1337,11 @@ class DailyWorkflowService:
                         planned_at=cursor.astimezone(UTC),
                         status="planned",
                         workflow_run_id=run.id,
-                        metadata_json={"interval_minutes": interval_min, "replanned": bool(not_before)},
+                        metadata_json={
+                            "interval_minutes": interval_min,
+                            "replanned": bool(not_before),
+                            "venue": self.venue.value,
+                        },
                     )
                 )
                 created += 1
@@ -1355,7 +1369,7 @@ class DailyWorkflowService:
             await self.session.execute(
                 delete(ScheduledJobRecord).where(
                     ScheduledJobRecord.session_date == run.session_date,
-                    ScheduledJobRecord.job_key.like("intraday_eval_%"),
+                    ScheduledJobRecord.job_key.like(self._jk("intraday_eval_") + "%"),
                     ScheduledJobRecord.status.in_(["planned", "skipped"]),
                 )
             )
@@ -1446,6 +1460,7 @@ class DailyWorkflowService:
             "id": str(run.id),
             "session_date": run.session_date,
             "calendar_name": run.calendar_name,
+            "venue": self.venue.value,
             "current_state": run.current_state,
             "status": run.status,
             "early_close": run.early_close,

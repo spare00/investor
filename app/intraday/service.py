@@ -191,6 +191,7 @@ class IntradayService:
                     idempotency_key=key,
                     decision_id=str(lc.decision_id) if lc.decision_id else str(uuid4()),
                     thesis="hard_stop",
+                    venue=None,
                 )
             ],
         )

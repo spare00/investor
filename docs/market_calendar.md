@@ -23,7 +23,9 @@
 | Venue | MIC / calendar | Market TZ | Currency | IBKR exchange hint |
 |-------|----------------|-----------|----------|--------------------|
 | `US` | XNYS | America/New_York | USD | SMART |
-| `AU` | XASX | Australia/Sydney | AUD | ASX |
+| `AU` | XASX | Australia/Sydney | AUD | SMART (primary ASX); direct `ASX` is a fallback |
+
+ASX paper: prefer SMART/AUD qualification. Direct ASX routing can hit Gateway precautionary **error 10311** unless allowed under API Precautionary Settings.
 
 Sessions do not overlap in BNE wall-clock time (ASX daytime / US overnight), which is the ops rationale for dual-book scheduling later. Capital, FX, and universe are still separate concerns.
 
