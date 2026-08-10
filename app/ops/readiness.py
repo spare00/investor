@@ -113,7 +113,10 @@ class GateEvaluator:
 
     def _build_checks(self, gate: ReadinessGate) -> list[ReadinessCheck]:
         cfg = self.settings
-        paper_url_ok = "paper-api" in (cfg.alpaca_base_url or "").lower() or cfg.broker_provider == "mock"
+        paper_url_ok = (
+            (cfg.broker_provider or "").lower() in {"mock", "ibkr"}
+            and (cfg.broker_environment or "").lower() == "paper"
+        )
         return [
             ReadinessCheck(
                 name="live_trading_disabled",

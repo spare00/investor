@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.collectors.market_data import (
-    AlpacaMarketDataProvider,
+    IbkrMarketDataProvider,
     StubMarketDataProvider,
     get_market_data_provider,
 )
@@ -23,7 +23,7 @@ from app.market.live_prices import (
 def test_requires_live_when_broker_orders_on() -> None:
     assert (
         requires_live_market_prices(
-            Settings(enable_broker_orders=True, broker_provider="alpaca")
+            Settings(enable_broker_orders=True, broker_provider="ibkr")
         )
         is True
     )
@@ -96,8 +96,7 @@ async def test_resolve_execution_prices_ignores_stub_candidates_when_live_requir
         enable_broker_orders=True,
         enable_external_data=True,
         enable_market_data_collection=True,
-        alpaca_api_key="k",
-        alpaca_api_secret="s",
+        broker_provider="ibkr",
     )
     with patch(
         "app.market.live_prices.fetch_live_last_prices",
@@ -138,7 +137,7 @@ async def test_stub_provider_returns_empty_when_live_required() -> None:
     assert out == []
 
 
-def test_get_market_data_provider_forces_alpaca_when_live_required() -> None:
+def test_get_market_data_provider_forces_ibkr_when_live_required_stub_request() -> None:
     with patch(
         "app.collectors.market_data.get_settings",
         return_value=Settings(
@@ -146,16 +145,14 @@ def test_get_market_data_provider_forces_alpaca_when_live_required() -> None:
             enable_external_data=True,
             enable_market_data_collection=True,
             market_data_provider="stub",
-            broker_provider="alpaca",
+            broker_provider="ibkr",
         ),
     ):
         provider = get_market_data_provider("stub")
-    assert isinstance(provider, AlpacaMarketDataProvider)
+    assert isinstance(provider, IbkrMarketDataProvider)
 
 
 def test_get_market_data_provider_forces_ibkr_when_broker_is_ibkr() -> None:
-    from app.collectors.market_data import IbkrMarketDataProvider
-
     with patch(
         "app.collectors.market_data.get_settings",
         return_value=Settings(

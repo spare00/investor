@@ -24,14 +24,27 @@ router = APIRouter(tags=["daily-workflow"])
 
 
 def _svc(session: AsyncSession, venue: str | None = None) -> DailyWorkflowService:
+    """Build daily workflow service.
+
+    ``venue=None`` → primary venue (legacy). ``venue=auto`` → clock-active book
+    (409 if both idle). Explicit ``US`` / ``AU`` always wins.
+    """
+    from app.market.session_ops import resolve_active_session_venue
+
+    settings = get_settings()
+    if venue is not None and str(venue).strip().lower() == "auto":
+        active = resolve_active_session_venue(settings)
+        if active is None:
+            raise HTTPException(status_code=409, detail="no_active_session_venue")
+        venue = active.value
     return DailyWorkflowService(
-        session, settings=get_settings(), venue=parse_venue(venue) if venue else None
+        session, settings=settings, venue=parse_venue(venue) if venue else None
     )
 
 
 @router.get("/workflow/daily/current")
 async def daily_current(
-    venue: str | None = Query(default=None, description="US | AU"),
+    venue: str | None = Query(default=None, description="US | AU | auto"),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     svc = _svc(session, venue)
@@ -72,7 +85,7 @@ async def scheduler_jobs(session: AsyncSession = Depends(get_db_session)) -> dic
 
 @router.post("/workflow/daily/prepare")
 async def daily_prepare(
-    venue: str | None = Query(default=None, description="US | AU"),
+    venue: str | None = Query(default=None, description="US | AU | auto"),
     session: AsyncSession = Depends(get_db_session),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
@@ -80,6 +93,8 @@ async def daily_prepare(
         result = await _svc(session, venue).prepare()
         await session.commit()
         return {**result, "idempotency_key": idempotency_key, "broker_orders": False}
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -87,13 +102,15 @@ async def daily_prepare(
 @router.post("/workflow/daily/run-analysis")
 async def daily_run_analysis(
     fake_llm: bool = False,
-    venue: str | None = Query(default=None, description="US | AU"),
+    venue: str | None = Query(default=None, description="US | AU | auto"),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     try:
         result = await _svc(session, venue).run_analysis(fake_llm=fake_llm)
         await session.commit()
         return result
+    except HTTPException:
+        raise
     except DailyWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -101,13 +118,15 @@ async def daily_run_analysis(
 @router.post("/workflow/daily/revalidate")
 async def daily_revalidate(
     fake_llm: bool = False,
-    venue: str | None = Query(default=None, description="US | AU"),
+    venue: str | None = Query(default=None, description="US | AU | auto"),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     try:
         result = await _svc(session, venue).revalidate(fake_llm=fake_llm)
         await session.commit()
         return result
+    except HTTPException:
+        raise
     except DailyWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -115,13 +134,15 @@ async def daily_revalidate(
 @router.post("/workflow/daily/evaluate-intraday")
 async def daily_intraday(
     trigger: str = "interval",
-    venue: str | None = Query(default=None, description="US | AU"),
+    venue: str | None = Query(default=None, description="US | AU | auto"),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     try:
         result = await _svc(session, venue).evaluate_intraday(trigger=trigger)
         await session.commit()
         return result
+    except HTTPException:
+        raise
     except DailyWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -129,26 +150,30 @@ async def daily_intraday(
 @router.post("/workflow/daily/start-closing")
 async def daily_closing(
     policy: str = ClosingPolicy.CLOSE_INTRADAY_ONLY.value,
-    venue: str | None = Query(default=None, description="US | AU"),
+    venue: str | None = Query(default=None, description="US | AU | auto"),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     try:
         result = await _svc(session, venue).start_closing(policy=ClosingPolicy(policy))
         await session.commit()
         return result
+    except HTTPException:
+        raise
     except DailyWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/workflow/daily/run-postmarket")
 async def daily_postmarket(
-    venue: str | None = Query(default=None, description="US | AU"),
+    venue: str | None = Query(default=None, description="US | AU | auto"),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     try:
         result = await _svc(session, venue).run_postmarket()
         await session.commit()
         return result
+    except HTTPException:
+        raise
     except DailyWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

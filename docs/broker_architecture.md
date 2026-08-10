@@ -11,7 +11,7 @@ CIO Decision
   → Pre-trade Risk Validator
   → Approval Workflow (manual by default)
   → Broker Order Request
-  → Broker Adapter (Mock | Alpaca Paper)
+  → Broker Adapter (Mock | IBKR Paper)
 ```
 
 ## Providers
@@ -19,7 +19,6 @@ CIO Decision
 | Provider | Purpose |
 |----------|---------|
 | `mock` (default) | Offline deterministic fills; full unit/E2E without network |
-| `alpaca` | Paper trading HTTP adapter (`https://paper-api.alpaca.markets`) — legacy; see tag `alpaca-paper-final` |
 | `ibkr` | Paper trading via TWS API + local IB Gateway (see `docs/ibkr_paper.md`) |
 
 Factory: `app/brokers/factory.py`. Live environment / `ENABLE_LIVE_TRADING=true` raises immediately.
@@ -39,8 +38,8 @@ Pydantic models in `app/brokers/models.py` (`BrokerAccount`, `BrokerPosition`, `
 - `ENABLE_AUTOMATED_EXECUTION=false`
 - `ENABLE_LIVE_TRADING=false`
 
-Paper Alpaca orders require provider=alpaca, environment=paper, connection+orders enabled, live=false.
+Paper IBKR orders require provider=`ibkr`, environment=`paper`, connection+orders enabled, live=false.
 
 ## Related docs
 
-See `docs/alpaca_paper.md`, `docs/order_intents.md`, `docs/pretrade_risk.md`, `docs/order_state_machine.md`, `docs/order_idempotency.md`, `docs/reconciliation.md`, `docs/emergency_stop.md`, `docs/manual_approval.md`.
+See `docs/ibkr_paper.md`, `docs/order_intents.md`, `docs/pretrade_risk.md`, `docs/order_state_machine.md`, `docs/order_idempotency.md`, `docs/reconciliation.md`, `docs/emergency_stop.md`, `docs/manual_approval.md`.

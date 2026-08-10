@@ -28,7 +28,7 @@ async def providers() -> dict[str, Any]:
 @router.get("/providers/health")
 async def providers_health() -> dict[str, Any]:
     settings = get_settings()
-    names = ["fixture", "alpaca", "sec_edgar"]
+    names = ["fixture", "ibkr", "sec_edgar"]
     health = []
     for name in names:
         br = get_breaker(name, settings)

@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.brokers.alpaca import SimulatedBroker
+from app.brokers.mock import MockBroker as SimulatedBroker
 from app.core.config import Settings
 from app.core.database import Base
 from app.execution.order_manager import OrderManager

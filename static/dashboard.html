@@ -53,7 +53,16 @@
     h1 { margin: 0; font-size: 1.5rem; letter-spacing: 0.02em; }
     .sub { color: var(--muted); font-size: 0.85rem; margin-top: 0.25rem; }
     .mono { font-family: "IBM Plex Mono", monospace; }
-    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .actions select {
+      font: inherit;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.55rem;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+    }
     .tabs {
       display: flex;
       gap: 0.35rem;
@@ -358,11 +367,16 @@
     </div>
     <div class="actions">
       <button id="btnRefresh" onclick="refreshAll()">Refresh</button>
-      <button id="btnPremarket" onclick="runWorkflow('premarket')">Run Premarket</button>
-      <button id="btnIntraday" onclick="runWorkflow('intraday')">Intraday Eval</button>
-      <button id="btnPause" class="warn" onclick="pauseTrading()" style="display:none">Pause</button>
-      <button id="btnRestart" class="good" onclick="restartTrading()" style="display:none">Restart Trading</button>
-      <button id="btnStop" class="danger" onclick="emergencyStop()">Emergency Stop</button>
+      <select id="opsVenue" title="Manual Premarket / Intraday target book" aria-label="Ops venue">
+        <option value="auto">Auto (active)</option>
+        <option value="US">US</option>
+        <option value="AU">AU</option>
+      </select>
+      <button id="btnPremarket" onclick="runWorkflow('premarket')" title="Runs daily prepare + analysis for the selected/active venue">Run Premarket</button>
+      <button id="btnIntraday" onclick="runWorkflow('intraday')" title="Runs daily intraday eval for the selected/active venue">Intraday Eval</button>
+      <button id="btnPause" class="warn" onclick="pauseTrading()" style="display:none" title="Pauses new orders for the whole account (all venues)">Pause</button>
+      <button id="btnRestart" class="good" onclick="restartTrading()" style="display:none" title="Resumes trading for the whole account">Restart Trading</button>
+      <button id="btnStop" class="danger" onclick="emergencyStop()" title="Emergency stop for the whole account (all venues)">Emergency Stop</button>
     </div>
   </header>
   <div class="usage-strip" id="llmUsageStrip" title="Daily LLM budget (BNE day)">
@@ -1651,6 +1665,7 @@
       renderLlmBudgetPanel(data.llm_budget);
       renderAgentLamps(data.agent_lamps, data.agents);
       renderUsSession(data.market_status);
+      updateOpsVenueButtons(data.market_status);
       const wfSession = (data.market_status && data.market_status.workflow && data.market_status.workflow.session_date) || null;
       const briefingDate = document.getElementById("briefingDate");
       if (briefingDate && wfSession && !briefingDate.value) briefingDate.value = wfSession;
@@ -2114,7 +2129,7 @@
         </div>
         ${kpiGrid([
           kpiCard("Mode", health.intraday_operation_mode || health.trading_mode || "—"),
-          kpiCard("Alpaca", health.alpaca_configured ? "configured" : "missing", { tone: health.alpaca_configured ? "good" : "warn" }),
+          kpiCard("IBKR", health.ibkr_configured ? "configured" : "missing", { tone: health.ibkr_configured ? "good" : "warn" }),
           kpiCard("Scheduler", health.enable_scheduler ? "on" : "off", { tone: health.enable_scheduler ? "good" : "" }),
           kpiCard("Broker", health.broker_provider || "—"),
           kpiCard("External data", health.enable_external_data ? "on" : "off"),
@@ -2346,23 +2361,56 @@
     }
 
     async function runWorkflow(kind) {
-      const path = kind === "premarket" ? "/workflow/premarket/run"
-        : kind === "intraday" ? "/workflow/intraday/evaluate?force=true"
-        : "/workflow/postmarket/run";
-      const label = kind === "premarket" ? "Premarket" : kind === "intraday" ? "Intraday" : "Postmarket";
-      setBusy(true, `${label} running… (may take a minute)`);
+      const sel = document.getElementById("opsVenue")?.value || "auto";
+      let venue = sel;
+      if (venue === "auto") {
+        venue = window.__activeOpsVenue || null;
+        if (!venue) {
+          setBusy(false, "No active session book (US/AU idle) — pick US or AU");
+          return;
+        }
+      }
+      const q = `venue=${encodeURIComponent(venue)}`;
+      setBusy(true, `${kind === "premarket" ? "Premarket" : "Intraday"} ${venue}…`);
       try {
-        const res = await fetch(path, { method: "POST" });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+        let body = {};
+        if (kind === "premarket") {
+          const prep = await fetch(`/workflow/daily/prepare?${q}`, { method: "POST" });
+          const prepBody = await prep.json().catch(() => ({}));
+          if (!prep.ok) throw new Error(prepBody.detail || prepBody.message || `prepare HTTP ${prep.status}`);
+          const res = await fetch(`/workflow/daily/run-analysis?${q}`, { method: "POST" });
+          body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.detail || body.message || `analysis HTTP ${res.status}`);
+        } else if (kind === "intraday") {
+          const res = await fetch(`/workflow/daily/evaluate-intraday?${q}&trigger=manual`, { method: "POST" });
+          body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+        } else {
+          const res = await fetch(`/workflow/daily/run-postmarket?${q}`, { method: "POST" });
+          body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+        }
         await refreshAll();
         if (document.querySelector('.tab.active')?.dataset.tab === 'briefing' || kind === 'intraday' || kind === 'premarket') {
           await refreshBriefing().catch(() => {});
         }
-        setBusy(false, `${label} done · ${body.outcome || body.status || "ok"}`);
+        const label = kind === "premarket" ? "Premarket" : kind === "intraday" ? "Intraday" : "Postmarket";
+        setBusy(false, `${label} ${venue} done · ${body.outcome || body.status || body.current_state || "ok"}`);
       } catch (err) {
+        const label = kind === "premarket" ? "Premarket" : kind === "intraday" ? "Intraday" : "Postmarket";
         setBusy(false, `${label} failed: ${err.message || err}`);
       }
+    }
+
+    function updateOpsVenueButtons(ms) {
+      const active = (ms && ms.active_ops_venue) || null;
+      window.__activeOpsVenue = active;
+      const pre = document.getElementById("btnPremarket");
+      const intra = document.getElementById("btnIntraday");
+      const sel = document.getElementById("opsVenue")?.value || "auto";
+      const target = sel === "auto" ? (active || "idle") : sel;
+      if (pre) pre.textContent = `Run Premarket (${target})`;
+      if (intra) intra.textContent = `Intraday Eval (${target})`;
     }
 
     async function refreshUniverseNow() {
@@ -2382,27 +2430,27 @@
     }
 
     async function emergencyStop() {
-      if (!confirm("Trigger emergency stop and cancel open orders?")) return;
-      setBusy(true, "Emergency stop…");
+      if (!confirm("Emergency stop for the whole account (all venues) and cancel open orders?")) return;
+      setBusy(true, "Emergency stop (all venues)…");
       try {
         const res = await fetch("/trading/emergency-stop", { method: "POST" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         await refreshAll();
-        setBusy(false, "Emergency stop sent");
+        setBusy(false, "Emergency stop sent (all venues)");
       } catch (err) {
         setBusy(false, `Emergency stop failed: ${err.message || err}`);
       }
     }
 
     async function pauseTrading() {
-      if (!confirm("Pause trading? New orders will be blocked until you resume.")) return;
-      setBusy(true, "Pausing…");
+      if (!confirm("Pause trading for the whole account (all venues)? New orders will be blocked until you resume.")) return;
+      setBusy(true, "Pausing (all venues)…");
       try {
         const res = await fetch("/trading/pause", { method: "POST" });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
         await refreshAll();
-        setBusy(false, `Paused · ${body.state || "paused"}`);
+        setBusy(false, `Paused · ${body.state || "paused"} (all venues)`);
       } catch (err) {
         setBusy(false, `Pause failed: ${err.message || err}`);
       }
@@ -2423,6 +2471,9 @@
       }
     }
 
+    document.getElementById("opsVenue")?.addEventListener("change", () => {
+      updateOpsVenueButtons({ active_ops_venue: window.__activeOpsVenue });
+    });
     refreshAll().catch((err) => setBusy(false, `Load failed: ${err.message || err}`));
     setInterval(() => { refreshStrip().catch(() => {}); }, 15000);
     setInterval(() => { refreshAll().catch(() => {}); }, 60000);

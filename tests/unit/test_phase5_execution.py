@@ -7,11 +7,9 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.brokers.mock import MockBroker
-from app.brokers.alpaca import AlpacaBroker
 from app.brokers.base import OrderRequest, OrderSide, OrderStatus
 from app.brokers.errors import BrokerError
 from app.brokers.factory import get_broker
@@ -297,18 +295,18 @@ def test_live_factory_blocked() -> None:
         get_broker(_settings(broker_environment="live"))
 
 
-def test_alpaca_paper_url_gate() -> None:
-    from app.brokers import alpaca as alpaca_mod
+def test_ibkr_live_port_gate() -> None:
+    from app.brokers.ibkr import IbkrBroker
 
     s = _settings(
-        broker_provider="alpaca",
+        broker_provider="ibkr",
         enable_broker_connection=True,
-        alpaca_api_key=SecretStr("key"),
-        alpaca_api_secret=SecretStr("secret"),
-        alpaca_base_url="https://api.alpaca.markets",
+        broker_environment="paper",
+        ibkr_port=4001,  # live Gateway port
+        ibkr_allow_live_ports=False,
     )
-    with pytest.raises(alpaca_mod.BrokerError):
-        AlpacaBroker(s)
+    with pytest.raises(BrokerError, match="ibkr_port_looks_live"):
+        IbkrBroker(s)
 
 
 def test_redact_account_id() -> None:
@@ -453,24 +451,3 @@ async def test_approval_expiry(session: AsyncSession) -> None:
     await session.flush()
     with pytest.raises(ValueError, match="approval_expired"):
         await svc.approve_intent(intent.id)
-
-
-@pytest.mark.skipif(
-    __import__("os").environ.get("RUN_ALPACA_PAPER_SMOKE_TESTS") != "true",
-    reason="opt-in only; set RUN_ALPACA_PAPER_SMOKE_TESTS=true with paper credentials",
-)
-@pytest.mark.asyncio
-async def test_alpaca_paper_smoke_opt_in() -> None:
-    clear_settings_cache()
-    s = Settings(
-        broker_provider="alpaca",
-        broker_environment="paper",
-        enable_broker_connection=True,
-        enable_broker_orders=True,
-        enable_live_trading=False,
-    )
-    broker = AlpacaBroker(s)
-    acct = await broker.get_account_canonical()
-    assert acct.environment.value == "paper"
-    clock = await broker.get_clock()
-    assert clock is not None

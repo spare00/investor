@@ -1,6 +1,6 @@
 # IBKR Paper Trading (TWS API via IB Gateway)
 
-> Cutover from Alpaca. Tag `alpaca-paper-final` marks the last Alpaca-centric tree.
+> Primary paper broker for this repo. Mock remains the offline default.
 
 ## Prerequisites
 
@@ -70,8 +70,6 @@ IBKR’s unique instrument key is **`conId`**. The app:
 ## Notes
 
 - First cutover is **US equities** via `SMART`/`USD`. Pass `OrderRequest.venue="AU"` (or set `PRIMARY_VENUE=AU`) so qualification prefers `SMART`/`AUD` (ASX primary). Direct `ASX` routing may require Gateway precautionary allow (error 10311). Dual-book scheduler: set `ENABLED_VENUES=US,AU` — see `docs/scheduler_and_leases.md`.
-- Existing Alpaca paper history does not transfer — treat IBKR paper as day 0.
 - `clientId` must be unique per Gateway connection (avoid colliding with TWS UI tools).
-- Alpaca adapter remains in-tree for rollback (`BROKER_PROVIDER=alpaca`) but is no longer the cutover path.
 - Outside RTH, IB may emit **Warning 399** (`ValidationError` → held until open). We map that to `accepted` / working, not rejected.
 - Paper order smoke (far limit buy → open → cancel) was verified via `IbkrBroker` and `OrderManager`. Cancel resting test orders; do not leave far limits overnight.

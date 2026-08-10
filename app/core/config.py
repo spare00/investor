@@ -6,7 +6,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -58,15 +58,6 @@ class Settings(BaseSettings):
         "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
     )
 
-    # Alpaca (ALPACA_SECRET_KEY accepted as alias for ALPACA_API_SECRET)
-    alpaca_api_key: SecretStr | None = None
-    alpaca_api_secret: SecretStr | None = Field(
-        default=None,
-        validation_alias=AliasChoices("ALPACA_API_SECRET", "ALPACA_SECRET_KEY"),
-    )
-    alpaca_base_url: str = "https://paper-api.alpaca.markets"
-    alpaca_data_url: str = "https://data.alpaca.markets"
-
     # Interactive Brokers (TWS API via local Gateway / TWS — paper first)
     ibkr_host: str = "127.0.0.1"
     ibkr_port: int = 4002  # Gateway paper default; TWS paper often 7497
@@ -111,7 +102,7 @@ class Settings(BaseSettings):
     news_provider: str = "stub"
     news_api_key: SecretStr | None = None
     finnhub_api_key: SecretStr | None = None
-    market_data_provider: str = "alpaca"
+    market_data_provider: str = "ibkr"
     yfinance_enabled: bool = False
 
     # Risk policy
@@ -230,7 +221,7 @@ class Settings(BaseSettings):
     enable_broker_orders: bool = False
 
     # Phase 5 broker / execution (safe defaults)
-    broker_provider: str = "mock"  # mock | alpaca | ibkr
+    broker_provider: str = "mock"  # mock | ibkr
     broker_environment: str = "paper"  # paper only in Phase 5
     enable_broker_connection: bool = False
     # Trading safety — agent firm paper path (Live always blocked)
@@ -254,7 +245,6 @@ class Settings(BaseSettings):
     cancel_open_orders_at_close: bool = True
     emergency_stop_cancel_open_orders: bool = True
     emergency_stop_close_positions: bool = False
-    alpaca_paper_base_url: str = "https://paper-api.alpaca.markets"
     mock_broker_seed: int = 42
 
     # Phase 6 intraday operations

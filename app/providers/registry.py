@@ -145,125 +145,6 @@ class FixtureMarketDataProvider:
         return out, meta
 
 
-class AlpacaMarketDataAdapter:
-    """Real Alpaca Data API adapter (requires keys + ENABLE_MARKET_DATA_COLLECTION)."""
-
-    name = "alpaca"
-    version = "1.0.0"
-
-    def capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(
-            name=self.name,
-            version=self.version,
-            supports_quotes=True,
-            supports_bars=True,
-            supports_premarket=True,
-            requires_credentials=True,
-            is_fixture=False,
-        )
-
-    async def fetch_quotes(
-        self, symbols: list[str], *, settings: Settings | None = None
-    ) -> tuple[list[CanonicalQuote], ProviderRequestMeta]:
-        cfg = settings or get_settings()
-        if not cfg.enable_external_data or not cfg.enable_market_data_collection:
-            meta = ProviderRequestMeta(
-                provider_name=self.name,
-                provider_version=self.version,
-                request_id=str(uuid4()),
-                request_started_at=datetime.now(UTC),
-                request_completed_at=datetime.now(UTC),
-                status=__import__("app.providers.base", fromlist=["ProviderStatus"]).ProviderStatus.DISABLED,
-                error_code="disabled",
-                error_message="external market data disabled",
-            )
-            return [], meta
-        if not cfg.alpaca_api_key or not cfg.alpaca_api_secret:
-            meta = ProviderRequestMeta(
-                provider_name=self.name,
-                provider_version=self.version,
-                request_id=str(uuid4()),
-                request_started_at=datetime.now(UTC),
-                request_completed_at=datetime.now(UTC),
-                status=__import__("app.providers.base", fromlist=["ProviderStatus"]).ProviderStatus.ERROR,
-                error_code="missing_credentials",
-                error_message="alpaca keys missing",
-            )
-            return [], meta
-
-        async def _call() -> list[CanonicalQuote]:
-            headers = {
-                "APCA-API-KEY-ID": cfg.alpaca_api_key.get_secret_value(),
-                "APCA-API-SECRET-KEY": cfg.alpaca_api_secret.get_secret_value(),
-            }
-            syms = ",".join(s.upper() for s in symbols)
-            # Snapshots give last trade + NBBO; latest quotes alone often lack a print.
-            url = f"{cfg.alpaca_data_url.rstrip('/')}/v2/stocks/snapshots"
-            async with httpx.AsyncClient(
-                timeout=cfg.provider_request_timeout_seconds, trust_env=False
-            ) as client:
-                resp = await client.get(url, params={"symbols": syms}, headers=headers)
-                resp.raise_for_status()
-                payload = resp.json()
-            now = datetime.now(UTC)
-            snaps = payload.get("snapshots") if isinstance(payload.get("snapshots"), dict) else payload
-            quotes: list[CanonicalQuote] = []
-            if not isinstance(snaps, dict):
-                return quotes
-            for sym, snap in snaps.items():
-                if not isinstance(snap, dict):
-                    continue
-                trade = snap.get("latestTrade") or {}
-                quote = snap.get("latestQuote") or {}
-                daily = snap.get("dailyBar") or {}
-                bid = quote.get("bp")
-                ask = quote.get("ap")
-                last = trade.get("p") or ask or bid or daily.get("c") or 0.0
-                try:
-                    last_f = float(last)
-                except (TypeError, ValueError):
-                    continue
-                if last_f <= 0:
-                    continue
-                ts = trade.get("t") or quote.get("t")
-                as_of = datetime.fromisoformat(str(ts).replace("Z", "+00:00")) if ts else now
-                quotes.append(
-                    CanonicalQuote(
-                        as_of=as_of,
-                        collected_at=now,
-                        symbol=str(sym).upper(),
-                        bid=float(bid) if bid is not None else None,
-                        ask=float(ask) if ask is not None else None,
-                        bid_size=quote.get("bs"),
-                        ask_size=quote.get("as"),
-                        last=last_f,
-                        session="unknown",
-                        spread_bps=spread_bps(
-                            float(bid) if bid is not None else None,
-                            float(ask) if ask is not None else None,
-                            last_f,
-                        ),
-                        source_ids=[f"alpaca:{sym}"],
-                        provenance=Provenance(
-                            provider_name=self.name,
-                            provider_record_id=str(ts),
-                            raw_payload_reference=f"alpaca:snapshot:{sym}:{ts}",
-                            source_timestamp=as_of,
-                            collection_timestamp=now,
-                        ),
-                        quality=DataQualityBreakdown(overall=0.9, freshness=0.95, completeness=0.85),
-                    )
-                )
-            return quotes
-
-        result, meta = await run_with_retry(
-            provider_name=self.name,
-            provider_version=self.version,
-            settings=cfg,
-            fn=_call,
-        )
-        return result or [], meta
-
 
 class IbkrMarketDataAdapter:
     """IB Gateway market-data adapter for the Phase-4 pipeline."""
@@ -757,8 +638,6 @@ def resolve_market_provider(settings: Settings | None = None) -> Any:
     if cfg.enable_external_data and cfg.enable_market_data_collection:
         if provider == "ibkr" or "ibkr" in order:
             return IbkrMarketDataAdapter()
-        if provider == "alpaca" or "alpaca" in order:
-            return AlpacaMarketDataAdapter()
     return FixtureMarketDataProvider()
 
 
@@ -782,7 +661,6 @@ def list_providers(settings: Settings | None = None) -> list[dict[str, Any]]:
     providers = [
         FixtureMarketDataProvider(),
         IbkrMarketDataAdapter(),
-        AlpacaMarketDataAdapter(),
         FixtureNewsProvider(),
         FixtureSecProvider(),
         SecEdgarAdapter(),

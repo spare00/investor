@@ -313,6 +313,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     )
 
     settings = get_settings()
+    from app.market.session_ops import active_session_summary
     from app.market.venues import enabled_venues, resolve_venue
 
     venue_sessions = {
@@ -320,6 +321,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
         for v in enabled_venues(settings)
     }
     primary = resolve_venue(settings).value
+    ops_target = active_session_summary(settings, now=now)
     us_session = venue_sessions.get("US") or MarketCalendarService(
         settings, venue="US"
     ).get_market_status(now).to_dict()
@@ -676,6 +678,9 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             "venue_sessions": venue_sessions,
             "primary_venue": primary,
             "enabled_venues": [v.value for v in enabled_venues(settings)],
+            "active_ops_venue": ops_target.get("active_ops_venue"),
+            "venue_phases": ops_target.get("venue_phases") or {},
+            "pause_and_emergency_global": True,
             "workflow": workflow_summary,
         },
         "universe": universe_summary,

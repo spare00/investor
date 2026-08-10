@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml README.md ./
 COPY app ./app
 
-RUN pip install --upgrade pip && pip install -e ".[dev,alpaca]"
+RUN pip install --upgrade pip && pip install -e ".[dev]"
 
 EXPOSE 8000
 

@@ -288,7 +288,7 @@ class OrderManager:
         return list(result.scalars().all())
 
     async def sync_statuses_from_broker(self) -> dict[str, Any]:
-        """Refresh local open/pending orders from Alpaca truth."""
+        """Refresh local open/pending orders from broker truth."""
         openish = {"new", "accepted", "partially_filled", "pending_submit", "pending_new"}
         result = await self.session.execute(
             select(Order).where(Order.status.in_(list(openish)))

@@ -46,7 +46,7 @@ async def test_risk_officer_hard_vetoes_non_live_prices() -> None:
 
 
 @pytest.mark.asyncio
-async def test_risk_officer_allows_live_alpaca_feed() -> None:
+async def test_risk_officer_allows_live_ibkr_feed() -> None:
     agent = RiskManagerAgent(llm=StubLLMClient())
     out = await agent.run(
         RiskManagerInput(
@@ -60,7 +60,7 @@ async def test_risk_officer_allows_live_alpaca_feed() -> None:
             ),
             live_prices_required=True,
             price_feed_live=True,
-            price_providers=["alpaca"],
+            price_providers=["ibkr"],
         )
     )
     assert VetoCode.NON_LIVE_MARKET_PRICES.value not in out.hard_vetoes

@@ -2,7 +2,7 @@
 
 Six-agent AI investment firm for US equities. The system collects pre-market news,
 macro and market data, runs a bottom-up agent pipeline, and executes **paper trades**
-via Alpaca. The objective is **controlled drawdowns and sustainable compounding**,
+via IBKR Gateway paper. The objective is **controlled drawdowns and sustainable compounding**,
 not short-term return maximization.
 
 > **Safety default:** Paper trading only. Live order routing is dual-gated and off
@@ -32,7 +32,7 @@ Agent Analysis Layer          (MI → Macro∥Quant → Risk → Devil → CIO)
         ↓
 Decision & Risk Layer         (Hard Veto + Execution Validator)
         ↓
-Execution Layer               (Mock / Alpaca Paper — Phase 5)
+Execution Layer               (Mock / IBKR Paper)
         ↓
 Monitoring & Post-Trade Review
 ```
@@ -74,7 +74,7 @@ Beyond the original brief, Phase 1 adopts these additions:
    One env flag alone cannot enable live orders.
 2. **`app/risk/` package** — Deterministic Risk Engine separated from LLM agent code
    so veto logic is unit-testable without network/LLM.
-3. **Broker interface before Alpaca** — `brokers/base.py` adapter pattern so paper
+3. **Broker interface before live brokers** — `brokers/base.py` adapter pattern so paper
    simulation and future brokers stay swappable (stubs only in Phase 1).
 4. **Idempotency keys** on every intended order path (enforced in risk/execution
    contracts before Phase 6 ships orders).
@@ -99,7 +99,7 @@ Collectors (stubs) → Normalized DTOs → PostgreSQL
                               ↓
                      Risk Engine (deterministic)
                               ↓
-                     (Execution — Phase 5 Mock / Alpaca Paper; orders off by default)
+                     (Execution — Mock / IBKR Paper; orders off by default)
 ```
 
 Phase 1 delivers schemas, config, logging, DB session factory, and Risk Engine
@@ -122,7 +122,7 @@ interfaces/tests. No live or paper orders are placed yet.
 ## Tech stack
 
 Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy 2 (async), PostgreSQL, Redis,
-APScheduler, Alpaca Paper API (Phase 6), OpenAI-compatible LLM, pytest,
+APScheduler, IBKR Gateway paper (TWS API), OpenAI-compatible LLM, pytest,
 Docker Compose, structured logging (structlog).
 
 ---
@@ -165,7 +165,7 @@ python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 2. Config (add Alpaca paper keys for live paper trading)
+# 2. Config (IBKR Gateway paper settings for live paper trading)
 cp .env.example .env
 
 # 3. Tests
@@ -230,7 +230,7 @@ uvicorn app.main:app --reload --port 8000
 Redis is optional and unused in current phases.
 
 Default news/market providers are **stub** so analysis can run without news API keys.
-Alpaca paper keys in `.env` are needed for real paper order/portfolio sync.
+IBKR Gateway must be running; set `BROKER_PROVIDER=ibkr` and IBKR_* in `.env` for paper order/portfolio sync.
 
 ---
 

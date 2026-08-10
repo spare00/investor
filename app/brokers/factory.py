@@ -26,18 +26,6 @@ def get_broker(settings: Settings | None = None) -> BrokerClient:
     if provider == "mock" or cfg.app_env.value == "test":
         return MockBroker(seed=cfg.mock_broker_seed, starting_cash=cfg.starting_cash)
 
-    if provider == "alpaca":
-        if not cfg.enable_broker_connection:
-            logger.warning("alpaca_requested_but_connection_disabled_using_mock")
-            return MockBroker(seed=cfg.mock_broker_seed, starting_cash=cfg.starting_cash)
-        if cfg.broker_environment.lower() != "paper":
-            raise BrokerError("alpaca_requires_paper_environment")
-        if not cfg.alpaca_api_key or not cfg.alpaca_api_secret:
-            raise BrokerError("alpaca_credentials_missing")
-        from app.brokers.alpaca import AlpacaBroker
-
-        return AlpacaBroker(cfg)
-
     if provider == "ibkr":
         if not cfg.enable_broker_connection:
             logger.warning("ibkr_requested_but_connection_disabled_using_mock")

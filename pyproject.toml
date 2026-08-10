@@ -44,9 +44,6 @@ dev = [
 yfinance = [
     "yfinance>=0.2.48",
 ]
-alpaca = [
-    "alpaca-py>=0.33.0",
-]
 ibkr = [
     "ib_async>=2.0.0",
 ]

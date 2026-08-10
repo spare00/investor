@@ -591,7 +591,7 @@ async def test_broker_flags_default_false(monkeypatch: pytest.MonkeyPatch) -> No
             called["broker"] = True
             raise AssertionError("broker must not be touched")
 
-    monkeypatch.setitem(__import__("sys").modules, "app.brokers.alpaca", Boom())
+    monkeypatch.setitem(__import__("sys").modules, "app.brokers.ibkr", Boom())
     assert get_settings().enable_broker_orders is False
     assert get_settings().enable_automated_execution is False
     assert called["broker"] is False

@@ -47,6 +47,7 @@ async def test_seed_and_entry_universe(session: AsyncSession) -> None:
     settings = Settings(
         universe_mode="dynamic",
         trade_allowlist=["SPY", "NVDA", "IONQ"],
+        enabled_venues=["US"],
         universe_focus_limit=2,
         universe_manager_enabled=False,
     )
@@ -64,7 +65,7 @@ async def test_seed_and_entry_universe(session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_static_mode_uses_allowlist(session: AsyncSession) -> None:
-    settings = Settings(universe_mode="static", trade_allowlist=["QQQ"])
+    settings = Settings(universe_mode="static", trade_allowlist=["QQQ"], enabled_venues=["US"])
     svc = UniverseService(session, settings=settings)
     assert await svc.entry_universe() == {"QQQ"}
     assert await svc.collection_universe(holdings=["AAPL"]) == ["AAPL", "QQQ", "SPY"]

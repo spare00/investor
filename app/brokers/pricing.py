@@ -6,7 +6,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 
 def round_equity_price(price: float | None) -> float | None:
-    """Round to Alpaca-valid equity increments.
+    """Round to IBKR-friendly equity increments.
 
     - price >= $1 → $0.01
     - price < $1 → $0.0001

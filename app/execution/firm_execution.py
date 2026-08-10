@@ -101,7 +101,7 @@ async def materialize_cio_decision(
     by paper automation flags. Manual approval (when enabled) parks intents for an
     operator brake — it is not the primary trading model.
 
-    When the live/broker path is enabled, prices come from live IBKR/Alpaca prints
+    When the live/broker path is enabled, prices come from live IBKR prints
     (reusing fresh non-stub candidates when available). Stub leftovers are never
     used to size or submit orders.
     """

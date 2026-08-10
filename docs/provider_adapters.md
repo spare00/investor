@@ -13,7 +13,7 @@
 
 | Adapter | Requires | Status |
 |---------|----------|--------|
-| `alpaca` market quotes | `ENABLE_EXTERNAL_DATA` + `ENABLE_MARKET_DATA_COLLECTION` + Alpaca keys | Implemented (latest quotes HTTP) |
+| `ibkr` market quotes | `ENABLE_EXTERNAL_DATA` + `ENABLE_MARKET_DATA_COLLECTION` + IB Gateway | Implemented (TWS API delayed/live quotes) |
 | `sec_edgar` | `ENABLE_EXTERNAL_DATA` + `ENABLE_SEC_COLLECTION` + SEC User-Agent | Implemented (tickers + recent filings metadata) |
 
 Paid news/macro vendors are **not** wired; do not assume free live news.

@@ -20,7 +20,7 @@ _SIMULATION_PROVIDERS = frozenset({"stub", "fixture"})
 def requires_live_market_prices(settings: Settings | None = None) -> bool:
     """True whenever a real broker/order path or live market collection is enabled.
 
-    Mock/simulated brokers are offline unit/dev paths — they do not require Alpaca
+    Mock/simulated brokers are offline unit/dev paths — they do not require IBKR
     prints (the mock book is the present market for those runs).
     """
     cfg = settings or get_settings()
@@ -119,7 +119,7 @@ async def resolve_execution_prices(
     """Return prices safe for order sizing/submit.
 
     When live prices are required, stub candidates are rejected. Fresh non-stub
-    IBKR/Alpaca candidates may be reused to avoid a second market-data round-trip;
+    IBKR candidates may be reused to avoid a second market-data round-trip;
     any remaining symbols are fetched live. Never fall back to stub leftovers.
     """
     cfg = settings or get_settings()

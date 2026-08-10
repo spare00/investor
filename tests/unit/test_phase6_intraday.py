@@ -389,9 +389,9 @@ async def test_mock_intraday_e2e_simulation(session: AsyncSession) -> None:
 
 
 @pytest.mark.skipif(
-    __import__("os").environ.get("RUN_ALPACA_PAPER_INTRADAY_SMOKE_TESTS") != "true",
-    reason="opt-in Alpaca paper intraday smoke only",
+    __import__("os").environ.get("RUN_IBKR_PAPER_INTRADAY_SMOKE_TESTS") != "true",
+    reason="opt-in IBKR paper intraday smoke only",
 )
 @pytest.mark.asyncio
-async def test_alpaca_paper_intraday_smoke_opt_in() -> None:
+async def test_ibkr_paper_intraday_smoke_opt_in() -> None:
     pytest.skip("credential-gated; not run in default suite")

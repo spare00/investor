@@ -478,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
         result = {
             "health": [
                 {"name": n, "allow": get_breaker(n, settings).allow()}
-                for n in ("fixture", "alpaca", "sec_edgar")
+                for n in ("fixture", "ibkr", "sec_edgar")
             ]
         }
     elif args.cmd == "providers" and args.providers_cmd == "reliability":
