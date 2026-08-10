@@ -18,7 +18,7 @@
 
 ## Venues
 
-`PRIMARY_VENUE=US|AU` selects the default book. Explicit `venue=` on the calendar API / service overrides it.
+`PRIMARY_VENUE=US|AU` selects the default book / briefing calendar. Explicit `venue=` on the calendar API / service overrides it. Scheduler default is **both** books (`ENABLED_VENUES=US,AU`).
 
 | Venue | MIC / calendar | Market TZ | Currency | IBKR exchange hint |
 |-------|----------------|-----------|----------|--------------------|

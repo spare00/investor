@@ -551,19 +551,25 @@ def test_coalesce_before_limit_keeps_closing_with_dense_intraday() -> None:
 @pytest.mark.asyncio
 async def test_scheduler_bootstrap_prepares_sessions(session: AsyncSession) -> None:
     from app.core import scheduler as sched_mod
+    from app.market.venues import enabled_venues
 
     sched_mod._PREPARE_CACHE.clear()
-    prepared = await sched_mod._ensure_sessions_prepared(session, get_settings())
-    assert len(prepared) == 2
-    assert all(p.startswith("US:") for p in prepared)
+    settings = get_settings()
+    prepared = await sched_mod._ensure_sessions_prepared(session, settings)
+    venues = {v.value for v in enabled_venues(settings)}
+    # today + next trading day per enabled venue
+    assert len(prepared) == 2 * len(venues)
+    assert {p.split(":", 1)[0] for p in prepared} == venues
     # Throttled within TTL — no duplicate prepare work.
-    again = await sched_mod._ensure_sessions_prepared(session, get_settings())
+    again = await sched_mod._ensure_sessions_prepared(session, settings)
     assert again == []
     # Expired cache entries prepare again.
     for key in list(sched_mod._PREPARE_CACHE):
-        sched_mod._PREPARE_CACHE[key] = datetime.now(UTC) - timedelta(seconds=sched_mod._PREPARE_TTL_SECONDS + 1)
-    third = await sched_mod._ensure_sessions_prepared(session, get_settings())
-    assert len(third) == 2
+        sched_mod._PREPARE_CACHE[key] = datetime.now(UTC) - timedelta(
+            seconds=sched_mod._PREPARE_TTL_SECONDS + 1
+        )
+    third = await sched_mod._ensure_sessions_prepared(session, settings)
+    assert len(third) == 2 * len(venues)
 
 
 @pytest.mark.asyncio

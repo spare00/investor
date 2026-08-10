@@ -202,7 +202,10 @@ class Settings(BaseSettings):
     # Primary trading book. US keeps NYSE/ET; AU uses ASX / Australia/Sydney.
     primary_venue: str = "US"  # US | AU
     # Scheduler prepares/dispatches each listed venue (non-overlapping sessions in BNE).
-    enabled_venues: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["US"])
+    # Dual-book is the default so ASX daytime + US overnight run in one 24h process.
+    enabled_venues: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["US", "AU"]
+    )
     market_calendar: str = "NYSE"
     market_timezone: str = "America/New_York"
     operator_timezone: str = "Australia/Brisbane"
