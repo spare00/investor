@@ -143,9 +143,10 @@ class DataCollectionPipeline:
             universe = list(self.settings.trade_allowlist_au)
         else:
             universe = list(self.settings.trade_allowlist)
+        us_index = ["SPY", "QQQ", "IWM", "DIA"]
         # US index overlays only for US (or unscoped) books — avoid SPY noise on ASX runs.
         if book != Venue.AU:
-            for s in ("SPY", "QQQ", "IWM", "DIA"):
+            for s in us_index:
                 if s not in universe:
                     universe = [s, *universe]
 
@@ -235,7 +236,7 @@ class DataCollectionPipeline:
             from app.canonical.models import CanonicalDataConflict
 
             for q in quotes:
-                if q.symbol in index:
+                if q.symbol in us_index:
                     conflicts.append(
                         CanonicalDataConflict(
                             data_type="quote",
