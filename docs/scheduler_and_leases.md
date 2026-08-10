@@ -15,6 +15,19 @@
 
 Job plans are created in `DailyWorkflowService.prepare` from Calendar Service session times. Job keys are **venue-scoped** (`US:premarket_analysis`, `AU:intraday_eval_0`, …) so the same calendar date can hold both ASX and US books. Set `ENABLED_VENUES=US,AU` to prepare/dispatch both; default is the primary venue only. `intraday_eval_*` spacing follows the tightest active-watchlist horizon (scalp ≈ 2m, day ≈ 5m, …), floored so planned ticks stay near `1.5 × MAX_INTRADAY_REANALYSES` for the session; overdue intraday jobs are coalesced **per venue** to the latest. Universe refresh (scheduler or `POST /universe/refresh`) **replans** pending `intraday_eval_*` rows so cadence tracks horizon changes. Runtime gates (`min_gap`, agent cooldowns, `MAX_INTRADAY_REANALYSES`) still skip or cap early / excess runs.
 
+### 24h BNE wall-clock (dual book)
+
+Sessions do not overlap in Australia/Brisbane:
+
+| BNE window (approx) | Book | What runs |
+|---------------------|------|-----------|
+| ~07:00–16:10 | **AU** | ASX premarket → RTH → close / postmarket |
+| ~16:10–18:00+ | idle | No market session jobs due (dispatch still polls) |
+| US overnight (BNE night/early morning) | **US** | NYSE premarket → RTH → close / postmarket |
+| After US AH → next ASX pre-open | idle | Same |
+
+One process, one IBKR account, two `DailyWorkflowRun`s (calendar `ASX` vs `NYSE`). Agents use the same six roles; each invocation gets a **BOOK CONTEXT** (venue, currency, allowlist, benchmark). Analysis leases are venue-scoped (`daily:US:…:analysis` / `daily:AU:…:analysis`). Manual HTTP: `GET /workflow/daily/current?venue=AU`.
+
 ## Leases
 
 Table `workflow_leases` with unique `lease_key`.

@@ -151,6 +151,8 @@ class TraceMetadata(StrictModel):
     latency_ms: float | None = None
     decision_timestamp: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     run_id: UUID = Field(default_factory=uuid4)
+    # Active venue book for this agent invocation (US or AU). Same roles; different target.
+    book: dict[str, Any] | None = None
 
 
 class PriceZone(StrictModel):

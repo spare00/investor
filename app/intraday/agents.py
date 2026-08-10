@@ -151,6 +151,13 @@ class IntradayAgentService:
                 if llm
                 else AgentPipeline(settings=self.settings)
             )
+            from app.market.book_context import build_venue_book_context
+
+            book_ctx = build_venue_book_context(
+                self.settings,
+                venue=book,
+                allowlist=entry_universe,
+            )
             analysis = await pipeline.run_from_collection(
                 collection,
                 portfolio=portfolio,
@@ -161,6 +168,7 @@ class IntradayAgentService:
                     {"symbol": s, "horizon": horizons.get(s, "short")}
                     for s in sorted(entry_universe)
                 ],
+                book=book_ctx,
             )
             from app.services.audit import AuditService
 

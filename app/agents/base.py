@@ -105,6 +105,20 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
         loaded = self.load_prompt()
         system_prompt = self.load_system_prompt()
         base_user_prompt = self.build_user_prompt(payload)
+        book_block = ""
+        try:
+            trace = getattr(payload, "trace", None)
+            book = getattr(trace, "book", None) if trace is not None else None
+            if isinstance(book, dict) and book.get("venue"):
+                from app.market.book_context import book_from_mapping
+
+                ctx = book_from_mapping(book)
+                if ctx is not None:
+                    book_block = ctx.prompt_block() + "\n\n"
+        except Exception:  # noqa: BLE001
+            book_block = ""
+        if book_block:
+            base_user_prompt = f"{book_block}{base_user_prompt}"
         validation_feedback: list[str] = []
 
         # Phase 2 policy: one validation repair attempt, then fail (fallback may still apply).

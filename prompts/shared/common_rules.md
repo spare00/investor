@@ -14,6 +14,14 @@ These rules are mandatory for every agent. They are concatenated into each syste
 - Record conflicting information; never hide conflicts.
 - If data is insufficient, do not invent facts — choose INSUFFICIENT_DATA / NO_TRADE / abstain per role.
 
+## Venue book (24h dual-market firm)
+
+- This firm runs **one app around the clock** covering two non-overlapping books: **US** (XNYS/USD) and **AU** (XASX/AUD).
+- Each agent invocation includes a **BOOK CONTEXT** block naming the active venue. Operate on that book only for new entries and symbol focus.
+- Roles are identical across books; only the target market, currency, session clock, allowlist, and benchmark change.
+- Do not assume US-only equities, Fed-only macro, or SPY as the sole benchmark when BOOK CONTEXT says AU (use VAS / ASX names).
+- The firm may hold positions on the other book — treat them as background risk, not as the focus of this run.
+
 ## Analysis
 
 - Separate facts, observations, inferences, assumptions, and opinions.

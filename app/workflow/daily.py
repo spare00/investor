@@ -176,7 +176,7 @@ class DailyWorkflowService:
         now = now or datetime.now(UTC)
         run = await self._require_run(session_date)
         self._assert_not_blocked(run)
-        lease_key = f"daily:{run.session_date}:analysis"
+        lease_key = f"daily:{self.venue.value}:{run.session_date}:analysis"
         await self.leases.acquire(lease_key, self.owner)
         try:
             if run.current_state == DailyWorkflowState.PREMARKET_PREPARATION.value:
@@ -212,6 +212,7 @@ class DailyWorkflowService:
             except Exception as exc:  # noqa: BLE001
                 raise DailyWorkflowError(f"portfolio_sync_failed:{exc}") from exc
 
+            from app.market.book_context import build_venue_book_context
             from app.market.venues import holdings_for_venue
 
             holdings = holdings_for_venue(
@@ -220,6 +221,16 @@ class DailyWorkflowService:
             univ = UniverseService(self.session, settings=self.settings)
             collect_symbols = await univ.collection_universe(
                 holdings=holdings, venue=self.venue.value
+            )
+            entry_universe = await univ.entry_universe(venue=self.venue.value)
+            hz_map = await univ.horizon_by_symbol()
+            status = self.calendar.get_market_status(now)
+            book = build_venue_book_context(
+                self.settings,
+                venue=self.venue,
+                session_date=run.session_date,
+                phase=status.phase,
+                allowlist=entry_universe,
             )
 
             data = await DataCollectionPipeline(
@@ -250,15 +261,18 @@ class DailyWorkflowService:
                 portfolio=portfolio,
                 proposed_trades=[],
                 workflow_id=run.id,
+                entry_universe=sorted(entry_universe),
+                watchlist_context=[
+                    {"symbol": s, "horizon": hz_map.get(s, "short")}
+                    for s in sorted(entry_universe)
+                ],
+                book=book,
             )
             from app.services.audit import AuditService
 
             await AuditService(self.session).persist_analysis(analysis)
             prices = {m.symbol: m.last for m in collection.markets}
             from app.execution.firm_execution import materialize_cio_decision
-
-            entry_universe = await univ.entry_universe(venue=self.venue.value)
-            hz_map = await univ.horizon_by_symbol()
 
             # Agent firm path: CIO decides → intents; paper submit when automation unlocked
             execution = await materialize_cio_decision(

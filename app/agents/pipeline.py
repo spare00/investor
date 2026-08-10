@@ -15,6 +15,7 @@ from app.agents.quant_strategist import QuantStrategistAgent
 from app.agents.risk_manager import RiskManagerAgent
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.market.book_context import VenueBookContext, build_venue_book_context, index_symbols_for_venue
 from app.schemas import (
     DevilsAdvocateOutput,
     MacroStrategistOutput,
@@ -221,11 +222,25 @@ class AgentPipeline:
         workflow_id: UUID | None = None,
         entry_universe: list[str] | None = None,
         watchlist_context: list[dict] | None = None,
+        book: VenueBookContext | None = None,
+        venue: str | None = None,
     ) -> AnalysisBundle:
         wf = workflow_id or collection.workflow_id or uuid4()
         as_of = collection.collected_at
-        entry_list = list(entry_universe) if entry_universe is not None else list(self.settings.trade_allowlist)
+        active_book = book or build_venue_book_context(
+            self.settings,
+            venue=venue,
+            allowlist=entry_universe,
+        )
+        if entry_universe is not None:
+            entry_list = list(entry_universe)
+        else:
+            entry_list = list(active_book.allowlist) or list(self.settings.trade_allowlist)
         watch_ctx = enrich_watchlist_context(watchlist_context)
+        book_payload = active_book.to_dict()
+
+        def _trace() -> TraceMetadata:
+            return TraceMetadata(source_data_timestamp=as_of, book=book_payload)
 
         mi_in = MarketIntelligenceInput(
             as_of=as_of,
@@ -243,10 +258,14 @@ class AgentPipeline:
             ],
             earnings_summaries=collection.earnings,
             sec_filings=collection.filings,
-            portfolio_symbols=[p.symbol for p in portfolio.positions],
+            portfolio_symbols=[
+                p.symbol
+                for p in portfolio.positions
+                if (getattr(p, "venue", None) or "US").upper() == active_book.venue
+            ],
             allowlist=entry_list,
             watchlist=watch_ctx,
-            trace=TraceMetadata(source_data_timestamp=as_of),
+            trace=_trace(),
         )
         mi_out = await self.mi.run(mi_in)
 
@@ -268,10 +287,12 @@ class AgentPipeline:
                 notes=list(collection.macro.notes) if collection.macro else [],
             ),
             market_intelligence_summary=mi_out.model_dump(mode="json"),
-            trace=TraceMetadata(source_data_timestamp=as_of),
+            trace=_trace(),
         )
 
-        index_syms = {"SPY", "QQQ", "IWM", "DIA"}
+        index_syms = set(active_book.index_symbols) or set(
+            index_symbols_for_venue(active_book.venue, self.settings)
+        )
         index_bars = []
         symbol_bars = []
         vix = None
@@ -311,7 +332,7 @@ class AgentPipeline:
                 "quality": mi_out.data_quality_score,
             },
             watchlist=watch_ctx,
-            trace=TraceMetadata(source_data_timestamp=as_of),
+            trace=_trace(),
         )
 
         macro_out, quant_out = await asyncio.gather(
@@ -340,7 +361,7 @@ class AgentPipeline:
             price_providers=price_providers,
             price_integrity_notes=price_notes,
             watchlist=watch_ctx,
-            trace=TraceMetadata(source_data_timestamp=as_of),
+            trace=_trace(),
         )
         risk_out = await self.risk.run(risk_in)
 
@@ -379,7 +400,7 @@ class AgentPipeline:
                 risk=risk_out,
                 consensus_lean=macro_out.market_regime.value,
                 watchlist=watch_ctx,
-                trace=TraceMetadata(source_data_timestamp=as_of),
+                trace=_trace(),
             )
         )
 
@@ -395,7 +416,7 @@ class AgentPipeline:
                 positions=list(portfolio.positions),
                 allowlist=entry_list,
                 watchlist=watch_ctx,
-                trace=TraceMetadata(source_data_timestamp=as_of),
+                trace=_trace(),
             )
         )
         prices = {m.symbol.upper(): float(m.last) for m in collection.markets if m.last}

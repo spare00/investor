@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -13,6 +13,7 @@ from app.core.database import get_db_session
 from app.core.scheduler import upcoming_jobs
 from app.execution.ops_persistence import persist_trading_controls
 from app.execution.safety_controls import trading_controls
+from app.market.venues import parse_venue
 from app.models import DailyWorkflowRun
 from app.workflow.daily import DailyWorkflowError, DailyWorkflowService
 from app.workflow.recovery import RecoveryService
@@ -22,16 +23,22 @@ from sqlalchemy import select
 router = APIRouter(tags=["daily-workflow"])
 
 
-def _svc(session: AsyncSession) -> DailyWorkflowService:
-    return DailyWorkflowService(session, settings=get_settings())
+def _svc(session: AsyncSession, venue: str | None = None) -> DailyWorkflowService:
+    return DailyWorkflowService(
+        session, settings=get_settings(), venue=parse_venue(venue) if venue else None
+    )
 
 
 @router.get("/workflow/daily/current")
-async def daily_current(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
-    run = await _svc(session).get_current()
+async def daily_current(
+    venue: str | None = Query(default=None, description="US | AU"),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    svc = _svc(session, venue)
+    run = await svc.get_current()
     if run is None:
-        return {"run": None}
-    return {"run": _svc(session)._run_dict(run)}
+        return {"run": None, "venue": svc.venue.value}
+    return {"run": svc._run_dict(run), "venue": svc.venue.value}
 
 
 @router.get("/workflow/daily/{workflow_run_id}")
@@ -65,11 +72,12 @@ async def scheduler_jobs(session: AsyncSession = Depends(get_db_session)) -> dic
 
 @router.post("/workflow/daily/prepare")
 async def daily_prepare(
+    venue: str | None = Query(default=None, description="US | AU"),
     session: AsyncSession = Depends(get_db_session),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     try:
-        result = await _svc(session).prepare()
+        result = await _svc(session, venue).prepare()
         await session.commit()
         return {**result, "idempotency_key": idempotency_key, "broker_orders": False}
     except Exception as exc:  # noqa: BLE001
@@ -79,10 +87,11 @@ async def daily_prepare(
 @router.post("/workflow/daily/run-analysis")
 async def daily_run_analysis(
     fake_llm: bool = False,
+    venue: str | None = Query(default=None, description="US | AU"),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     try:
-        result = await _svc(session).run_analysis(fake_llm=fake_llm)
+        result = await _svc(session, venue).run_analysis(fake_llm=fake_llm)
         await session.commit()
         return result
     except DailyWorkflowError as exc:
@@ -92,10 +101,11 @@ async def daily_run_analysis(
 @router.post("/workflow/daily/revalidate")
 async def daily_revalidate(
     fake_llm: bool = False,
+    venue: str | None = Query(default=None, description="US | AU"),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     try:
-        result = await _svc(session).revalidate(fake_llm=fake_llm)
+        result = await _svc(session, venue).revalidate(fake_llm=fake_llm)
         await session.commit()
         return result
     except DailyWorkflowError as exc:
@@ -105,10 +115,11 @@ async def daily_revalidate(
 @router.post("/workflow/daily/evaluate-intraday")
 async def daily_intraday(
     trigger: str = "interval",
+    venue: str | None = Query(default=None, description="US | AU"),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     try:
-        result = await _svc(session).evaluate_intraday(trigger=trigger)
+        result = await _svc(session, venue).evaluate_intraday(trigger=trigger)
         await session.commit()
         return result
     except DailyWorkflowError as exc:
@@ -118,10 +129,11 @@ async def daily_intraday(
 @router.post("/workflow/daily/start-closing")
 async def daily_closing(
     policy: str = ClosingPolicy.CLOSE_INTRADAY_ONLY.value,
+    venue: str | None = Query(default=None, description="US | AU"),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     try:
-        result = await _svc(session).start_closing(policy=ClosingPolicy(policy))
+        result = await _svc(session, venue).start_closing(policy=ClosingPolicy(policy))
         await session.commit()
         return result
     except DailyWorkflowError as exc:
@@ -129,9 +141,12 @@ async def daily_closing(
 
 
 @router.post("/workflow/daily/run-postmarket")
-async def daily_postmarket(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def daily_postmarket(
+    venue: str | None = Query(default=None, description="US | AU"),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
     try:
-        result = await _svc(session).run_postmarket()
+        result = await _svc(session, venue).run_postmarket()
         await session.commit()
         return result
     except DailyWorkflowError as exc:
