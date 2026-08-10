@@ -10,8 +10,12 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+# One IB Gateway clientId per process — concurrent IbkrBroker instances fight over the slot.
+_IBKR_SINGLETON: BrokerClient | None = None
+
 
 def get_broker(settings: Settings | None = None) -> BrokerClient:
+    global _IBKR_SINGLETON
     cfg = settings or get_settings()
     provider = (cfg.broker_provider or "mock").lower()
 
@@ -42,6 +46,17 @@ def get_broker(settings: Settings | None = None) -> BrokerClient:
             raise BrokerError("ibkr_requires_paper_environment")
         from app.brokers.ibkr import IbkrBroker
 
-        return IbkrBroker(cfg)
+        if _IBKR_SINGLETON is None or not isinstance(_IBKR_SINGLETON, IbkrBroker):
+            _IBKR_SINGLETON = IbkrBroker(cfg)
+        return _IBKR_SINGLETON
 
     raise BrokerError(f"unknown_broker_provider:{provider}")
+
+
+async def disconnect_broker() -> None:
+    """Drop the shared IBKR session (app shutdown / tests)."""
+    global _IBKR_SINGLETON
+    broker = _IBKR_SINGLETON
+    _IBKR_SINGLETON = None
+    if broker is not None and hasattr(broker, "disconnect"):
+        await broker.disconnect()

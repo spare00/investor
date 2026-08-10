@@ -307,8 +307,16 @@ class IbkrMarketDataAdapter:
             provider_name=self.name,
             provider_version=self.version,
             settings=cfg,
+            # Gateway reconnect + delayed ticks need headroom beyond the generic
+            # HTTP provider timeout (especially after process kill / clientId churn).
+            timeout_seconds=max(60.0, float(cfg.provider_request_timeout_seconds) * 3),
             fn=lambda: IbkrMarketDataProvider(cfg).fetch_quotes(symbols),
         )
+        if meta.status in {ProviderStatus.TIMEOUT, ProviderStatus.ERROR}:
+            try:
+                await IbkrMarketDataProvider.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
         now = datetime.now(UTC)
         quotes = [_raw_quote_to_canonical(raw, now, self.name) for raw in (raw_list or [])]
         meta.raw_payload_reference = f"ibkr:quotes:{meta.request_id}"

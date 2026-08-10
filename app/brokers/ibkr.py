@@ -405,9 +405,8 @@ class IbkrBroker:
     async def _account_summary_rows(self, ib: Any, account: str) -> list[Any]:
         return list(await ib.accountSummaryAsync(account) or [])
 
-    async def _summary_map_from_rows(
-        self, rows: list[Any]
-    ) -> dict[str, tuple[str, str]]:
+    @staticmethod
+    def _summary_map_from_rows(rows: list[Any]) -> dict[str, tuple[str, str]]:
         return {str(r.tag): (str(r.value), str(r.currency or "")) for r in rows}
 
     @staticmethod

@@ -160,6 +160,7 @@ async def run_with_retry(
     provider_version: str,
     settings: Settings,
     fn: Callable[[], Awaitable[T]],
+    timeout_seconds: float | None = None,
 ) -> tuple[T | None, ProviderRequestMeta]:
     started = datetime.now(UTC)
     meta = ProviderRequestMeta(
@@ -180,11 +181,14 @@ async def run_with_retry(
 
     last_exc: Exception | None = None
     attempts = settings.provider_max_retries + 1
+    timeout = float(
+        timeout_seconds
+        if timeout_seconds is not None
+        else settings.provider_request_timeout_seconds
+    )
     for attempt in range(attempts):
         try:
-            result = await asyncio.wait_for(
-                fn(), timeout=settings.provider_request_timeout_seconds
-            )
+            result = await asyncio.wait_for(fn(), timeout=timeout)
             breaker.record_success()
             meta.status = ProviderStatus.OK
             meta.request_completed_at = datetime.now(UTC)

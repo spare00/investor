@@ -84,6 +84,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     )
     yield
     await stop_scheduler()
+    try:
+        from app.brokers.factory import disconnect_broker
+
+        await disconnect_broker()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("broker_disconnect_on_shutdown_failed", error=str(exc)[:160])
     logger.info("app_shutdown")
 
 
