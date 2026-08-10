@@ -32,6 +32,7 @@ class VetoCode(StrEnum):
     LEVERAGED_ETF = "leveraged_etf"
     TRADING_HALTED = "trading_halted"
     RISK_PER_TRADE = "risk_per_trade_exceeded"
+    CURRENCY_MISMATCH = "currency_mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +102,8 @@ class TradeIntent:
     sector: str = "Unknown"
     is_leveraged_etf: bool = False
     idempotency_key: str | None = None
+    venue: str | None = None
+    currency: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

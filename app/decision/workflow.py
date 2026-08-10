@@ -157,6 +157,9 @@ class WorkflowService:
             consecutive_losses=portfolio.consecutive_losses,
             trading_halted=portfolio.trading_halted,
             cooldown_until=portfolio.cooldown_until,
+            base_currency=getattr(portfolio, "base_currency", None) or "USD",
+            cash_by_currency=dict(getattr(portfolio, "cash_by_currency", None) or {}),
+            venue_books=dict(getattr(portfolio, "venue_books", None) or {}),
         )
 
     async def _link_briefing_to_daily(

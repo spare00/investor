@@ -46,6 +46,6 @@ def summarize_venue_books(
         bucket["positions"] += 1.0
     if equity and equity > 0:
         for bucket in books.values():
-            # Weight only meaningful within base-currency equity; still useful as ops signal.
+            # Ops-only: native MV / base equity. Not FX-safe across mixed books.
             bucket["weight_pct"] = bucket["market_value"] / equity * 100.0
     return books

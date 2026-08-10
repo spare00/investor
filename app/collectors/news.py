@@ -56,12 +56,34 @@ class StubNewsProvider:
                 symbols=["SPY"],
                 category="fed",
             ),
+            RawNewsItem(
+                headline="BHP lifts iron ore guidance on China demand",
+                source="AFR",
+                published_at=now - timedelta(minutes=25),
+                provider=self.name,
+                external_id="stub-asx-bhp-1",
+                symbols=["BHP", "VAS"],
+                category="guidance",
+                url="https://example.com/bhp-guidance",
+            ),
+            RawNewsItem(
+                headline="ASX banks steady ahead of RBA decision",
+                source="AAP",
+                published_at=now - timedelta(minutes=20),
+                provider=self.name,
+                external_id="stub-asx-banks-1",
+                symbols=["CBA", "VAS", "IOZ"],
+                category="macro",
+            ),
         ]
         filtered = default
         if symbols:
             symset = {s.upper() for s in symbols}
+            # AU-only universes should not inherit US megacap stubs.
             filtered = [
-                i for i in filtered if not i.symbols or symset.intersection(s.upper() for s in i.symbols)
+                i
+                for i in filtered
+                if not i.symbols or symset.intersection(s.upper() for s in i.symbols)
             ]
         if since:
             filtered = [i for i in filtered if i.published_at >= since]

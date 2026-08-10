@@ -242,6 +242,7 @@ class PositionMonitor:
             await self.session.execute(
                 select(PositionLifecycle)
                 .where(PositionLifecycle.symbol == symbol.upper())
+                .where(PositionLifecycle.venue == resolved_venue)
                 .where(PositionLifecycle.status.in_(["OPEN", "PENDING_OPEN", "ADDING", "REDUCING"]))
                 .limit(1)
             )
@@ -325,7 +326,7 @@ class PositionMonitor:
         Expected keys per row: symbol, qty (or quantity), avg_entry_price,
         optional current_price / market_value / stop_price.
         """
-        held: dict[str, dict[str, Any]] = {}
+        held: dict[tuple[str, str], dict[str, Any]] = {}
         upserted = 0
         for raw in positions:
             symbol = str(raw.get("symbol") or "").upper()
@@ -354,15 +355,15 @@ class PositionMonitor:
                 venue=venue,
                 currency=currency,
             )
-            held[symbol] = raw
+            held[(symbol, venue)] = raw
             upserted += 1
 
         open_rows = await self.list_lifecycles()
         closed = 0
         now = datetime.now(UTC)
         for lc in open_rows:
-            sym = lc.symbol.upper()
-            if sym in held:
+            key = (lc.symbol.upper(), (getattr(lc, "venue", None) or "US").upper())
+            if key in held:
                 continue
             if lc.status in {"OPEN", "ADDING", "REDUCING", "PENDING_OPEN", "PENDING_CLOSE"}:
                 lc.status = "CLOSED"
@@ -374,7 +375,11 @@ class PositionMonitor:
                 lc.metadata_json = meta
                 closed += 1
         await self.session.flush()
-        return {"upserted": upserted, "closed": closed, "held": sorted(held.keys())}
+        return {
+            "upserted": upserted,
+            "closed": closed,
+            "held": [f"{s}:{v}" for s, v in sorted(held.keys())],
+        }
 
     async def _watchlist_horizon(self, symbol: str) -> str | None:
         from app.models import WatchlistSymbol

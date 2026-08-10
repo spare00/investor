@@ -200,3 +200,59 @@ def test_news_relevant_to_venue(monkeypatch: pytest.MonkeyPatch) -> None:
     assert news_relevant_to_venue(["AAPL"], "AU", settings=cfg) is False
     assert news_relevant_to_venue(["AAPL"], "AU", settings=cfg, held_symbols={"AAPL"}) is True
     assert news_relevant_to_venue(["AAPL"], "US", settings=cfg) is True
+
+
+@pytest.mark.asyncio
+async def test_positions_unique_per_symbol_venue(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.brokers.mock import MockBroker
+    from app.core.database import Base
+    from app.execution.position_manager import PositionManager
+    from app.models import Position
+    from sqlalchemy import select
+
+    monkeypatch.setenv("ENABLED_VENUES", "US,AU")
+    monkeypatch.setenv("TRADE_ALLOWLIST_AU", "BHP,VAS")
+    clear_settings_cache()
+    settings = get_settings()
+
+    broker = MockBroker(seed=1, starting_cash=100_000)
+    broker.positions = {
+        "AAPL": {
+            "symbol": "AAPL",
+            "qty": "2",
+            "avg_entry_price": "100",
+            "market_value": "200",
+            "unrealized_pl": "0",
+            "side": "long",
+            "cost_basis": "200",
+            "currency": "USD",
+            "exchange": "NASDAQ",
+        },
+        "BHP": {
+            "symbol": "BHP",
+            "qty": "3",
+            "avg_entry_price": "40",
+            "market_value": "120",
+            "unrealized_pl": "0",
+            "side": "long",
+            "cost_basis": "120",
+            "currency": "AUD",
+            "exchange": "ASX",
+        },
+    }
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        pm = PositionManager(session, settings=settings, broker=broker)
+        await pm.sync_from_broker()
+        rows = list((await session.execute(select(Position))).scalars().all())
+        keys = {(r.symbol, r.venue) for r in rows}
+        assert ("AAPL", "US") in keys
+        assert ("BHP", "AU") in keys
+        assert len(rows) == 2
+    await engine.dispose()

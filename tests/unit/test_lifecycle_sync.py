@@ -61,7 +61,7 @@ async def test_sync_from_broker_positions_upserts_and_closes(session: AsyncSessi
         ]
     )
     assert first["upserted"] == 1
-    assert first["held"] == ["QQQ"]
+    assert first["held"] == ["QQQ:US"]
     rows = list((await session.execute(select(PositionLifecycle))).scalars().all())
     assert len(rows) == 1
     assert rows[0].status == "OPEN"

@@ -103,10 +103,10 @@ class PositionManager:
         from app.market.books import summarize_venue_books
         from app.market.venues import venue_for_symbol
 
-        # Upsert by symbol instead of wipe+rewrite.
+        # Upsert by (symbol, venue) so dual-listed / dual-book rows can coexist.
         existing_rows = list((await self.session.execute(select(Position))).scalars().all())
-        by_symbol = {p.symbol.upper(): p for p in existing_rows}
-        seen: set[str] = set()
+        by_key = {(p.symbol.upper(), (p.venue or "US").upper()): p for p in existing_rows}
+        seen: set[tuple[str, str]] = set()
         gross = 0.0
         parsed: list[dict[str, Any]] = []
         for raw in positions:
@@ -123,8 +123,10 @@ class PositionManager:
             venue = venue_for_symbol(
                 symbol, self.settings, exchange=exchange, currency=currency
             ).value
+            # Prefer broker base-currency gross when present — native MVs are not FX-safe.
             gross += abs(mv)
-            seen.add(symbol)
+            key = (symbol, venue)
+            seen.add(key)
             parsed.append(
                 {
                     "symbol": symbol,
@@ -138,7 +140,7 @@ class PositionManager:
                     "exchange": exchange,
                 }
             )
-            row = by_symbol.get(symbol)
+            row = by_key.get(key)
             if row is None:
                 self.session.add(
                     Position(
@@ -168,12 +170,28 @@ class PositionManager:
                 row.exchange = exchange
                 row.as_of = now
 
-        for symbol, row in by_symbol.items():
-            if symbol not in seen:
+        for key, row in by_key.items():
+            if key not in seen:
                 await self.session.delete(row)
         await self.session.flush()
 
-        gross_pct = (gross / equity * 100.0) if equity else 0.0
+        broker_gross = account.get("long_market_value")
+        try:
+            broker_gross_f = float(str(broker_gross)) if broker_gross is not None else None
+        except (TypeError, ValueError):
+            broker_gross_f = None
+        if broker_gross_f is not None and broker_gross_f > 0:
+            gross_pct = (broker_gross_f / equity * 100.0) if equity else 0.0
+        else:
+            # Fallback: only sum native MVs when every position currency matches base.
+            base_u = base_currency.upper()
+            native_ccys = {str(p.get("currency") or base_u).upper() for p in parsed}
+            if not parsed or native_ccys == {base_u}:
+                gross_pct = (gross / equity * 100.0) if equity else 0.0
+            else:
+                # Mixed currencies without FX — leave gross at 0 (fail soft for display;
+                # risk engine vetoes cross-currency new entries separately).
+                gross_pct = 0.0
         venue_books = summarize_venue_books(parsed, settings=self.settings, equity=equity)
         from app.brokers.models import redact_account_id
 
@@ -189,7 +207,12 @@ class PositionManager:
             "cash": round(cash, 4),
             "positions": sorted(
                 [
-                    [p["symbol"], round(p["quantity"], 6), round(p["market_value"], 4)]
+                    [
+                        p["symbol"],
+                        p.get("venue") or "US",
+                        round(p["quantity"], 6),
+                        round(p["market_value"], 4),
+                    ]
                     for p in parsed
                 ]
             ),
@@ -301,6 +324,7 @@ class PositionManager:
                 gross_exposure_pct=0.0,
             )
         equity = snap.equity or 1.0
+        payload = snap.payload if isinstance(snap.payload, dict) else {}
         return PortfolioStateInput(
             as_of=snap.as_of,
             equity=snap.equity,
@@ -323,6 +347,12 @@ class PositionManager:
             ],
             daily_pnl_pct=snap.daily_pnl_pct,
             drawdown_pct=snap.drawdown_pct,
+            base_currency=str(payload.get("base_currency") or "USD"),
+            cash_by_currency={
+                str(k).upper(): float(v)
+                for k, v in dict(payload.get("cash_by_currency") or {}).items()
+            },
+            venue_books=dict(payload.get("venue_books") or {}),
         )
 
     async def load_for_risk(
@@ -387,4 +417,7 @@ class PositionManager:
             trading_halted=state.trading_halted,
             cooldown_until=state.cooldown_until,
             peak_equity=state.equity,
+            base_currency=getattr(state, "base_currency", None) or "USD",
+            cash_by_currency=dict(getattr(state, "cash_by_currency", None) or {}),
+            venue_books=dict(getattr(state, "venue_books", None) or {}),
         )

@@ -260,7 +260,9 @@ class Execution(Base, TimestampMixin):
 
 class Position(Base, TimestampMixin):
     __tablename__ = "positions"
-    __table_args__ = (UniqueConstraint("symbol", name="uq_positions_symbol"),)
+    __table_args__ = (
+        UniqueConstraint("symbol", "venue", name="uq_positions_symbol_venue"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)

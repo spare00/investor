@@ -358,10 +358,12 @@ class TestVenueGrossCap:
     def test_venue_cap_blocks_same_book(
         self, engine: DeterministicRiskEngine, portfolio: PortfolioRiskView
     ) -> None:
+        # Notionals assumed base-currency (IB portfolio MV style); venue still AU.
         portfolio.equity = 100_000
         portfolio.cash = 50_000
         portfolio.cash_pct = 50.0
         portfolio.gross_exposure_pct = 45.0
+        portfolio.base_currency = "USD"
         portfolio.positions = [
             PositionRiskView(
                 symbol="BHP",
@@ -370,10 +372,18 @@ class TestVenueGrossCap:
                 sector="Materials",
                 weight_pct=45.0,
                 venue="AU",
-                currency="AUD",
+                currency="USD",
             )
         ]
-        trade = _buy(qty=100, price=100.0, stop=95.0, symbol="CBA", sector="Financials")
+        trade = _buy(
+            qty=100,
+            price=100.0,
+            stop=95.0,
+            symbol="CBA",
+            sector="Financials",
+            venue="AU",
+            currency="USD",
+        )
         result = engine.evaluate_pretrade(
             portfolio,
             trade,
@@ -392,6 +402,7 @@ class TestVenueGrossCap:
         portfolio.cash = 60_000
         portfolio.cash_pct = 60.0
         portfolio.gross_exposure_pct = 40.0
+        portfolio.base_currency = "USD"
         portfolio.positions = [
             PositionRiskView(
                 symbol="AAPL",
@@ -403,7 +414,15 @@ class TestVenueGrossCap:
                 currency="USD",
             )
         ]
-        trade = _buy(qty=50, price=100.0, stop=95.0, symbol="BHP", sector="Materials")
+        trade = _buy(
+            qty=50,
+            price=100.0,
+            stop=95.0,
+            symbol="BHP",
+            sector="Materials",
+            venue="AU",
+            currency="USD",
+        )
         result = engine.evaluate_pretrade(
             portfolio,
             trade,
@@ -413,3 +432,27 @@ class TestVenueGrossCap:
             broker_data_consistent=True,
         )
         assert VetoCode.MAX_VENUE_GROSS_EXPOSURE.value not in result.hard_vetoes
+
+    def test_currency_mismatch_fail_closed(
+        self, engine: DeterministicRiskEngine, portfolio: PortfolioRiskView
+    ) -> None:
+        portfolio.base_currency = "USD"
+        trade = _buy(
+            qty=10,
+            price=40.0,
+            stop=38.0,
+            symbol="BHP",
+            sector="Materials",
+            venue="AU",
+            currency="AUD",
+        )
+        result = engine.evaluate_pretrade(
+            portfolio,
+            trade,
+            allowlist={"BHP"},
+            data_quality_score=1.0,
+            market_session_clear=True,
+            broker_data_consistent=True,
+        )
+        assert result.approved is False
+        assert VetoCode.CURRENCY_MISMATCH.value in result.hard_vetoes

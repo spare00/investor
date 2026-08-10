@@ -53,6 +53,9 @@ class PortfolioStateInput(StrictModel):
     open_order_count: int = 0
     trading_halted: bool = False
     cooldown_until: datetime | None = None
+    base_currency: str = "USD"
+    cash_by_currency: dict[str, float] = Field(default_factory=dict)
+    venue_books: dict[str, dict[str, float]] = Field(default_factory=dict)
 
 
 class RiskManagerInput(StrictModel):

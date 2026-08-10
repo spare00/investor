@@ -309,9 +309,40 @@ class DeterministicRiskEngine:
         sizing: SizingResult | None = None
         adjusted_qty: float | None = trade.quantity
 
-        if trade.side == "buy" and trade.stop_loss is not None:
+        from app.market.venues import get_venue_spec, venue_for_symbol
+
+        trade_venue = (
+            (trade.venue or "").upper()
+            or venue_for_symbol(
+                symbol,
+                currency=trade.currency,
+            ).value
+        )
+        try:
+            venue_ccy = get_venue_spec(trade_venue).currency
+        except ValueError:
+            venue_ccy = "USD"
+        trade_ccy = (trade.currency or venue_ccy or "USD").upper()
+        base_ccy = (portfolio.base_currency or "USD").upper()
+
+        if trade.side == "buy" and trade_ccy != base_ccy:
+            add(
+                VetoCode.CURRENCY_MISMATCH,
+                False,
+                f"Trade currency {trade_ccy} != portfolio base {base_ccy}; "
+                "FX-normalized sizing is not enabled — fail closed",
+                trade_currency=trade_ccy,
+                base_currency=base_ccy,
+            )
+
+        if trade.side == "buy" and trade.stop_loss is not None and trade_ccy == base_ccy:
             existing = next(
-                (p.market_value for p in portfolio.positions if p.symbol.upper() == symbol),
+                (
+                    p.market_value
+                    for p in portfolio.positions
+                    if p.symbol.upper() == symbol
+                    and (p.venue or "US").upper() == trade_venue
+                ),
                 0.0,
             )
             sizing = self.position_size(
@@ -353,9 +384,6 @@ class DeterministicRiskEngine:
                 sector_pct=sector_pct,
             )
 
-            from app.market.venues import venue_for_symbol
-
-            trade_venue = venue_for_symbol(symbol).value
             venue_pct = self.venue_exposure_pct(
                 portfolio.positions,
                 portfolio.equity,
@@ -378,7 +406,12 @@ class DeterministicRiskEngine:
                 f"Projected gross {projected_gross:.2f}%",
             )
 
-            cash_after = portfolio.cash - notional
+            cash_pool = portfolio.cash
+            if portfolio.cash_by_currency:
+                cash_pool = float(
+                    portfolio.cash_by_currency.get(trade_ccy, portfolio.cash)
+                )
+            cash_after = cash_pool - notional
             cash_pct_after = cash_after / portfolio.equity * 100.0 if portfolio.equity else 0.0
             add(
                 VetoCode.MIN_CASH_PCT,
@@ -386,7 +419,10 @@ class DeterministicRiskEngine:
                 f"Projected cash {cash_pct_after:.2f}%",
             )
 
-            is_new = not any(p.symbol.upper() == symbol for p in portfolio.positions)
+            is_new = not any(
+                p.symbol.upper() == symbol and (p.venue or "US").upper() == trade_venue
+                for p in portfolio.positions
+            )
             open_count = len(portfolio.positions) + (1 if is_new else 0)
             add(
                 VetoCode.MAX_OPEN_POSITIONS,

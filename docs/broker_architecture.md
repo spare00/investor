@@ -24,7 +24,7 @@ CIO Decision
 
 Factory: `app/brokers/factory.py`. Live environment / `ENABLE_LIVE_TRADING=true` raises immediately.
 
-Venues (`PRIMARY_VENUE=US|AU`, `OrderRequest.venue`): calendar/currency/IB contract hints for the US and ASX books. Dual-book scheduler jobs are not wired yet — see `docs/market_calendar.md`.
+Venues (`PRIMARY_VENUE=US|AU`, `OrderRequest.venue`, `ENABLED_VENUES`): calendar/currency/IB contract hints and dual-book scheduler prepare/dispatch. Positions are unique on `(symbol, venue)`. Cross-currency new entries fail closed until FX-normalized sizing exists — see `docs/market_calendar.md` and `docs/scheduler_and_leases.md`.
 
 ## Canonical models
 

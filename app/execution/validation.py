@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 from app.core.config import Settings, get_settings
 from app.execution.safety_controls import TradingControls, trading_controls
-from app.market.venues import venue_for_symbol
+from app.market.venues import get_venue_spec, venue_for_symbol
 from app.risk import DeterministicRiskEngine, PortfolioRiskView, TradeIntent, limits_from_settings
 from app.schemas.cio import CIODecision, SymbolActionPlan
 from app.schemas.common import PortfolioAction, SymbolAction
@@ -250,6 +250,12 @@ class ExecutionValidator:
                 invalidation=plan.invalidation,
                 sector=sector,
                 idempotency_key=f"{decision.decision_id}:{symbol}:buy",
+                venue=venue,
+                currency=(
+                    get_venue_spec(venue).currency
+                    if venue
+                    else None
+                ),
             )
             pre = self.engine.evaluate_pretrade(
                 portfolio,
