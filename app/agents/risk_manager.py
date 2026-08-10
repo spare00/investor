@@ -61,34 +61,26 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
         return [VetoCode.NON_LIVE_MARKET_PRICES.value]
 
     def _portfolio_view(self, payload: RiskManagerInput) -> PortfolioRiskView:
-        p = payload.portfolio
-        return PortfolioRiskView(
-            equity=p.equity,
-            cash=p.cash,
-            cash_pct=p.cash_pct,
-            gross_exposure_pct=p.gross_exposure_pct,
-            positions=[
-                PositionRiskView(
-                    symbol=x.symbol,
-                    quantity=x.quantity,
-                    market_value=x.market_value,
-                    sector=x.sector,
-                    weight_pct=x.weight_pct,
-                    venue=getattr(x, "venue", None) or "US",
-                    currency=getattr(x, "currency", None),
-                )
-                for x in p.positions
-            ],
-            daily_pnl_pct=p.daily_pnl_pct,
-            drawdown_pct=p.drawdown_pct,
-            consecutive_losses=p.consecutive_losses,
-            trading_halted=p.trading_halted,
-            cooldown_until=p.cooldown_until,
-        )
+        from app.execution.firm_execution import portfolio_to_risk_view
+
+        return portfolio_to_risk_view(payload.portfolio)
 
     def _run_engine(self, payload: RiskManagerInput) -> dict[str, object]:
         portfolio = self._portfolio_view(payload)
-        allowlist = combined_entry_allowlist(self.settings)
+        book = None
+        currency = None
+        try:
+            raw_book = getattr(payload.trace, "book", None) or {}
+            if isinstance(raw_book, dict):
+                book = str(raw_book.get("venue") or "").upper() or None
+                currency = str(raw_book.get("currency") or "").upper() or None
+        except Exception:  # noqa: BLE001
+            book = None
+            currency = None
+        if book:
+            allowlist = self.settings.allowlist_for_venue(book)
+        else:
+            allowlist = combined_entry_allowlist(self.settings)
         results = []
         for trade in payload.proposed_trades:
             intent = TradeIntent(
@@ -104,6 +96,8 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
                 atr=trade.atr,
                 sector=trade.sector or "Unknown",
                 idempotency_key=trade.idempotency_key,
+                venue=book,
+                currency=currency,
             )
             result = self.engine.evaluate_pretrade(
                 portfolio,

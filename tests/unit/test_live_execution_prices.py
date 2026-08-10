@@ -51,6 +51,45 @@ def test_looks_like_stub_last_detects_hardcoded_aapl() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolve_execution_prices_reuses_non_stub_candidates() -> None:
+    settings = Settings(
+        enable_broker_orders=True,
+        enable_external_data=True,
+        enable_market_data_collection=True,
+    )
+    with patch(
+        "app.market.live_prices.fetch_live_last_prices",
+        new=AsyncMock(return_value={"MSFT": 440.0}),
+    ) as fetch:
+        prices, notes = await resolve_execution_prices(
+            ["AAPL", "MSFT"],
+            candidate_prices={"AAPL": 310.5},
+            settings=settings,
+        )
+    assert prices == {"AAPL": 310.5, "MSFT": 440.0}
+    assert any(n.startswith("reused_live_candidate_partial") for n in notes)
+    fetch.assert_awaited_once()
+    assert fetch.await_args.args[0] == ["MSFT"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_execution_prices_skips_fetch_when_candidates_cover() -> None:
+    settings = Settings(enable_broker_orders=True, enable_external_data=True)
+    with patch(
+        "app.market.live_prices.fetch_live_last_prices",
+        new=AsyncMock(return_value={"AAPL": 999.0}),
+    ) as fetch:
+        prices, notes = await resolve_execution_prices(
+            ["AAPL"],
+            candidate_prices={"AAPL": 310.5},
+            settings=settings,
+        )
+    assert prices == {"AAPL": 310.5}
+    assert "reused_live_candidate_prices" in notes
+    fetch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_resolve_execution_prices_ignores_stub_candidates_when_live_required() -> None:
     settings = Settings(
         enable_broker_orders=True,

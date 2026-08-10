@@ -177,28 +177,6 @@ async def _dispatch_due_jobs() -> None:
                 await session.rollback()
                 return
 
-            # Near open / already open with incomplete prep → catch up (throttled) per venue.
-            try:
-                fake = not bool(settings.llm_api_key)
-                for venue in enabled_venues(settings):
-                    svc = DailyWorkflowService(
-                        session, settings=settings, owner="scheduler", venue=venue
-                    )
-                    catch = await svc.catch_up_to_intraday(fake_llm=fake, now=now)
-                    if not (catch.get("catch_up") or {}).get("skipped", True):
-                        logger.info(
-                            "scheduler_session_catch_up",
-                            venue=venue.value,
-                            **(catch.get("catch_up") or {}),
-                        )
-                await session.commit()
-            except DailyWorkflowError as exc:
-                logger.warning("scheduler_catch_up_skipped", error=str(exc))
-                await session.commit()
-            except Exception:  # noqa: BLE001
-                logger.exception("scheduler_catch_up_failed")
-                await session.rollback()
-
             candidates = list(
                 (
                     await session.execute(
@@ -271,6 +249,42 @@ async def _dispatch_due_jobs() -> None:
         finally:
             try:
                 await leases.release("scheduler:dispatch", "scheduler")
+                await session.commit()
+            except LeaseError:
+                await session.commit()
+
+        # Catch-up (may run LLM) outside dispatch lease so long analysis does not
+        # block due-job ticks. Venue analysis leases still serialize the work.
+        from app.market.venues import enabled_venues
+
+        try:
+            await leases.acquire("scheduler:catch_up", "scheduler")
+        except LeaseError:
+            logger.info("scheduler_catch_up_lease_held")
+            return
+        try:
+            fake = not bool(settings.llm_api_key)
+            for venue in enabled_venues(settings):
+                svc = DailyWorkflowService(
+                    session, settings=settings, owner="scheduler", venue=venue
+                )
+                catch = await svc.catch_up_to_intraday(fake_llm=fake, now=now)
+                if not (catch.get("catch_up") or {}).get("skipped", True):
+                    logger.info(
+                        "scheduler_session_catch_up",
+                        venue=venue.value,
+                        **(catch.get("catch_up") or {}),
+                    )
+            await session.commit()
+        except DailyWorkflowError as exc:
+            logger.warning("scheduler_catch_up_skipped", error=str(exc))
+            await session.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("scheduler_catch_up_failed")
+            await session.rollback()
+        finally:
+            try:
+                await leases.release("scheduler:catch_up", "scheduler")
                 await session.commit()
             except LeaseError:
                 await session.commit()

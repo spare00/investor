@@ -125,8 +125,10 @@ class IbkrBroker:
                 self._ib.disconnect()
             self._ib = None
         from app.brokers.ibkr_contracts import clear_contract_cache
+        from app.collectors.market_data import IbkrMarketDataProvider
 
         clear_contract_cache()
+        await IbkrMarketDataProvider.disconnect()
 
     def _account_id(self, ib: Any) -> str:
         wanted = (self.settings.ibkr_account or "").strip()

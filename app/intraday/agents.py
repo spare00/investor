@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.pipeline import AgentPipeline
 from app.core.config import Settings, get_settings
+from app.core.logging import get_logger
 from app.execution.position_manager import PositionManager
 from app.execution.safety_controls import TradingControls, trading_controls
 from app.intraday.events import IntradayEventBus
@@ -22,6 +23,7 @@ from app.services.collection import DataCollectionService
 from app.services.llm import FakeLLMProvider
 from app.universe.service import UniverseService
 
+logger = get_logger(__name__)
 
 # Existing-position priority order for symbol actions
 _ACTION_PRIORITY = {
@@ -127,8 +129,22 @@ class IntradayAgentService:
                 try:
                     await pm.sync_from_broker()
                     port = await pm.portfolio_state_input()
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("intraday_portfolio_sync_failed", error=str(exc)[:240])
+                    armed = bool(
+                        self.settings.enable_broker_orders
+                        or self.settings.enable_automated_execution
+                    )
+                    if armed:
+                        run.status = "FAILED"
+                        run.payload = {"error": f"portfolio_sync_failed:{exc}"[:240]}
+                        await self.session.flush()
+                        return {
+                            "skipped": True,
+                            "reason": "portfolio_sync_failed",
+                            "error": str(exc)[:200],
+                            "broker_orders_submitted": False,
+                        }
             portfolio = port
             held = holdings_for_venue(
                 list(portfolio.positions or []), book, settings=self.settings

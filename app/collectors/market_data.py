@@ -172,15 +172,94 @@ class AlpacaMarketDataProvider:
         return out
 
 
+# Process-local IBKR market-data session (dedicated clientId; shared across fetches).
+_IBKR_MD_IB: Any | None = None
+_IBKR_MD_LOCK = asyncio.Lock()
+
+
 class IbkrMarketDataProvider:
-    """Live quotes via IB Gateway (TWS API). Uses a dedicated clientId."""
+    """Live quotes via IB Gateway (TWS API). Uses a dedicated clientId.
+
+    Connection is reused across ``fetch_quotes`` calls — reconnecting every poll
+    is expensive and can exhaust Gateway client slots under the scheduler.
+    """
 
     name = "ibkr"
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
 
-    async def fetch_quotes(self, symbols: list[str]) -> list[RawMarketQuote]:
+    async def _ensure_connected(self) -> Any | None:
+        """Return a connected readonly IB client, or None on failure."""
+        global _IBKR_MD_IB
+        settings = self.settings
+        async with _IBKR_MD_LOCK:
+            if _IBKR_MD_IB is not None and _IBKR_MD_IB.isConnected():
+                return _IBKR_MD_IB
+            try:
+                from ib_async import IB
+            except ImportError:
+                logger.error("ib_async_not_installed")
+                return None
+
+            if _IBKR_MD_IB is not None:
+                try:
+                    if _IBKR_MD_IB.isConnected():
+                        _IBKR_MD_IB.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+                _IBKR_MD_IB = None
+
+            host = settings.ibkr_host
+            port = int(settings.ibkr_port)
+            client_id = int(settings.ibkr_md_client_id or (int(settings.ibkr_client_id) + 10))
+            timeout = max(5, int(settings.provider_request_timeout_seconds))
+            ib = IB()
+            try:
+                await ib.connectAsync(
+                    host, port, clientId=client_id, readonly=True, timeout=timeout
+                )
+                # Paper accounts often lack real-time API entitlements; use delayed when needed.
+                try:
+                    ib.reqMarketDataType(3)  # 3 = delayed
+                except Exception:  # noqa: BLE001
+                    pass
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "ibkr_md_connect_failed", host=host, port=port, error=str(exc)[:160]
+                )
+                return None
+            if not ib.isConnected():
+                logger.error("ibkr_md_not_connected", host=host, port=port)
+                return None
+            _IBKR_MD_IB = ib
+            logger.info(
+                "ibkr_md_connected",
+                host=host,
+                port=port,
+                client_id=client_id,
+            )
+            return ib
+
+    @classmethod
+    async def disconnect(cls) -> None:
+        """Drop the shared MD session (tests / broker disconnect)."""
+        global _IBKR_MD_IB
+        async with _IBKR_MD_LOCK:
+            if _IBKR_MD_IB is not None:
+                try:
+                    if _IBKR_MD_IB.isConnected():
+                        _IBKR_MD_IB.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+                _IBKR_MD_IB = None
+
+    async def fetch_quotes(
+        self,
+        symbols: list[str],
+        *,
+        con_ids: dict[str, int] | None = None,
+    ) -> list[RawMarketQuote]:
         settings = self.settings
         if not settings.enable_external_data or not settings.enable_market_data_collection:
             logger.warning("ibkr_market_disabled", action="empty")
@@ -194,25 +273,13 @@ class IbkrMarketDataProvider:
             return []
 
         try:
-            from ib_async import IB, Stock
+            from ib_async import Stock
         except ImportError:
             logger.error("ib_async_not_installed")
             return []
 
-        host = settings.ibkr_host
-        port = int(settings.ibkr_port)
-        client_id = int(settings.ibkr_md_client_id or (int(settings.ibkr_client_id) + 10))
-        timeout = max(5, int(settings.provider_request_timeout_seconds))
-        ib = IB()
-        try:
-            await ib.connectAsync(host, port, clientId=client_id, readonly=True, timeout=timeout)
-            # Paper accounts often lack real-time API entitlements; use delayed when needed.
-            try:
-                ib.reqMarketDataType(3)  # 3 = delayed
-            except Exception:  # noqa: BLE001
-                pass
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("ibkr_md_connect_failed", host=host, port=port, error=str(exc)[:160])
+        ib = await self._ensure_connected()
+        if ib is None:
             return []
 
         now = datetime.now(UTC)
@@ -220,7 +287,11 @@ class IbkrMarketDataProvider:
         try:
             contracts = []
             for sym in syms:
-                contract = await self._qualify(ib, Stock, sym)
+                cid = None
+                if con_ids:
+                    raw = con_ids.get(sym) or con_ids.get(sym.upper())
+                    cid = int(raw) if raw else None
+                contract = await self._qualify(ib, Stock, sym, con_id=cid)
                 if contract is not None:
                     contracts.append(contract)
             if not contracts:
@@ -263,14 +334,20 @@ class IbkrMarketDataProvider:
                 )
         except Exception:  # noqa: BLE001
             logger.exception("ibkr_md_fetch_failed")
-        finally:
-            if ib.isConnected():
-                ib.disconnect()
+            # Drop sticky broken sessions so the next poll reconnects cleanly.
+            await self.disconnect()
 
         logger.info("ibkr_quotes_fetched", requested=len(syms), returned=len(out))
         return out
 
-    async def _qualify(self, ib: Any, stock_cls: Any, symbol: str) -> Any | None:
+    async def _qualify(
+        self,
+        ib: Any,
+        stock_cls: Any,
+        symbol: str,
+        *,
+        con_id: int | None = None,
+    ) -> Any | None:
         from app.brokers.ibkr_contracts import resolve_stock_contract
         from app.market.venues import venue_for_symbol
 
@@ -279,12 +356,13 @@ class IbkrMarketDataProvider:
             return await resolve_stock_contract(
                 ib,
                 symbol=symbol,
+                con_id=con_id,
                 venue=venue,
                 settings=self.settings,
                 stock_cls=stock_cls,
             )
         except LookupError:
-            logger.warning("ibkr_md_qualify_failed", symbol=symbol)
+            logger.warning("ibkr_md_qualify_failed", symbol=symbol, con_id=con_id)
             return None
 
     @staticmethod

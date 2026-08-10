@@ -87,6 +87,27 @@ async def fetch_live_last_prices(
     return out
 
 
+def _usable_live_candidates(
+    candidate_prices: dict[str, float] | None,
+    symbols: list[str],
+) -> dict[str, float]:
+    """Keep positive non-stub candidate prints for symbols we still need."""
+    needed = set(symbols)
+    out: dict[str, float] = {}
+    for key, raw in (candidate_prices or {}).items():
+        sym = str(key).upper()
+        if sym not in needed or raw is None:
+            continue
+        try:
+            last = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if last <= 0 or looks_like_stub_last(sym, last):
+            continue
+        out[sym] = last
+    return out
+
+
 async def resolve_execution_prices(
     symbols: Iterable[str],
     *,
@@ -95,8 +116,9 @@ async def resolve_execution_prices(
 ) -> tuple[dict[str, float], list[str]]:
     """Return prices safe for order sizing/submit.
 
-    When live prices are required, candidates are ignored — never fall back to
-    stub/collection leftovers for execution.
+    When live prices are required, stub candidates are rejected. Fresh non-stub
+    IBKR/Alpaca candidates may be reused to avoid a second market-data round-trip;
+    any remaining symbols are fetched live. Never fall back to stub leftovers.
     """
     cfg = settings or get_settings()
     notes: list[str] = []
@@ -110,15 +132,25 @@ async def resolve_execution_prices(
         notes.append("simulation_prices_allowed")
         return cleaned, notes
 
-    live = await fetch_live_last_prices(syms, settings=cfg)
-    if not live:
+    reused = _usable_live_candidates(candidate_prices, syms)
+    missing = [s for s in syms if s not in reused]
+    if not missing:
+        notes.append("reused_live_candidate_prices")
+        return reused, notes
+
+    if reused:
+        notes.append(f"reused_live_candidate_partial:{len(reused)}")
+
+    live = await fetch_live_last_prices(missing, settings=cfg)
+    merged = {**reused, **live}
+    if not merged:
         notes.append("live_prices_unavailable")
         return {}, notes
 
-    missing = [s for s in syms if s not in live]
-    if missing:
-        notes.append(f"live_price_missing:{','.join(missing[:12])}")
-    return live, notes
+    still_missing = [s for s in syms if s not in merged]
+    if still_missing:
+        notes.append(f"live_price_missing:{','.join(still_missing[:12])}")
+    return merged, notes
 
 
 def assess_collection_price_integrity(

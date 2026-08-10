@@ -43,6 +43,7 @@ def portfolio_to_risk_view(portfolio: PortfolioStateInput) -> PortfolioRiskView:
                 weight_pct=p.weight_pct,
                 venue=getattr(p, "venue", None) or "US",
                 currency=getattr(p, "currency", None),
+                con_id=int(getattr(p, "con_id", 0) or 0) or None,
             )
             for p in portfolio.positions
         ],
@@ -51,6 +52,9 @@ def portfolio_to_risk_view(portfolio: PortfolioStateInput) -> PortfolioRiskView:
         consecutive_losses=portfolio.consecutive_losses,
         trading_halted=portfolio.trading_halted,
         cooldown_until=portfolio.cooldown_until,
+        base_currency=getattr(portfolio, "base_currency", None) or "USD",
+        cash_by_currency=dict(getattr(portfolio, "cash_by_currency", None) or {}),
+        venue_books=dict(getattr(portfolio, "venue_books", None) or {}),
     )
 
 
@@ -97,9 +101,9 @@ async def materialize_cio_decision(
     by paper automation flags. Manual approval (when enabled) parks intents for an
     operator brake — it is not the primary trading model.
 
-    When the live/broker path is enabled, prices are always refreshed from Alpaca at
-    materialize time — collection leftovers and stub quotes are never used to size
-    or submit orders.
+    When the live/broker path is enabled, prices come from live IBKR/Alpaca prints
+    (reusing fresh non-stub candidates when available). Stub leftovers are never
+    used to size or submit orders.
     """
     cfg = settings or get_settings()
     notes: list[str] = []
