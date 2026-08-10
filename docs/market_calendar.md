@@ -39,8 +39,10 @@ TRADE_ALLOWLIST_AU=BHP,CBA,VAS,IOZ,NDQ,JPEQ
 
 - Cap exposure within one venue book via `MAX_VENUE_GROSS_PCT` (default 50%).
 - Daily/intraday collection is scoped to `collection_universe(venue=…)` (AU uses `VAS`, not forced US indexes).
+- Holdings, open lifecycles, live-price polls, and intraday agent reanalysis are filtered to the run's venue.
+- High-importance news escalate per book: symbol-tagged items must hit that venue's allowlist/holdings; untagged macro still escalates for every book. There is no dedicated ASX news provider yet — empty AU news is acceptable.
 
-Registry: `app.market.venues` (`venue_for_symbol`, `enabled_venues`). Factory: `MarketCalendarService(..., venue=)` / `get_market_calendar(venue=)`.
+Registry: `app.market.venues` (`venue_for_symbol`, `enabled_venues`, `holdings_for_venue`). Factory: `MarketCalendarService(..., venue=)` / `get_market_calendar(venue=)`.
 
 ## Service API
 

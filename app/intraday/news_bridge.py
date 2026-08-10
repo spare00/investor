@@ -66,13 +66,24 @@ async def ingest_high_importance_news(
     now: datetime | None = None,
     lookback_minutes: int | None = None,
     limit: int = 40,
+    venue: str | None = None,
+    held_symbols: list[str] | set[str] | None = None,
 ) -> dict[str, Any]:
-    """Publish NEW high-importance news onto the intraday bus (deduped)."""
+    """Publish NEW high-importance news onto the intraday bus (deduped).
+
+    When ``venue`` is set, symbol-tagged news must overlap that book's
+    allowlist/holdings. Untagged macro items still escalate for every book.
+    """
     cfg = settings or get_settings()
     now = now or datetime.now(UTC)
     lookback = max(15, int(lookback_minutes or cfg.intraday_news_lookback_minutes))
     cutoff = now - timedelta(minutes=lookback)
     bus = IntradayEventBus(session, settings=cfg)
+
+    from app.market.venues import news_relevant_to_venue, parse_venue
+
+    book = parse_venue(venue)
+    held = {str(s).upper() for s in (held_symbols or []) if s}
 
     rows = list(
         (
@@ -95,14 +106,22 @@ async def ingest_high_importance_news(
         if importance is None:
             skipped += 1
             continue
+        item_syms = [str(s).upper() for s in (item.symbols or []) if s]
+        if book is not None and not news_relevant_to_venue(
+            item_syms, book, settings=cfg, held_symbols=held
+        ):
+            skipped += 1
+            continue
         event_type = (
             "HIGH_IMPORTANCE_NEWS" if importance in {"high", "critical"} else "EARNINGS_RELEASE"
         )
         dedupe = f"news:{item.provider}:{item.external_id or item.headline_hash}"
+        if book is not None:
+            dedupe = f"{book.value}:{dedupe}"
         result = await bus.publish(
             event_type=event_type,
             source="news_bridge",
-            symbols=[str(s).upper() for s in (item.symbols or []) if s][:12],
+            symbols=item_syms[:12],
             importance=importance,
             deduplication_key=dedupe,
             requires_analysis=True,
@@ -112,6 +131,7 @@ async def ingest_high_importance_news(
                 "news_id": str(item.id),
                 "category": item.category,
                 "published_at": item.published_at.isoformat() if item.published_at else None,
+                "venue": book.value if book is not None else None,
             },
         )
         if result.status == "NEW":
@@ -125,4 +145,5 @@ async def ingest_high_importance_news(
         "skipped": skipped,
         "event_ids": published,
         "lookback_minutes": lookback,
+        "venue": book.value if book is not None else None,
     }

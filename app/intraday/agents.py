@@ -57,6 +57,7 @@ class IntradayAgentService:
         trigger_event_ids: list[str] | None = None,
         parent_decision_id: UUID | None = None,
         bypass_cooldown: bool = False,
+        venue: str | None = None,
     ) -> dict[str, Any]:
         emergency = self.controls.snapshot().state.value == "emergency_stop"
         paused = self.controls.snapshot().state.value == "paused"
@@ -68,15 +69,26 @@ class IntradayAgentService:
         if not self.settings.enable_intraday_agent_reanalysis:
             return {"skipped": True, "reason": "enable_intraday_agent_reanalysis_false"}
 
+        from app.market.venues import holdings_for_venue, resolve_venue
+
+        book = resolve_venue(self.settings, venue=venue).value
+
         open_rows = list(
             (
                 await self.session.execute(
-                    select(PositionLifecycle).where(PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"]))
+                    select(PositionLifecycle).where(
+                        PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"])
+                    )
                 )
             )
             .scalars()
             .all()
         )
+        open_rows = [
+            p
+            for p in open_rows
+            if (getattr(p, "venue", None) or "US").upper() == book
+        ]
         open_syms = [p.symbol for p in open_rows]
         univ = UniverseService(self.session, settings=self.settings)
         horizons: dict[str, str] = {}
@@ -118,15 +130,10 @@ class IntradayAgentService:
                 except Exception:  # noqa: BLE001
                     pass
             portfolio = port
-            held = [
-                p.symbol.upper()
-                for p in portfolio.positions
-                if abs(p.quantity or 0) > 1e-12
-            ] or [s.upper() for s in open_syms]
+            held = holdings_for_venue(
+                list(portfolio.positions or []), book, settings=self.settings
+            ) or [s.upper() for s in open_syms]
 
-            from app.market.venues import resolve_venue
-
-            book = resolve_venue(self.settings).value
             entry_universe = await univ.entry_universe(venue=book)
             horizons = await univ.horizon_by_symbol()
             universe = await univ.collection_universe(holdings=held, venue=book)

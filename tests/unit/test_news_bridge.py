@@ -102,6 +102,43 @@ async def test_ingest_publishes_and_dedupes(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ingest_scopes_symbol_news_to_venue(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ENABLED_VENUES", "US,AU")
+    monkeypatch.setenv("TRADE_ALLOWLIST_AU", "BHP,VAS")
+    clear_settings_cache()
+    settings = get_settings()
+    now = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
+    session.add(
+        _news(
+            headline="BHP lifts guidance",
+            category="guidance",
+            published_at=now - timedelta(minutes=5),
+            symbols=["BHP"],
+        )
+    )
+    session.add(
+        _news(
+            headline="AAPL beats earnings",
+            category="earnings",
+            published_at=now - timedelta(minutes=4),
+            symbols=["AAPL"],
+        )
+    )
+    await session.flush()
+
+    au = await ingest_high_importance_news(
+        session, settings=settings, now=now, venue="AU"
+    )
+    assert au["published"] == 1
+    assert au["venue"] == "AU"
+    events = list((await session.execute(select(IntradayEvent))).scalars().all())
+    assert len(events) == 1
+    assert events[0].symbols == ["BHP"]
+
+
+@pytest.mark.asyncio
 async def test_evaluate_intraday_escalates_on_high_news(session: AsyncSession) -> None:
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-08-03")

@@ -171,3 +171,32 @@ def test_dual_venue_prepare_distinct_job_keys(monkeypatch: pytest.MonkeyPatch) -
         await engine.dispose()
 
     asyncio.run(_run())
+
+
+def test_holdings_for_venue_filters_books(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.market.venues import holdings_for_venue
+
+    monkeypatch.setenv("ENABLED_VENUES", "US,AU")
+    monkeypatch.setenv("TRADE_ALLOWLIST_AU", "BHP,VAS")
+    clear_settings_cache()
+    positions = [
+        {"symbol": "AAPL", "quantity": 10, "venue": "US", "currency": "USD"},
+        {"symbol": "BHP", "quantity": 5, "venue": "AU", "currency": "AUD"},
+        {"symbol": "CBA", "quantity": 0, "venue": "AU", "currency": "AUD"},
+    ]
+    assert holdings_for_venue(positions, "AU", get_settings()) == ["BHP"]
+    assert holdings_for_venue(positions, "US", get_settings()) == ["AAPL"]
+
+
+def test_news_relevant_to_venue(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.market.venues import news_relevant_to_venue
+
+    monkeypatch.setenv("ENABLED_VENUES", "US,AU")
+    monkeypatch.setenv("TRADE_ALLOWLIST_AU", "BHP,VAS")
+    clear_settings_cache()
+    cfg = get_settings()
+    assert news_relevant_to_venue([], "AU", settings=cfg) is True  # macro
+    assert news_relevant_to_venue(["BHP"], "AU", settings=cfg) is True
+    assert news_relevant_to_venue(["AAPL"], "AU", settings=cfg) is False
+    assert news_relevant_to_venue(["AAPL"], "AU", settings=cfg, held_symbols={"AAPL"}) is True
+    assert news_relevant_to_venue(["AAPL"], "US", settings=cfg) is True

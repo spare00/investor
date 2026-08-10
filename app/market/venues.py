@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import time
 from enum import StrEnum
+from typing import Any
 
 from app.core.config import Settings, get_settings
 
@@ -232,3 +233,91 @@ def combined_entry_allowlist(settings: Settings | None = None) -> set[str]:
     if not out:
         out = cfg.allowlist_set()
     return out
+
+
+def position_venue(
+    *,
+    symbol: str | None = None,
+    venue: Venue | str | None = None,
+    exchange: str | None = None,
+    currency: str | None = None,
+    settings: Settings | None = None,
+) -> Venue:
+    """Resolve venue for a position-like row (explicit column preferred)."""
+    return venue_for_symbol(
+        symbol or "",
+        settings,
+        exchange=exchange,
+        currency=currency,
+        venue=venue,
+    )
+
+
+def holdings_for_venue(
+    positions: list[Any],
+    venue: Venue | str,
+    settings: Settings | None = None,
+) -> list[str]:
+    """Symbols from open positions that belong to ``venue`` (order-preserving unique)."""
+    want = parse_venue(venue) or Venue.US
+    cfg = settings or get_settings()
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in positions:
+        if isinstance(raw, dict):
+            symbol = str(raw.get("symbol") or "").upper()
+            qty = float(
+                raw.get("quantity")
+                if raw.get("quantity") is not None
+                else raw.get("qty")
+                or 0
+            )
+            row_venue = raw.get("venue")
+            exchange = raw.get("exchange")
+            currency = raw.get("currency")
+        else:
+            symbol = str(getattr(raw, "symbol", "") or "").upper()
+            qty = float(getattr(raw, "quantity", None) or getattr(raw, "qty", None) or 0)
+            row_venue = getattr(raw, "venue", None)
+            exchange = getattr(raw, "exchange", None)
+            currency = getattr(raw, "currency", None)
+        if not symbol or abs(qty) < 1e-12:
+            continue
+        resolved = position_venue(
+            symbol=symbol,
+            venue=row_venue,
+            exchange=str(exchange) if exchange else None,
+            currency=str(currency) if currency else None,
+            settings=cfg,
+        )
+        if resolved != want or symbol in seen:
+            continue
+        seen.add(symbol)
+        out.append(symbol)
+    return out
+
+
+def news_relevant_to_venue(
+    news_symbols: list[str] | None,
+    venue: Venue | str,
+    *,
+    settings: Settings | None = None,
+    held_symbols: set[str] | None = None,
+) -> bool:
+    """True if news should escalate for this venue book.
+
+    Macro / untagged items (empty symbols) stay relevant to every book.
+    Tagged items must intersect the venue allowlist or that book's holdings.
+    """
+    want = parse_venue(venue) or Venue.US
+    cfg = settings or get_settings()
+    tagged = {str(s).upper() for s in (news_symbols or []) if s}
+    if not tagged:
+        return True
+    allow = set(cfg.allowlist_for_venue(want))
+    held = {str(s).upper() for s in (held_symbols or []) if s}
+    if want == Venue.AU:
+        allow |= {(cfg.primary_benchmark_au or "VAS").upper()}
+    else:
+        allow |= {(cfg.primary_benchmark or "SPY").upper()}
+    return bool(tagged & (allow | held))

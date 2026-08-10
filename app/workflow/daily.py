@@ -212,7 +212,11 @@ class DailyWorkflowService:
             except Exception as exc:  # noqa: BLE001
                 raise DailyWorkflowError(f"portfolio_sync_failed:{exc}") from exc
 
-            holdings = [p.symbol for p in (portfolio.positions or []) if p.quantity]
+            from app.market.venues import holdings_for_venue
+
+            holdings = holdings_for_venue(
+                list(portfolio.positions or []), self.venue, settings=self.settings
+            )
             univ = UniverseService(self.session, settings=self.settings)
             collect_symbols = await univ.collection_universe(
                 holdings=holdings, venue=self.venue.value
@@ -675,8 +679,27 @@ class DailyWorkflowService:
         try:
             from app.intraday.news_bridge import ingest_high_importance_news
 
+            from app.market.venues import holdings_for_venue
+            from app.execution.position_manager import PositionManager
+
+            held_for_news: list[str] = []
+            try:
+                port_news = await PositionManager(
+                    self.session, settings=self.settings
+                ).portfolio_state_input()
+                held_for_news = holdings_for_venue(
+                    list(port_news.positions or []),
+                    self.venue,
+                    settings=self.settings,
+                )
+            except Exception:  # noqa: BLE001
+                held_for_news = []
             news_summary = await ingest_high_importance_news(
-                self.session, settings=self.settings, now=now
+                self.session,
+                settings=self.settings,
+                now=now,
+                venue=self.venue.value,
+                held_symbols=held_for_news,
             )
             meta["last_news_ingest"] = {
                 "published": news_summary.get("published"),
@@ -712,6 +735,7 @@ class DailyWorkflowService:
                     )
 
                     if requires_live_market_prices(self.settings):
+                        book = self.venue.value
                         open_syms = [
                             p.symbol
                             for p in (
@@ -725,6 +749,7 @@ class DailyWorkflowService:
                             )
                             .scalars()
                             .all()
+                            if (getattr(p, "venue", None) or "US").upper() == book
                         ]
                         if open_syms:
                             mon_prices = await fetch_live_last_prices(
@@ -874,6 +899,7 @@ class DailyWorkflowService:
                 parent_decision_id=run.latest_decision_id,
                 trigger_event_ids=trigger_event_ids or None,
                 bypass_cooldown=effective_trigger != "interval",
+                venue=self.venue.value,
             )
             if agent_result.get("skipped"):
                 result = IntradayEvalResult.NO_CHANGE
@@ -1288,6 +1314,7 @@ class DailyWorkflowService:
 
             univ = UniverseService(self.session, settings=cfg)
             hz_map = await univ.horizon_by_symbol()
+            book = self.venue.value
             open_syms = [
                 p.symbol.upper()
                 for p in (
@@ -1299,6 +1326,7 @@ class DailyWorkflowService:
                 )
                 .scalars()
                 .all()
+                if (getattr(p, "venue", None) or "US").upper() == book
             ]
             # Cadence follows open books when invested; otherwise focus/entry set —
             # not the entire watchlist (one scalp name must not force dense ticks
@@ -1306,7 +1334,9 @@ class DailyWorkflowService:
             if open_syms:
                 plan_horizons = [hz_map[s] for s in open_syms if s in hz_map]
             else:
-                focus_syms = await univ.collection_universe(holdings=[])
+                focus_syms = await univ.collection_universe(
+                    holdings=[], venue=self.venue.value
+                )
                 plan_horizons = [hz_map[s] for s in focus_syms if s in hz_map]
             if not plan_horizons:
                 plan_horizons = list(hz_map.values())
