@@ -37,44 +37,62 @@ class UniverseService:
         return (self.settings.universe_mode or "dynamic").lower() == "dynamic"
 
     async def ensure_seeded(self) -> int:
-        """Bootstrap watchlist from TRADE_ALLOWLIST when empty."""
-        existing = (
-            await self.session.execute(select(WatchlistSymbol).limit(1))
-        ).scalar_one_or_none()
-        if existing is not None:
-            return 0
+        """Bootstrap missing watchlist rows from US/AU allowlists."""
+        from app.market.venues import Venue, enabled_venues
+
+        rows = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
+        existing = {r.symbol.upper() for r in rows}
         now = utc_now()
-        indexes = {"SPY", "QQQ", "IWM", "DIA"}
         n = 0
-        for i, raw in enumerate(self.settings.trade_allowlist):
-            sym = raw.upper().strip()
-            if not sym:
-                continue
+
+        def _horizon_for(sym: str, venue: Venue, index: int) -> str:
+            if venue == Venue.AU:
+                if sym in {"VAS", "IOZ", "NDQ", "JPEQ"}:
+                    return UniverseHorizon.DAY.value if index < 3 else UniverseHorizon.SHORT.value
+                if sym in {"BHP", "CBA"}:
+                    return UniverseHorizon.SHORT.value
+                return UniverseHorizon.MEDIUM.value
+            indexes = {"SPY", "QQQ", "IWM", "DIA"}
             if sym in indexes:
-                horizon = UniverseHorizon.SCALP if i < 2 else UniverseHorizon.DAY
-            elif sym in {"NVDA", "TSLA", "AMD", "META", "AAPL"}:
-                horizon = UniverseHorizon.DAY
-            elif sym in {"MSFT", "AMZN", "GOOGL", "AVGO"}:
-                horizon = UniverseHorizon.SHORT
-            else:
-                horizon = UniverseHorizon.MEDIUM
-            self.session.add(
-                WatchlistSymbol(
-                    id=uuid4(),
-                    symbol=sym,
-                    horizon=horizon.value,
-                    status="active",
-                    priority=max(10, 85 - i * 3),
-                    thesis=f"Seeded into {horizon.value} book from TRADE_ALLOWLIST",
-                    invalidation="Liquidity failure or thesis break",
-                    source="seed",
-                    last_reviewed_at=now,
-                    payload={"seed_index": i},
+                return UniverseHorizon.SCALP.value if index < 2 else UniverseHorizon.DAY.value
+            if sym in {"NVDA", "TSLA", "AMD", "META", "AAPL"}:
+                return UniverseHorizon.DAY.value
+            if sym in {"MSFT", "AMZN", "GOOGL", "AVGO"}:
+                return UniverseHorizon.SHORT.value
+            return UniverseHorizon.MEDIUM.value
+
+        seed_books: list[tuple[Venue, list[str]]] = [(Venue.US, list(self.settings.trade_allowlist))]
+        if Venue.AU in enabled_venues(self.settings) or self.settings.trade_allowlist_au:
+            # Always seed AU allowlist rows when configured so JPEQ etc. are entry-eligible
+            # once ENABLED_VENUES includes AU (or allowlist is non-empty for manual books).
+            if Venue.AU in enabled_venues(self.settings):
+                seed_books.append((Venue.AU, list(self.settings.trade_allowlist_au)))
+
+        for venue, symbols in seed_books:
+            for i, raw in enumerate(symbols):
+                sym = raw.upper().strip()
+                if not sym or sym in existing:
+                    continue
+                horizon = _horizon_for(sym, venue, i)
+                self.session.add(
+                    WatchlistSymbol(
+                        id=uuid4(),
+                        symbol=sym,
+                        horizon=horizon,
+                        status="active",
+                        priority=max(10, 85 - i * 3),
+                        thesis=f"Seeded into {horizon} book from {venue.value} allowlist",
+                        invalidation="Liquidity failure or thesis break",
+                        source="seed",
+                        last_reviewed_at=now,
+                        payload={"seed_index": i, "venue": venue.value},
+                    )
                 )
-            )
-            n += 1
-        await self.session.flush()
-        logger.info("universe_seeded", count=n)
+                existing.add(sym)
+                n += 1
+        if n:
+            await self.session.flush()
+            logger.info("universe_seeded", count=n)
         return n
 
     async def list_active(self) -> list[WatchlistSymbol]:
@@ -85,15 +103,24 @@ class UniverseService:
         )
         return list(result.scalars().all())
 
-    async def entry_universe(self) -> set[str]:
-        """Symbols allowed for NEW entries."""
+    async def entry_universe(self, *, venue: str | None = None) -> set[str]:
+        """Symbols allowed for NEW entries (optionally scoped to a venue)."""
+        from app.market.venues import combined_entry_allowlist, parse_venue
+
+        want = parse_venue(venue)
+        allow = (
+            self.settings.allowlist_for_venue(want)
+            if want is not None
+            else combined_entry_allowlist(self.settings)
+        )
         if not self.is_dynamic():
-            return set(self.settings.allowlist_set())
+            return set(allow)
         await self.ensure_seeded()
         active = await self.list_active()
         if not active:
-            return set(self.settings.allowlist_set())
-        return {row.symbol.upper() for row in active}
+            return set(allow)
+        active_syms = {row.symbol.upper() for row in active}
+        return active_syms & set(allow)
 
     async def horizon_by_symbol(self) -> dict[str, str]:
         await self.ensure_seeded()

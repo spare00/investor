@@ -16,6 +16,7 @@ from app.brokers.pricing import round_equity_price
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.core.security import require_execution_allowed
+from app.market.venues import venue_for_symbol
 
 logger = get_logger(__name__)
 
@@ -502,6 +503,12 @@ class IbkrBroker:
                 qty=close_qty,
                 order_type="market",
                 idempotency_key=f"close-{symbol.upper()}-{int(datetime.now(UTC).timestamp())}",
+                venue=venue_for_symbol(
+                    symbol,
+                    self.settings,
+                    exchange=str(row.get("exchange") or "") or None,
+                    currency=str(row.get("currency") or "") or None,
+                ).value,
             )
         )
 

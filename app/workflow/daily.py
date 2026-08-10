@@ -237,6 +237,11 @@ class DailyWorkflowService:
             await AuditService(self.session).persist_analysis(analysis)
             prices = {m.symbol: m.last for m in collection.markets}
             from app.execution.firm_execution import materialize_cio_decision
+            from app.universe.service import UniverseService
+
+            univ = UniverseService(self.session, settings=self.settings)
+            entry_universe = await univ.entry_universe(venue=self.venue.value)
+            hz_map = await univ.horizon_by_symbol()
 
             # Agent firm path: CIO decides → intents; paper submit when automation unlocked
             execution = await materialize_cio_decision(
@@ -253,6 +258,9 @@ class DailyWorkflowService:
                 settings=self.settings,
                 create_intents=not (data.fail_closed or collection.fail_closed),
                 allow_submit=not (data.fail_closed or collection.fail_closed),
+                entry_universe=entry_universe,
+                horizon_by_symbol=hz_map,
+                market_session_clear=not (data.fail_closed or collection.fail_closed),
             )
             meta = dict(run.metadata_json or {})
             meta.update(
@@ -956,8 +964,7 @@ class DailyWorkflowService:
             from app.market.calendar import MarketCalendarService
 
             session_day = date_cls.fromisoformat(run.session_date)
-            cal = MarketCalendarService(self.settings)
-            holiday_gap = cal.next_session_has_holiday_gap(session_day)
+            holiday_gap = self.calendar.next_session_has_holiday_gap(session_day)
             overnight_payload = await ClosingService(
                 self.session, settings=self.settings
             ).overnight_review(next_session_holiday=holiday_gap)
@@ -1049,7 +1056,7 @@ class DailyWorkflowService:
             from datetime import date as date_cls
 
             session_day = date_cls.fromisoformat(run.session_date)
-            holiday_gap = MarketCalendarService(self.settings).next_session_has_holiday_gap(
+            holiday_gap = self.calendar.next_session_has_holiday_gap(
                 session_day
             )
             overnight = await ClosingService(self.session, settings=self.settings).overnight_review(

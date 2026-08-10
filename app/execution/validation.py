@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 from app.core.config import Settings, get_settings
 from app.execution.safety_controls import TradingControls, trading_controls
-from app.market.venues import resolve_venue
+from app.market.venues import resolve_venue, venue_for_symbol
 from app.risk import DeterministicRiskEngine, PortfolioRiskView, TradeIntent, limits_from_settings
 from app.schemas.cio import CIODecision, SymbolActionPlan
 from app.schemas.common import PortfolioAction, SymbolAction
@@ -126,6 +126,14 @@ class ExecutionValidator:
         for plan in decision.symbol_actions:
             if plan.action in {SymbolAction.HOLD, SymbolAction.NO_TRADE, SymbolAction.STAY_CASH}:
                 continue  # informational only — not an order, not a rejection
+            # Per-symbol venue when allowlist is the default primary set; callers that
+            # pass entry_universe already scoped the book.
+            plan_venue = venue_for_symbol(plan.symbol, self.settings).value
+            plan_allowlist = (
+                entry_universe
+                if entry_universe is not None
+                else self.settings.allowlist_for_venue(plan_venue)
+            )
             result = self._validate_plan(
                 decision,
                 plan,
@@ -136,10 +144,11 @@ class ExecutionValidator:
                 broker_data_consistent=broker_data_consistent,
                 seen=seen,
                 workflow_id=workflow_id,
-                allowlist=allowlist,
+                allowlist=plan_allowlist,
                 horizon_by_symbol=horizons,
                 held_symbols=held_syms,
                 block_new_entries=block_new_entries,
+                venue=plan_venue,
             )
             if result is None:
                 continue  # skipped (e.g. new entry in closing window)
@@ -170,6 +179,7 @@ class ExecutionValidator:
         horizon_by_symbol: dict[str, str] | None = None,
         held_symbols: list[str] | None = None,
         block_new_entries: bool = False,
+        venue: str | None = None,
     ) -> ValidatedOrderIntent | str | None:
         from app.universe.caps import horizon_cap_violation
         from app.universe.horizons import policy_for
@@ -327,5 +337,5 @@ class ExecutionValidator:
             idempotency_key=key,
             decision_id=str(decision.decision_id),
             thesis=plan.thesis,
-            venue=resolve_venue(self.settings).value,
+            venue=venue or venue_for_symbol(symbol, self.settings).value,
         )

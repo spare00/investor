@@ -171,13 +171,15 @@ class WorkflowService:
         """Stamp today's DailyWorkflowRun so Briefing can find WorkflowService dumps."""
         try:
             from app.market.calendar import MarketCalendarService
+            from app.market.venues import resolve_venue
             from app.workflow.daily import DailyWorkflowService
 
-            status = MarketCalendarService(self.settings).get_market_status(now)
+            venue = resolve_venue(self.settings)
+            status = MarketCalendarService(self.settings, venue=venue).get_market_status(now)
             session_date = status.session.session_date.isoformat()
-            daily = await DailyWorkflowService(self.session, settings=self.settings).get_current(
-                session_date
-            )
+            daily = await DailyWorkflowService(
+                self.session, settings=self.settings, venue=venue
+            ).get_current(session_date)
             if daily is None:
                 return
             meta = dict(daily.metadata_json or {})
@@ -203,8 +205,11 @@ class WorkflowService:
             return False
         try:
             from app.market.calendar import MarketCalendarService
+            from app.market.venues import resolve_venue
 
-            status = MarketCalendarService(self.settings).get_market_status(as_of)
+            status = MarketCalendarService(
+                self.settings, venue=resolve_venue(self.settings)
+            ).get_market_status(as_of)
             return bool(status.in_closing_window or status.in_force_close_window)
         except Exception:  # noqa: BLE001
             mtc = minutes_to_close(as_of or datetime.now(UTC))

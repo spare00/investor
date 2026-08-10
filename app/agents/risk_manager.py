@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from app.agents.base import BaseAgent, dump_for_prompt
 from app.core.config import Settings
+from app.market.venues import combined_entry_allowlist
 from app.risk import (
     DeterministicRiskEngine,
     PortfolioRiskView,
@@ -85,7 +86,7 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
 
     def _run_engine(self, payload: RiskManagerInput) -> dict[str, object]:
         portfolio = self._portfolio_view(payload)
-        allowlist = set(self.settings.trade_allowlist)
+        allowlist = combined_entry_allowlist(self.settings)
         results = []
         for trade in payload.proposed_trades:
             intent = TradeIntent(

@@ -24,6 +24,7 @@ from app.intraday.recovery import IntradayRecoveryService
 from app.intraday.risk import DynamicRiskRevalidator
 from app.intraday.settlement import SettlementService
 from app.models import OrderIntent, PositionLifecycle, PositionSnapshotRecord
+from app.market.venues import venue_for_symbol
 
 
 class IntradayService:
@@ -191,7 +192,7 @@ class IntradayService:
                     idempotency_key=key,
                     decision_id=str(lc.decision_id) if lc.decision_id else str(uuid4()),
                     thesis="hard_stop",
-                    venue=None,
+                    venue=venue_for_symbol(lc.symbol, self.settings).value,
                 )
             ],
         )

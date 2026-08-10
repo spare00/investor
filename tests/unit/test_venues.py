@@ -79,6 +79,16 @@ def test_ib_qualify_candidates_prefer_au() -> None:
     assert ("SMART", "USD") in pairs
 
 
+def test_venue_for_symbol_allowlist_and_exchange() -> None:
+    from app.market.venues import venue_for_symbol
+
+    settings = get_settings()
+    assert venue_for_symbol("JPEQ", settings).value == "AU"
+    assert venue_for_symbol("AAPL", settings).value == "US"
+    assert venue_for_symbol("XYZ", settings, exchange="ASX", currency="AUD").value == "AU"
+    assert venue_for_symbol("XYZ", settings, venue="AU").value == "AU"
+
+
 def test_dual_venue_prepare_distinct_job_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
 

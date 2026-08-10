@@ -29,7 +29,17 @@ ASX paper: prefer SMART/AUD qualification. Direct ASX routing can hit Gateway pr
 
 Sessions do not overlap in BNE wall-clock time (ASX daytime / US overnight), which is the ops rationale for dual-book scheduling later. Capital, FX, and universe are still separate concerns.
 
-Registry: `app.market.venues`. Factory: `MarketCalendarService(..., venue=)` / `get_market_calendar(venue=)`.
+### Ops: turn on dual book
+
+```bash
+ENABLED_VENUES=US,AU
+PRIMARY_VENUE=US          # default order routing / briefing calendar
+TRADE_ALLOWLIST_AU=BHP,CBA,VAS,IOZ,NDQ,JPEQ
+```
+
+Watchlist seeding adds missing AU allowlist symbols with `payload.venue=AU`. Daily analysis for an AU run uses `entry_universe(venue=AU)`. IBKR closes stamp venue from position exchange/currency.
+
+Registry: `app.market.venues` (`venue_for_symbol`, `enabled_venues`). Factory: `MarketCalendarService(..., venue=)` / `get_market_calendar(venue=)`.
 
 ## Service API
 

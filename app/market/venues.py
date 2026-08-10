@@ -187,3 +187,48 @@ def parse_scoped_job_key(job_key: str) -> tuple[Venue, str]:
 
 def job_key_base(job_key: str) -> str:
     return parse_scoped_job_key(job_key)[1]
+
+
+def venue_for_symbol(
+    symbol: str,
+    settings: Settings | None = None,
+    *,
+    exchange: str | None = None,
+    currency: str | None = None,
+    venue: Venue | str | None = None,
+) -> Venue:
+    """Best-effort symbol → venue: explicit → exchange/currency → allowlist → primary."""
+    explicit = parse_venue(venue)
+    if explicit is not None:
+        return explicit
+
+    ex = (exchange or "").upper()
+    ccy = (currency or "").upper()
+    if ex in {"ASX", "XASX"} or ccy == "AUD":
+        return Venue.AU
+    if ex in {"NASDAQ", "NYSE", "ARCA", "AMEX", "BATS", "IEX"} or ccy == "USD":
+        # SMART alone is ambiguous (AU also qualifies via SMART/AUD).
+        if ex and ex != "SMART":
+            return Venue.US
+
+    cfg = settings or get_settings()
+    sym = (symbol or "").upper().strip()
+    if sym and sym in cfg.allowlist_for_venue(Venue.AU):
+        # Prefer AU when listed only there; if also on US list, keep primary.
+        if sym not in cfg.allowlist_for_venue(Venue.US):
+            return Venue.AU
+    if sym and sym in cfg.allowlist_for_venue(Venue.US):
+        if sym not in cfg.allowlist_for_venue(Venue.AU):
+            return Venue.US
+    return resolve_venue(cfg)
+
+
+def combined_entry_allowlist(settings: Settings | None = None) -> set[str]:
+    """Union of allowlists for all enabled venues (risk gate for mixed books)."""
+    cfg = settings or get_settings()
+    out: set[str] = set()
+    for v in enabled_venues(cfg):
+        out |= cfg.allowlist_for_venue(v)
+    if not out:
+        out = cfg.allowlist_set()
+    return out
