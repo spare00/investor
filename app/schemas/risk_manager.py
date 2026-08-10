@@ -20,6 +20,8 @@ class PositionSnapshot(StrictModel):
     unrealized_pnl: float
     sector: str
     weight_pct: float
+    venue: str = "US"
+    currency: str | None = None
 
 
 class ProposedTrade(StrictModel):

@@ -387,15 +387,35 @@ class IbkrBroker:
             )
         return out
 
-    async def _summary_map(self, ib: Any, account: str) -> dict[str, tuple[str, str]]:
-        rows = await ib.accountSummaryAsync(account)
-        # tag -> (value, currency)
+    async def _account_summary_rows(self, ib: Any, account: str) -> list[Any]:
+        return list(await ib.accountSummaryAsync(account) or [])
+
+    async def _summary_map_from_rows(
+        self, rows: list[Any]
+    ) -> dict[str, tuple[str, str]]:
         return {str(r.tag): (str(r.value), str(r.currency or "")) for r in rows}
+
+    @staticmethod
+    def _cash_by_currency_from_rows(rows: list[Any]) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for r in rows:
+            if str(r.tag) != "CashBalance":
+                continue
+            ccy = str(r.currency or "").upper()
+            if not ccy:
+                continue
+            try:
+                out[ccy] = float(r.value)
+            except (TypeError, ValueError):
+                continue
+        return out
 
     async def get_account(self) -> dict[str, object]:
         ib = await self._ensure_connected()
         account = self._account_id(ib)
-        summary = await self._summary_map(ib, account)
+        rows = await self._account_summary_rows(ib, account)
+        summary = self._summary_map_from_rows(rows)
+        cash_by_currency = self._cash_by_currency_from_rows(rows)
 
         def _val(tag: str, default: float = 0.0) -> float:
             raw = summary.get(tag)
@@ -414,6 +434,8 @@ class IbkrBroker:
             if tag in summary and summary[tag][1]:
                 currency = summary[tag][1]
                 break
+        if not cash_by_currency and currency:
+            cash_by_currency = {str(currency).upper(): cash}
         return {
             "id": account,
             "account_number": account,
@@ -422,6 +444,8 @@ class IbkrBroker:
             "buying_power": buying_power,
             "portfolio_value": equity,
             "currency": currency,
+            "base_currency": currency,
+            "cash_by_currency": cash_by_currency,
             "long_market_value": _val("GrossPositionValue"),
             "trading_blocked": False,
             "account_blocked": False,

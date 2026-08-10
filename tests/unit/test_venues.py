@@ -89,6 +89,22 @@ def test_venue_for_symbol_allowlist_and_exchange() -> None:
     assert venue_for_symbol("XYZ", settings, venue="AU").value == "AU"
 
 
+def test_summarize_venue_books() -> None:
+    from app.market.books import summarize_venue_books
+
+    books = summarize_venue_books(
+        [
+            {"symbol": "AAPL", "quantity": 1, "market_value": 100, "venue": "US", "currency": "USD"},
+            {"symbol": "JPEQ", "quantity": 10, "market_value": 600, "exchange": "ASX", "currency": "AUD"},
+        ],
+        settings=get_settings(),
+        equity=1000,
+    )
+    assert books["US"]["positions"] == 1
+    assert books["AU"]["positions"] == 1
+    assert books["AU"]["market_value"] == 600
+
+
 def test_dual_venue_prepare_distinct_job_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
 

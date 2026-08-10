@@ -702,6 +702,9 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             "daily_pnl_pct": snap.daily_pnl_pct,
             "drawdown_pct": snap.drawdown_pct,
             "open_positions": snap.open_positions,
+            "base_currency": (snap.payload or {}).get("base_currency"),
+            "cash_by_currency": (snap.payload or {}).get("cash_by_currency") or {},
+            "venue_books": (snap.payload or {}).get("venue_books") or {},
         },
         "positions": [
             {
@@ -710,6 +713,9 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 "market_value": p.market_value,
                 "unrealized_pnl": p.unrealized_pnl,
                 "sector": p.sector,
+                "venue": getattr(p, "venue", None) or "US",
+                "currency": getattr(p, "currency", None),
+                "exchange": getattr(p, "exchange", None),
             }
             for p in positions
         ],

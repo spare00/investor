@@ -419,8 +419,8 @@
       <section class="wide">
         <h2>Positions</h2>
         <table>
-          <thead><tr><th>Symbol</th><th>Qty</th><th>Value</th><th>uPnL</th><th>Sector</th></tr></thead>
-          <tbody id="positions"><tr><td colspan="5" class="muted">None</td></tr></tbody>
+          <thead><tr><th>Symbol</th><th>Venue</th><th>Qty</th><th>Value</th><th>uPnL</th><th>Sector</th></tr></thead>
+          <tbody id="positions"><tr><td colspan="6" class="muted">None</td></tr></tbody>
         </table>
       </section>
       <section>
@@ -1669,8 +1669,20 @@
       const p = data.portfolio;
       if (p) {
         document.getElementById("equity").textContent = `$${Number(p.equity).toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+        const books = p.venue_books || {};
+        const bookBits = Object.keys(books).map((v) => {
+          const b = books[v] || {};
+          const n = Number(b.positions || 0);
+          if (!n) return null;
+          return `${v} ${n}@${Number(b.market_value || 0).toFixed(0)}`;
+        }).filter(Boolean);
+        const ccy = p.cash_by_currency || {};
+        const ccyBits = Object.keys(ccy).map((c) => `${c} ${Number(ccy[c]).toFixed(0)}`);
         document.getElementById("portfolioMeta").textContent =
-          `Cash ${p.cash_pct.toFixed(1)}% · Gross ${p.gross_exposure_pct.toFixed(1)}% · Day PnL ${p.daily_pnl_pct.toFixed(2)}%`;
+          `Cash ${p.cash_pct.toFixed(1)}% · Gross ${p.gross_exposure_pct.toFixed(1)}% · Day PnL ${p.daily_pnl_pct.toFixed(2)}%`
+          + (bookBits.length ? ` · Books ${bookBits.join(", ")}` : "")
+          + (ccyBits.length ? ` · CashFX ${ccyBits.join(", ")}` : "")
+          + (p.base_currency ? ` · base ${p.base_currency}` : "");
         document.getElementById("riskPills").innerHTML = [
           pill(`DD ${p.drawdown_pct.toFixed(2)}%`, p.drawdown_pct > 5 ? "bad" : "good"),
           pill(`Cash ${p.cash_pct.toFixed(1)}%`, p.cash_pct < 30 ? "warn" : "good"),
@@ -1725,8 +1737,8 @@
         </div>`;
       }).join("");
       document.getElementById("positions").innerHTML = (data.positions || []).length
-        ? data.positions.map(p => `<tr><td>${p.symbol}</td><td>${p.quantity}</td><td>${Number(p.market_value).toFixed(2)}</td><td>${Number(p.unrealized_pnl).toFixed(2)}</td><td>${p.sector}</td></tr>`).join("")
-        : `<tr><td colspan="5" class="muted">None</td></tr>`;
+        ? data.positions.map(p => `<tr><td>${p.symbol}</td><td>${p.venue || "US"}</td><td>${p.quantity}</td><td>${Number(p.market_value).toFixed(2)}${p.currency ? " " + p.currency : ""}</td><td>${Number(p.unrealized_pnl).toFixed(2)}</td><td>${p.sector}</td></tr>`).join("")
+        : `<tr><td colspan="6" class="muted">None</td></tr>`;
       document.getElementById("orders").innerHTML = (data.open_orders || []).length
         ? data.open_orders.map(o => `<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.qty}</td><td>${o.status}</td></tr>`).join("")
         : `<tr><td colspan="4" class="muted">None</td></tr>`;

@@ -27,7 +27,7 @@
 
 ASX paper: prefer SMART/AUD qualification. Direct ASX routing can hit Gateway precautionary **error 10311** unless allowed under API Precautionary Settings.
 
-Sessions do not overlap in BNE wall-clock time (ASX daytime / US overnight), which is the ops rationale for dual-book scheduling later. Capital, FX, and universe are still separate concerns.
+Sessions do not overlap in BNE wall-clock time (ASX daytime / US overnight), which is the ops rationale for dual-book scheduling. Positions store `venue` / `currency` / `exchange`; portfolio snapshots keep `venue_books` and `cash_by_currency` (native units — no FX conversion yet).
 
 ### Ops: turn on dual book
 

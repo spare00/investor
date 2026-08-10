@@ -97,6 +97,11 @@ class PositionManager:
         equity = float(str(account.get("equity") or account.get("portfolio_value") or 0))
         cash = float(str(account.get("cash") or 0))
         cash_pct = (cash / equity * 100.0) if equity else 100.0
+        cash_by_currency = dict(account.get("cash_by_currency") or {})
+        base_currency = str(account.get("currency") or account.get("base_currency") or "USD")
+
+        from app.market.books import summarize_venue_books
+        from app.market.venues import venue_for_symbol
 
         # Upsert by symbol instead of wipe+rewrite.
         existing_rows = list((await self.session.execute(select(Position))).scalars().all())
@@ -113,6 +118,11 @@ class PositionManager:
             cost = float(str(raw.get("cost_basis") or 0))
             upnl = float(str(raw.get("unrealized_pl") or 0))
             avg = float(str(raw.get("avg_entry_price") or 0))
+            exchange = str(raw.get("exchange") or "") or None
+            currency = str(raw.get("currency") or "") or None
+            venue = venue_for_symbol(
+                symbol, self.settings, exchange=exchange, currency=currency
+            ).value
             gross += abs(mv)
             seen.add(symbol)
             parsed.append(
@@ -123,6 +133,9 @@ class PositionManager:
                     "market_value": mv,
                     "cost_basis": cost,
                     "unrealized_pnl": upnl,
+                    "venue": venue,
+                    "currency": currency,
+                    "exchange": exchange,
                 }
             )
             row = by_symbol.get(symbol)
@@ -137,6 +150,9 @@ class PositionManager:
                         cost_basis=cost,
                         unrealized_pnl=upnl,
                         sector=SECTOR_MAP.get(symbol, "Unknown"),
+                        venue=venue,
+                        currency=currency,
+                        exchange=exchange,
                         as_of=now,
                     )
                 )
@@ -147,6 +163,9 @@ class PositionManager:
                 row.cost_basis = cost
                 row.unrealized_pnl = upnl
                 row.sector = SECTOR_MAP.get(symbol, row.sector or "Unknown")
+                row.venue = venue
+                row.currency = currency
+                row.exchange = exchange
                 row.as_of = now
 
         for symbol, row in by_symbol.items():
@@ -155,6 +174,7 @@ class PositionManager:
         await self.session.flush()
 
         gross_pct = (gross / equity * 100.0) if equity else 0.0
+        venue_books = summarize_venue_books(parsed, settings=self.settings, equity=equity)
         from app.brokers.models import redact_account_id
 
         safe_account = dict(account)
@@ -199,6 +219,9 @@ class PositionManager:
                     "account": safe_account,
                     "position_count": len(parsed),
                     "fingerprint": fingerprint,
+                    "base_currency": base_currency,
+                    "cash_by_currency": cash_by_currency,
+                    "venue_books": venue_books,
                 },
             )
             last_eq = account.get("last_equity")
@@ -293,6 +316,8 @@ class PositionManager:
                     unrealized_pnl=p.unrealized_pnl,
                     sector=p.sector,
                     weight_pct=(p.market_value / equity * 100.0) if equity else 0.0,
+                    venue=getattr(p, "venue", None) or "US",
+                    currency=getattr(p, "currency", None),
                 )
                 for p in positions
             ],

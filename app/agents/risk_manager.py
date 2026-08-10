@@ -74,6 +74,8 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
                     market_value=x.market_value,
                     sector=x.sector,
                     weight_pct=x.weight_pct,
+                    venue=getattr(x, "venue", None) or "US",
+                    currency=getattr(x, "currency", None),
                 )
                 for x in p.positions
             ],

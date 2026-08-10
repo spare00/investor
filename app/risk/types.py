@@ -62,6 +62,8 @@ class PositionRiskView:
     market_value: float
     sector: str
     weight_pct: float
+    venue: str = "US"
+    currency: str | None = None
 
 
 @dataclass(slots=True)
@@ -77,6 +79,9 @@ class PortfolioRiskView:
     trading_halted: bool = False
     cooldown_until: datetime | None = None
     peak_equity: float | None = None
+    base_currency: str = "USD"
+    cash_by_currency: dict[str, float] = field(default_factory=dict)
+    venue_books: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

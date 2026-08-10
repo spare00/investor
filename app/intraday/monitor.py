@@ -230,7 +230,14 @@ class PositionMonitor:
         decision_id: UUID | None = None,
         stop_price: float | None = None,
         current_price: float | None = None,
+        venue: str | None = None,
+        currency: str | None = None,
     ) -> PositionLifecycle:
+        from app.market.venues import venue_for_symbol
+
+        resolved_venue = venue_for_symbol(
+            symbol, self.settings, currency=currency, venue=venue
+        ).value
         existing = (
             await self.session.execute(
                 select(PositionLifecycle)
@@ -243,6 +250,9 @@ class PositionMonitor:
         if existing:
             existing.quantity = quantity
             existing.average_entry_price = avg_entry
+            existing.venue = resolved_venue
+            if currency:
+                existing.currency = currency
             if px > 0:
                 existing.current_price = px
             if stop_price is not None and existing.stop_price is None:
@@ -291,6 +301,8 @@ class PositionMonitor:
             quantity=quantity,
             average_entry_price=avg_entry,
             current_price=px or avg_entry,
+            venue=resolved_venue,
+            currency=currency,
             stop_price=stop_price,
             decision_id=decision_id,
             opened_at=datetime.now(UTC),
@@ -326,12 +338,21 @@ class PositionMonitor:
             if cur is None and mv is not None and qty:
                 cur = float(mv) / abs(qty)
             stop = raw.get("stop_price")
+            exchange = str(raw.get("exchange") or "") or None
+            currency = str(raw.get("currency") or "") or None
+            from app.market.venues import venue_for_symbol
+
+            venue = venue_for_symbol(
+                symbol, self.settings, exchange=exchange, currency=currency
+            ).value
             await self.ensure_lifecycle_from_broker(
                 symbol=symbol,
                 quantity=qty,
                 avg_entry=avg,
                 stop_price=float(stop) if stop is not None else None,
                 current_price=float(cur) if cur is not None else None,
+                venue=venue,
+                currency=currency,
             )
             held[symbol] = raw
             upserted += 1
