@@ -313,11 +313,21 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     )
 
     settings = get_settings()
-    us_session = MarketCalendarService(settings).get_market_status(now).to_dict()
+    from app.market.venues import enabled_venues, resolve_venue
+
+    venue_sessions = {
+        v.value: MarketCalendarService(settings, venue=v).get_market_status(now).to_dict()
+        for v in enabled_venues(settings)
+    }
+    primary = resolve_venue(settings).value
+    us_session = venue_sessions.get("US") or MarketCalendarService(
+        settings, venue="US"
+    ).get_market_status(now).to_dict()
+    au_session = venue_sessions.get("AU")
     workflow_summary: dict[str, Any] | None = None
     session_jobs: list[dict[str, Any]] = []
     try:
-        daily = DailyWorkflowService(session, settings=settings)
+        daily = DailyWorkflowService(session, settings=settings, venue=primary)
         run = await daily.get_current()
         if run is not None:
             meta = dict(run.metadata_json or {})
@@ -347,6 +357,9 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 .all()
             )
             for j in jrows:
+                if not str(j.job_key).startswith(f"{primary}:") and ":" in str(j.job_key):
+                    # Skip other venues' jobs when dual-book rows share a calendar date.
+                    continue
                 jmeta = j.metadata_json if isinstance(j.metadata_json, dict) else {}
                 session_jobs.append(
                     {
@@ -354,6 +367,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                         "planned_at": j.planned_at.isoformat() if j.planned_at else None,
                         "status": j.status,
                         "interval_minutes": jmeta.get("interval_minutes"),
+                        "venue": primary,
                     }
                 )
     except Exception:  # noqa: BLE001 — dashboard should still render
@@ -658,6 +672,10 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             "new_orders_allowed": trading_controls.is_new_order_allowed(),
             "reason": controls.reason,
             "us_session": us_session,
+            "au_session": au_session,
+            "venue_sessions": venue_sessions,
+            "primary_venue": primary,
+            "enabled_venues": [v.value for v in enabled_venues(settings)],
             "workflow": workflow_summary,
         },
         "universe": universe_summary,

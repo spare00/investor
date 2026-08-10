@@ -375,6 +375,10 @@
       <span class="phase" id="usSessionPhase">US —</span>
       <span id="usSessionDetail"></span>
     </div>
+    <div class="session-chip phase-closed" id="auSessionChip" title="ASX session" hidden>
+      <span class="phase" id="auSessionPhase">AU —</span>
+      <span id="auSessionDetail"></span>
+    </div>
     <div class="agent-lamps" id="agentLamps" aria-label="Six agent status"></div>
   </div>
   <nav class="tabs" id="tabs">
@@ -388,9 +392,11 @@
   <main>
     <div id="panel-overview" class="tab-panel active">
       <section>
-        <h2>US Market Session</h2>
+        <h2>Market Sessions</h2>
         <div id="usSessionState" class="stat" style="font-size:1.25rem">—</div>
         <div id="usSessionMeta" class="muted"></div>
+        <div id="auSessionState" class="stat" style="font-size:1.05rem;margin-top:0.35rem" hidden>—</div>
+        <div id="auSessionMeta" class="muted" hidden></div>
         <div id="intradayCadence" class="muted" style="margin-top:0.45rem"></div>
         <div id="tradingState" style="margin-top:0.65rem"></div>
         <div id="tradingMeta" class="muted"></div>
@@ -964,7 +970,54 @@
         if (sess.is_early_close) bits.push("early close");
         const wf = ms && ms.workflow;
         if (wf && wf.state) bits.push(`workflow ${wf.state}`);
+        if (ms && ms.primary_venue) bits.push(`primary ${ms.primary_venue}`);
         metaEl.textContent = bits.join(" · ") || "No session detail";
+      }
+
+      const au = (ms && (ms.au_session || (ms.venue_sessions && ms.venue_sessions.AU))) || null;
+      const enabled = (ms && ms.enabled_venues) || [];
+      const showAu = !!au && (enabled.includes("AU") || !!ms.au_session);
+      const auChip = document.getElementById("auSessionChip");
+      const auPhaseEl = document.getElementById("auSessionPhase");
+      const auDetailEl = document.getElementById("auSessionDetail");
+      const auStateEl = document.getElementById("auSessionState");
+      const auMetaEl = document.getElementById("auSessionMeta");
+      if (auChip) auChip.hidden = !showAu;
+      if (auStateEl) auStateEl.hidden = !showAu;
+      if (auMetaEl) auMetaEl.hidden = !showAu;
+      if (showAu && au) {
+        const aPhase = au.phase || "—";
+        const aTone = usPhaseTone(aPhase);
+        const aLabel = usPhaseLabel(aPhase);
+        const aSess = au.session || {};
+        const aOpen = fmtMins(au.minutes_to_open ?? au.minutes_to_next_open);
+        const aClose = fmtMins(au.minutes_to_close);
+        let aCount = "";
+        if (aPhase === "REGULAR" || aPhase === "CLOSING_WINDOW" || aPhase === "FORCE_CLOSE_WINDOW") {
+          aCount = aClose ? `closes in ${aClose}` : "";
+        } else if (aOpen) {
+          aCount = `opens in ${aOpen}`;
+        } else if (!au.is_trading_day) {
+          aCount = "not a trading day";
+        }
+        if (auChip && auPhaseEl && auDetailEl) {
+          auChip.className = `session-chip ${aTone.chip}`;
+          auPhaseEl.textContent = `AU ${aLabel}`;
+          auDetailEl.textContent = aCount ? `· ${aCount}` : "";
+        }
+        if (auStateEl) {
+          auStateEl.innerHTML = `${pill("ASX " + aLabel, aTone.pill)} ${
+            au.is_trading_day ? pill("trading day", "good") : pill("holiday / weekend", "warn")
+          }`;
+        }
+        if (auMetaEl) {
+          const bits = [];
+          if (aSess.regular_open || aSess.regular_close) {
+            bits.push(`RTH ${sessionClock(aSess.regular_open)}–${sessionClock(aSess.regular_close)} Sydney`);
+          }
+          if (aCount) bits.push(aCount);
+          auMetaEl.textContent = bits.join(" · ") || "No ASX session detail";
+        }
       }
     }
 
@@ -1545,7 +1598,10 @@
       const used = wf.intraday_reanalysis_count ?? 0;
       const max = wf.max_intraday_reanalyses ?? "—";
       const budgetCls = max !== "—" && used >= max ? "bad" : used ? "good" : "";
-      const intra = (sessionJobs || []).filter((j) => String(j.job_key || "").startsWith("intraday_eval"));
+      const intra = (sessionJobs || []).filter((j) => {
+        const k = String(j.job_key || "");
+        return k.includes("intraday_eval");
+      });
       const interval = intra.find((j) => j.interval_minutes != null);
       const planned = (sessionJobs || []).filter((j) => j.status === "planned").length;
       const done = (sessionJobs || []).filter((j) => j.status === "completed" || j.status === "skipped").length;
