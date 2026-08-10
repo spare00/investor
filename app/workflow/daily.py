@@ -924,6 +924,7 @@ class DailyWorkflowService:
                 trigger_event_ids=trigger_event_ids or None,
                 bypass_cooldown=effective_trigger != "interval",
                 venue=self.venue.value,
+                workflow_run=run,
             )
             if agent_result.get("skipped"):
                 result = IntradayEvalResult.NO_CHANGE
@@ -1138,8 +1139,8 @@ class DailyWorkflowService:
             from app.intraday.settlement import SettlementService
 
             settlement = await SettlementService(
-                self.session, settings=self.settings
-            ).settle(session_date=run.session_date)
+                self.session, settings=self.settings, venue=self.venue.value
+            ).settle(session_date=run.session_date, venue=self.venue.value)
             review["settlement"] = {
                 "id": settlement.get("settlement_id"),
                 "overnight_positions": settlement.get("overnight_positions") or [],

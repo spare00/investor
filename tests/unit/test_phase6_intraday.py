@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -100,6 +100,23 @@ def test_reanalysis_cooldown() -> None:
     assert not ok and why == "global_cooldown"
     ok2, _ = bus.allow_reanalysis(symbols=["SPY"], bypass=True)
     assert ok2
+
+
+def test_reanalysis_state_roundtrip() -> None:
+    bus = IntradayEventBus.__new__(IntradayEventBus)
+    bus.settings = _settings(max_intraday_reanalyses=5)
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    bus._reanalysis_times = [now]
+    bus._symbol_reanalysis = {"SPY": [now]}
+    dumped = bus.dump_reanalysis_state()
+    other = IntradayEventBus.__new__(IntradayEventBus)
+    other.settings = bus.settings
+    other.load_reanalysis_state(dumped)
+    ok, why = other.allow_reanalysis(
+        symbols=["SPY"], now=now + timedelta(minutes=1), horizon_by_symbol={"SPY": "medium"}
+    )
+    assert ok is False
+    assert why == "global_cooldown"
 
 
 def test_modes_observe_blocks_submit() -> None:
@@ -217,6 +234,59 @@ async def test_settlement_and_posttrade(session: AsyncSession) -> None:
     )
     assert review["strategy_auto_changed"] is False
     assert review["agent_assessment_ids"]
+
+
+@pytest.mark.asyncio
+async def test_settlement_scopes_overnight_by_venue(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.intraday.settlement import SettlementService
+    from sqlalchemy import select
+    from app.models import PostmarketSettlement
+
+    async def _noop_sync(self):  # noqa: ANN001
+        return {"skipped": True}
+
+    monkeypatch.setattr(
+        "app.execution.position_manager.PositionManager.sync_from_broker", _noop_sync
+    )
+    settings = _settings(enabled_venues=["US", "AU"], primary_venue="US")
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="SPY",
+            status="OPEN",
+            quantity=1,
+            average_entry_price=100,
+            current_price=100,
+            venue="US",
+            exit_policy={},
+        )
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="BHP",
+            status="OPEN",
+            quantity=1,
+            average_entry_price=40,
+            current_price=40,
+            venue="AU",
+            exit_policy={},
+        )
+    )
+    await session.flush()
+    us = await SettlementService(session, settings=settings, venue="US").settle(
+        session_date="2026-08-10", venue="US"
+    )
+    au = await SettlementService(session, settings=settings, venue="AU").settle(
+        session_date="2026-08-10", venue="AU"
+    )
+    assert us["overnight_positions"] == ["SPY"]
+    assert au["overnight_positions"] == ["BHP"]
+    assert us["settlement_id"] != au["settlement_id"]
+    rows = list((await session.execute(select(PostmarketSettlement))).scalars().all())
+    assert len(rows) == 2
 
 
 @pytest.mark.asyncio

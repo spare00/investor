@@ -550,14 +550,20 @@ def test_coalesce_before_limit_keeps_closing_with_dense_intraday() -> None:
 
 @pytest.mark.asyncio
 async def test_scheduler_bootstrap_prepares_sessions(session: AsyncSession) -> None:
-    from app.core.scheduler import _ensure_sessions_prepared
+    from app.core import scheduler as sched_mod
 
-    prepared = await _ensure_sessions_prepared(session, get_settings())
+    sched_mod._PREPARE_CACHE.clear()
+    prepared = await sched_mod._ensure_sessions_prepared(session, get_settings())
     assert len(prepared) == 2
     assert all(p.startswith("US:") for p in prepared)
-    # Idempotent
-    again = await _ensure_sessions_prepared(session, get_settings())
-    assert again == prepared
+    # Throttled within TTL — no duplicate prepare work.
+    again = await sched_mod._ensure_sessions_prepared(session, get_settings())
+    assert again == []
+    # Expired cache entries prepare again.
+    for key in list(sched_mod._PREPARE_CACHE):
+        sched_mod._PREPARE_CACHE[key] = datetime.now(UTC) - timedelta(seconds=sched_mod._PREPARE_TTL_SECONDS + 1)
+    third = await sched_mod._ensure_sessions_prepared(session, get_settings())
+    assert len(third) == 2
 
 
 @pytest.mark.asyncio

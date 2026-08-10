@@ -60,6 +60,7 @@ class IntradayAgentService:
         parent_decision_id: UUID | None = None,
         bypass_cooldown: bool = False,
         venue: str | None = None,
+        workflow_run: Any | None = None,
     ) -> dict[str, Any]:
         emergency = self.controls.snapshot().state.value == "emergency_stop"
         paused = self.controls.snapshot().state.value == "paused"
@@ -74,23 +75,22 @@ class IntradayAgentService:
         from app.market.venues import holdings_for_venue, resolve_venue
 
         book = resolve_venue(self.settings, venue=venue).value
+        if workflow_run is not None:
+            meta0 = dict(getattr(workflow_run, "metadata_json", None) or {})
+            self.bus.load_reanalysis_state(meta0.get("reanalysis"))
 
         open_rows = list(
             (
                 await self.session.execute(
                     select(PositionLifecycle).where(
-                        PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"])
+                        PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"]),
+                        PositionLifecycle.venue == book,
                     )
                 )
             )
             .scalars()
             .all()
         )
-        open_rows = [
-            p
-            for p in open_rows
-            if (getattr(p, "venue", None) or "US").upper() == book
-        ]
         open_syms = [p.symbol for p in open_rows]
         univ = UniverseService(self.session, settings=self.settings)
         horizons: dict[str, str] = {}
@@ -287,6 +287,10 @@ class IntradayAgentService:
                 "entry_universe_size": len(entry_universe),
             }
             self.bus.record_reanalysis(open_syms or ["PORTFOLIO"])
+            if workflow_run is not None:
+                meta_w = dict(getattr(workflow_run, "metadata_json", None) or {})
+                meta_w["reanalysis"] = self.bus.dump_reanalysis_state()
+                workflow_run.metadata_json = meta_w
             await self.session.flush()
             return {
                 "analysis_run_id": str(run.id),

@@ -1,4 +1,4 @@
-"""Post-market settlement (idempotent by session_date)."""
+"""Post-market settlement (idempotent by session_date + venue)."""
 
 from __future__ import annotations
 
@@ -19,18 +19,28 @@ from app.models import Execution, Order, PositionLifecycle, PostmarketSettlement
 
 
 class SettlementService:
-    def __init__(self, session: AsyncSession, *, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        settings: Settings | None = None,
+        venue: str | None = None,
+    ) -> None:
+        from app.market.venues import resolve_venue
+
         self.session = session
         self.settings = settings or get_settings()
+        self.venue = resolve_venue(self.settings, venue=venue)
         self.bus = IntradayEventBus(session, settings=self.settings)
 
-    async def settle(self, *, session_date: str | None = None) -> dict[str, Any]:
+    async def settle(
+        self, *, session_date: str | None = None, venue: str | None = None
+    ) -> dict[str, Any]:
+        from app.market.venues import resolve_venue
+
+        book = resolve_venue(self.settings, venue=venue or self.venue.value).value
         day = session_date or datetime.now(UTC).date().isoformat()
-        existing = (
-            await self.session.execute(
-                select(PostmarketSettlement).where(PostmarketSettlement.session_date == day).limit(1)
-            )
-        ).scalar_one_or_none()
+        existing = await self._existing_settlement(day, book)
 
         recon = await ReconciliationService(self.session, settings=self.settings).run("POSTMARKET")
         try:
@@ -56,8 +66,10 @@ class SettlementService:
             for e in executions
             if e.executed_at is None
             or (
-                (e.executed_at if e.executed_at.tzinfo else e.executed_at.replace(tzinfo=UTC)) >= day_start
-                and (e.executed_at if e.executed_at.tzinfo else e.executed_at.replace(tzinfo=UTC)) < day_end
+                (e.executed_at if e.executed_at.tzinfo else e.executed_at.replace(tzinfo=UTC))
+                >= day_start
+                and (e.executed_at if e.executed_at.tzinfo else e.executed_at.replace(tzinfo=UTC))
+                < day_end
             )
         ]
         if not day_execs and executions:
@@ -102,7 +114,10 @@ class SettlementService:
             (
                 await self.session.execute(
                     select(PositionLifecycle).where(
-                        PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"])
+                        PositionLifecycle.status.in_(
+                            ["OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"]
+                        ),
+                        PositionLifecycle.venue == book,
                     )
                 )
             )
@@ -110,6 +125,7 @@ class SettlementService:
             .all()
         )
         payload = {
+            "venue": book,
             "position_sync": sync,
             "recon": {k: v for k, v in recon.items() if k != "book"},
             "execution_scope": scope_note,
@@ -122,7 +138,10 @@ class SettlementService:
 
             _json.dumps(account_json, default=str)
         except TypeError:
-            account_json = {k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v)) for k, v in account_json.items()}
+            account_json = {
+                k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
+                for k, v in account_json.items()
+            }
         if existing is None:
             settlement = PostmarketSettlement(
                 id=uuid4(),
@@ -146,14 +165,14 @@ class SettlementService:
             settlement.pnl_summary = pnl_rows
             settlement.payload = payload
 
-        # Replace TradePnL rows for this session tag in payload only; avoid unbounded duplicates
-        # by tagging method with session_date in payload of a single aggregate row per symbol/day
+        # Replace TradePnL rows for this session+venue tag; avoid unbounded duplicates.
+        pnl_method = f"{self.settings.position_lot_method}:{day}:{book}"
         for row in pnl_rows:
             tagged = (
                 await self.session.execute(
                     select(TradePnL)
                     .where(TradePnL.symbol == row["symbol"])
-                    .where(TradePnL.method == f"{self.settings.position_lot_method}:{day}")
+                    .where(TradePnL.method == pnl_method)
                     .limit(1)
                 )
             ).scalar_one_or_none()
@@ -168,9 +187,9 @@ class SettlementService:
                         fees=0.0,
                         estimated_slippage=0.0,
                         return_pct=0.0,
-                        method=f"{self.settings.position_lot_method}:{day}",
+                        method=pnl_method,
                         conflict_with_broker=bool(row.get("conflict")),
-                        payload={"session_date": day},
+                        payload={"session_date": day, "venue": book},
                     )
                 )
             else:
@@ -182,17 +201,38 @@ class SettlementService:
         await self.bus.publish(
             event_type="MARKET_CLOSED",
             source="settlement",
-            deduplication_key=f"market_closed:{day}",
+            deduplication_key=f"{book}:market_closed:{day}",
             requires_risk_review=False,
             importance="medium",
+            payload={"venue": book},
         )
         await self.session.flush()
         return {
             "settlement_id": str(settlement.id),
             "session_date": day,
+            "venue": book,
             "reconciliation": recon,
             "pnl": pnl_rows,
             "overnight_positions": settlement.overnight_positions,
             "broker_orders_submitted": False,
             "upserted": existing is not None,
         }
+
+    async def _existing_settlement(
+        self, day: str, book: str
+    ) -> PostmarketSettlement | None:
+        rows = list(
+            (
+                await self.session.execute(
+                    select(PostmarketSettlement).where(PostmarketSettlement.session_date == day)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            payload = row.payload if isinstance(row.payload, dict) else {}
+            row_venue = str(payload.get("venue") or "US").upper()
+            if row_venue == book:
+                return row
+        return None

@@ -230,6 +230,36 @@ async def test_closing_forces_scalp_even_if_overnight_flag(session: AsyncSession
 
 
 @pytest.mark.asyncio
+async def test_closing_prefers_lifecycle_exit_policy_horizon(session: AsyncSession) -> None:
+    """Watchlist says medium; lifecycle scalp must still flatten at close."""
+    settings = Settings(
+        intraday_operation_mode="MANUAL_APPROVAL",
+        default_closing_policy="CLOSE_INTRADAY_ONLY",
+        auto_execute_force_close=False,
+    )
+    session.add(
+        WatchlistSymbol(symbol="QQQ", horizon="medium", status="active", priority=80, thesis="t")
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="QQQ",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=400,
+            current_price=400,
+            overnight_allowed=True,
+            exit_policy={"horizon": "scalp"},
+        )
+    )
+    await session.flush()
+    closing = await ClosingService(session, settings=settings).run_closing()
+    plan = next(p for p in closing["plans"] if p["symbol"] == "QQQ")
+    assert plan["action"] == "close"
+    assert plan["is_intraday_only"] is True
+
+
+@pytest.mark.asyncio
 async def test_closing_creates_order_intent(session: AsyncSession) -> None:
     from sqlalchemy import select
 

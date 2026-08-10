@@ -52,7 +52,7 @@ class ClosingService:
             .scalars()
             .all()
         )
-        horizons = await self._watchlist_horizons([p.symbol for p in lifecycles])
+        horizons = await self._horizons_for_lifecycles(lifecycles)
         positions = []
         intraday_symbols: set[str] = set()
         for p in lifecycles:
@@ -282,16 +282,33 @@ class ClosingService:
         )
         return len(orders)
 
-    async def _watchlist_horizons(self, symbols: list[str]) -> dict[str, str]:
+    async def _horizons_for_lifecycles(
+        self, lifecycles: list[PositionLifecycle]
+    ) -> dict[str, str]:
+        """Prefer lifecycle exit_policy.horizon; fall back to watchlist."""
         from app.models import WatchlistSymbol
 
-        syms = {s.upper() for s in symbols if s}
-        if not syms:
-            return {}
-        rows = (
-            await self.session.execute(select(WatchlistSymbol).where(WatchlistSymbol.symbol.in_(syms)))
-        ).scalars().all()
-        return {r.symbol.upper(): str(r.horizon) for r in rows}
+        out: dict[str, str] = {}
+        need_watch: set[str] = set()
+        for lc in lifecycles:
+            sym = str(lc.symbol or "").upper()
+            if not sym:
+                continue
+            policy = lc.exit_policy if isinstance(lc.exit_policy, dict) else {}
+            hz = str(policy.get("horizon") or "").strip().lower()
+            if hz:
+                out[sym] = hz
+            else:
+                need_watch.add(sym)
+        if need_watch:
+            rows = (
+                await self.session.execute(
+                    select(WatchlistSymbol).where(WatchlistSymbol.symbol.in_(need_watch))
+                )
+            ).scalars().all()
+            for r in rows:
+                out.setdefault(r.symbol.upper(), str(r.horizon))
+        return out
 
     async def overnight_review(
         self,
@@ -311,7 +328,7 @@ class ClosingService:
             .all()
         )
         results: list[dict[str, Any]] = []
-        horizons = await self._watchlist_horizons([lc.symbol for lc in lifecycles])
+        horizons = await self._horizons_for_lifecycles(lifecycles)
         for lc in lifecycles:
             status = "OVERNIGHT_APPROVED"
             reasons: list[str] = []

@@ -49,6 +49,46 @@ class IntradayEventBus:
         self._reanalysis_times: list[datetime] = []
         self._symbol_reanalysis: dict[str, list[datetime]] = {}
 
+    @staticmethod
+    def _parse_ts(raw: Any) -> datetime | None:
+        if raw is None:
+            return None
+        if isinstance(raw, datetime):
+            return raw if raw.tzinfo else raw.replace(tzinfo=UTC)
+        try:
+            ts = datetime.fromisoformat(str(raw))
+        except ValueError:
+            return None
+        return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
+
+    def load_reanalysis_state(self, raw: dict[str, Any] | None) -> None:
+        """Hydrate cooldown state from DailyWorkflowRun.metadata_json['reanalysis']."""
+        data = raw if isinstance(raw, dict) else {}
+        globals_raw = data.get("global") or []
+        by_sym_raw = data.get("by_symbol") or {}
+        self._reanalysis_times = [
+            t for t in (self._parse_ts(x) for x in globals_raw) if t is not None
+        ]
+        symbol_map: dict[str, list[datetime]] = {}
+        if isinstance(by_sym_raw, dict):
+            for sym, times in by_sym_raw.items():
+                parsed = [t for t in (self._parse_ts(x) for x in (times or [])) if t is not None]
+                if parsed:
+                    symbol_map[str(sym).upper()] = parsed
+        self._symbol_reanalysis = symbol_map
+
+    def dump_reanalysis_state(self) -> dict[str, Any]:
+        """Serialize cooldown state for persistence on the venue DailyWorkflowRun."""
+        # Keep a bounded tail so metadata_json does not grow without limit.
+        keep = max(20, int(self.settings.max_intraday_reanalyses) * 3)
+        return {
+            "global": [t.isoformat() for t in self._reanalysis_times[-keep:]],
+            "by_symbol": {
+                sym: [t.isoformat() for t in times[-keep:]]
+                for sym, times in self._symbol_reanalysis.items()
+            },
+        }
+
     async def publish(
         self,
         *,

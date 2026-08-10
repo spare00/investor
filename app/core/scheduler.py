@@ -119,19 +119,35 @@ def _coalesce_due_jobs(due: list[Any]) -> list[Any]:
     return out
 
 
+# Skip redundant prepare work between dispatch ticks (prepare itself is idempotent).
+_PREPARE_CACHE: dict[str, datetime] = {}
+_PREPARE_TTL_SECONDS = 600
+
+
 async def _ensure_sessions_prepared(session: Any, settings: Settings) -> list[str]:
-    """Idempotently prepare today + next trading day per enabled venue."""
+    """Idempotently prepare today + next trading day per enabled venue.
+
+    Throttled per venue/day label so the ~60s dispatch poll does not re-acquire
+    prepare leases when nothing changed. A new calendar day always misses cache.
+    """
     from app.market.venues import enabled_venues
     from app.workflow.daily import DailyWorkflowService
 
+    now = datetime.now(UTC)
     prepared: list[str] = []
+    live_labels: set[str] = set()
     for venue in enabled_venues(settings):
         svc = DailyWorkflowService(session, settings=settings, owner="scheduler", venue=venue)
         today = datetime.now(UTC).astimezone(svc.calendar.market_tz).date()
         targets = sorted({today, svc.calendar.get_next_trading_day(today)})
         for day in targets:
-            result = await svc.prepare(session_date=day.isoformat())
             label = f"{venue.value}:{day.isoformat()}"
+            live_labels.add(label)
+            last = _PREPARE_CACHE.get(label)
+            if last is not None and (now - last).total_seconds() < _PREPARE_TTL_SECONDS:
+                continue
+            result = await svc.prepare(session_date=day.isoformat())
+            _PREPARE_CACHE[label] = now
             prepared.append(label)
             logger.info(
                 "scheduler_session_prepared",
@@ -139,6 +155,9 @@ async def _ensure_sessions_prepared(session: Any, settings: Settings) -> list[st
                 session_date=day.isoformat(),
                 note=result.get("note") or result.get("current_state"),
             )
+    # Drop labels for days no longer in the rolling window.
+    for stale in [k for k in _PREPARE_CACHE if k not in live_labels]:
+        _PREPARE_CACHE.pop(stale, None)
     return prepared
 
 
