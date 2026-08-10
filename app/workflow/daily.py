@@ -961,7 +961,6 @@ class DailyWorkflowService:
             from datetime import date as date_cls
 
             from app.alerts.ops import emit_overnight_review_alert
-            from app.market.calendar import MarketCalendarService
 
             session_day = date_cls.fromisoformat(run.session_date)
             holiday_gap = self.calendar.next_session_has_holiday_gap(session_day)
@@ -1052,7 +1051,6 @@ class DailyWorkflowService:
         try:
             from app.alerts.ops import emit_overnight_review_alert
             from app.intraday.closing import ClosingService
-            from app.market.calendar import MarketCalendarService
             from datetime import date as date_cls
 
             session_day = date_cls.fromisoformat(run.session_date)
