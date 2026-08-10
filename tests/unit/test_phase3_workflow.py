@@ -525,6 +525,29 @@ def test_coalesce_keeps_latest_intraday_only() -> None:
     assert jobs[3].status == "planned"
 
 
+def test_coalesce_before_limit_keeps_closing_with_dense_intraday() -> None:
+    """Dispatch must coalesce then slice — not slice then coalesce."""
+    from app.core.scheduler import _coalesce_due_jobs
+
+    class Job:
+        def __init__(self, key: str, planned: datetime) -> None:
+            self.job_key = key
+            self.planned_at = planned
+            self.status = "planned"
+            self.error = None
+            self.completed_at = None
+
+    t0 = datetime(2026, 8, 3, 14, 0, tzinfo=UTC)
+    # 25 overdue intraday evals + one closing later — pre-slice[:20] would drop closing.
+    jobs = [Job(f"US:intraday_eval_{i}", t0 + timedelta(minutes=i)) for i in range(25)]
+    closing = Job("US:closing_window", t0 + timedelta(hours=6))
+    jobs.append(closing)
+    coalesced = _coalesce_due_jobs(list(jobs))
+    due = coalesced[:20]
+    assert any(j.job_key == "US:closing_window" for j in due)
+    assert sum(1 for j in due if "intraday_eval" in j.job_key) == 1
+
+
 @pytest.mark.asyncio
 async def test_scheduler_bootstrap_prepares_sessions(session: AsyncSession) -> None:
     from app.core.scheduler import _ensure_sessions_prepared

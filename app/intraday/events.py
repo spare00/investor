@@ -179,20 +179,35 @@ class IntradayEventBus:
             .all()
         )
 
-    async def list_pending_actionable(self, *, limit: int = 40) -> list[IntradayEvent]:
-        """NEW events that should escalate to risk review / CIO reanalysis."""
-        rows = await self.list_events(limit=limit)
+    async def list_pending_actionable(
+        self, *, limit: int = 40, venue: str | None = None
+    ) -> list[IntradayEvent]:
+        """NEW events that should escalate to risk review / CIO reanalysis.
+
+        When ``venue`` is set, symbol-tagged events for another book are skipped.
+        Untagged (macro) events remain multi-book, matching news_bridge.
+        """
+        rows = await self.list_events(limit=max(limit * 3, 40))
+        book = str(venue).upper() if venue else None
         out: list[IntradayEvent] = []
         for ev in rows:
             if ev.status != "NEW":
                 continue
-            if (
+            if not (
                 ev.requires_analysis
                 or ev.requires_execution_review
                 or ev.requires_risk_review
                 or (ev.importance or "").lower() in {"high", "critical"}
             ):
-                out.append(ev)
+                continue
+            if book:
+                payload = ev.payload if isinstance(ev.payload, dict) else {}
+                ev_venue = payload.get("venue")
+                if ev_venue and str(ev_venue).upper() != book:
+                    continue
+            out.append(ev)
+            if len(out) >= limit:
+                break
         return out
 
     async def mark(self, event_id: UUID, status: str) -> IntradayEvent | None:

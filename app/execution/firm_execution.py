@@ -199,6 +199,30 @@ async def materialize_cio_decision(
                 notes.append("positions_synced")
             except Exception as exc:  # noqa: BLE001
                 notes.append(f"position_sync_failed:{exc}")
+                logger.error(
+                    "firm_position_sync_failed",
+                    workflow_id=str(workflow_id) if workflow_id else None,
+                    error=str(exc)[:240],
+                )
+                armed = bool(cfg.enable_broker_orders or cfg.enable_automated_execution)
+                if armed:
+                    notes.append("orders_blocked_position_sync_failed")
+                    ORDERS_BLOCKED.labels(reason="position_sync_failed").inc()
+                    return {
+                        "validation_approved": validation.approved,
+                        "validation_rejections": list(validation.rejections)
+                        + ["position_sync_failed"],
+                        "intent_ids": intent_ids,
+                        "intent_count": len(intent_ids),
+                        "broker_orders_submitted": orders_submitted > 0,
+                        "orders_submitted": orders_submitted,
+                        "paper_auto_submit_allowed": paper_auto_submit_allowed(cfg),
+                        "notes": notes,
+                        "actor": "cio_bottom_up",
+                        "live_trading_blocked": True,
+                        "prices_used": prices,
+                        "position_sync_failed": True,
+                    }
         except Exception as exc:  # noqa: BLE001
             notes.append(f"order_submit_failed:{exc}")
             logger.exception("firm_order_submit_failed", workflow_id=str(workflow_id))

@@ -52,6 +52,7 @@ async def fetch_live_last_prices(
     symbols: Iterable[str],
     *,
     settings: Settings | None = None,
+    con_ids: dict[str, int] | None = None,
 ) -> dict[str, float]:
     """Fetch current last prints from the configured live market-data provider."""
     from app.collectors.market_data import get_market_data_provider
@@ -60,7 +61,8 @@ async def fetch_live_last_prices(
     syms = sorted({str(s).upper() for s in symbols if s})
     if not syms:
         return {}
-    quotes = await get_market_data_provider().fetch_quotes(syms)
+    provider = get_market_data_provider()
+    quotes = await provider.fetch_quotes(syms, con_ids=con_ids)
     out: dict[str, float] = {}
     for q in quotes:
         if q.provider and is_simulation_price_provider(q.provider):

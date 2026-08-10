@@ -237,3 +237,53 @@ async def test_monitor_emergency_emits_alert(session: AsyncSession, monkeypatch:
     hit = next(r for r in rows if r["symbol"] == "QQQ")
     assert hit["monitor"]["verdict"] == "EMERGENCY_ACTION_REQUIRED"
     assert any(a.code == "trading.monitor_emergency" for a in provider.sent)
+
+
+@pytest.mark.asyncio
+async def test_monitor_all_scopes_to_venue(session: AsyncSession) -> None:
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        broker_environment="paper",
+        enable_intraday_monitoring=True,
+        enable_broker_orders=False,
+        auto_execute_hard_stops=False,
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="SPY",
+            status="OPEN",
+            quantity=1,
+            average_entry_price=100,
+            current_price=100,
+            stop_price=95,
+            overnight_allowed=True,
+            venue="US",
+            exit_policy={},
+        )
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="BHP",
+            status="OPEN",
+            quantity=1,
+            average_entry_price=40,
+            current_price=40,
+            stop_price=35,
+            overnight_allowed=True,
+            venue="AU",
+            con_id=999,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+    us_rows = await IntradayService(session, settings=settings).monitor_all(
+        prices={"SPY": 94.0, "BHP": 34.0}, venue="US"
+    )
+    assert [r["symbol"] for r in us_rows if not r.get("skipped")] == ["SPY"]
+    au_rows = await IntradayService(session, settings=settings).monitor_all(
+        prices={"SPY": 94.0, "BHP": 34.0}, venue="AU"
+    )
+    assert [r["symbol"] for r in au_rows if not r.get("skipped")] == ["BHP"]

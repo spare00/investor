@@ -195,7 +195,8 @@ async def _dispatch_due_jobs() -> None:
                     planned = planned.replace(tzinfo=UTC)
                 return planned <= now
 
-            due = _coalesce_due_jobs([j for j in candidates if _due(j.planned_at)][:20])
+            due_all = [j for j in candidates if _due(j.planned_at)]
+            due = _coalesce_due_jobs(due_all)[:20]
             services: dict[str, Any] = {}
             for job in due:
                 if job.status != "planned":

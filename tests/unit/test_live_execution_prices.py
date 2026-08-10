@@ -13,6 +13,7 @@ from app.collectors.market_data import (
 )
 from app.core.config import Settings
 from app.market.live_prices import (
+    fetch_live_last_prices,
     looks_like_stub_last,
     requires_live_market_prices,
     resolve_execution_prices,
@@ -167,3 +168,43 @@ def test_get_market_data_provider_forces_ibkr_when_broker_is_ibkr() -> None:
     ):
         provider = get_market_data_provider("stub")
     assert isinstance(provider, IbkrMarketDataProvider)
+
+
+@pytest.mark.asyncio
+async def test_fetch_live_last_prices_forwards_con_ids() -> None:
+    settings = Settings(
+        enable_broker_orders=True,
+        enable_external_data=True,
+        enable_market_data_collection=True,
+        market_data_provider="stub",
+        broker_provider="mock",
+    )
+
+    class _Prov:
+        name = "ibkr"
+
+        async def fetch_quotes(self, symbols, *, con_ids=None):  # noqa: ANN001
+            self.seen = {"symbols": symbols, "con_ids": con_ids}
+            from datetime import UTC, datetime
+
+            from app.collectors.base import RawMarketQuote
+
+            return [
+                RawMarketQuote(
+                    symbol="BHP",
+                    as_of=datetime.now(UTC),
+                    provider="ibkr",
+                    last=41.25,
+                )
+            ]
+
+    prov = _Prov()
+    with patch(
+        "app.collectors.market_data.get_market_data_provider",
+        return_value=prov,
+    ):
+        prices = await fetch_live_last_prices(
+            ["BHP"], settings=settings, con_ids={"BHP": 42}
+        )
+    assert prices == {"BHP": 41.25}
+    assert prov.seen["con_ids"] == {"BHP": 42}

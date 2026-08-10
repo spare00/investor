@@ -323,3 +323,64 @@ async def test_daily_start_closing_materializes_intents(session: AsyncSession) -
     assert closing["intent_ids"]
     assert closing["broker_orders_submitted"] is False
     assert any(p.get("action") == "close" for p in (closing.get("plans") or []))
+
+
+@pytest.mark.asyncio
+async def test_closing_scopes_to_venue_lifecycles(session: AsyncSession) -> None:
+    """AU closing must not flatten overnight US lifecycles."""
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        broker_environment="paper",
+        enable_broker_orders=False,
+        auto_execute_force_close=False,
+        intraday_operation_mode="PAPER_AUTOMATED",
+        default_closing_policy="CLOSE_INTRADAY_ONLY",
+        enabled_venues=["US", "AU"],
+        primary_venue="US",
+    )
+    session.add(
+        WatchlistSymbol(symbol="BHP", horizon="day", status="active", priority=80, thesis="au")
+    )
+    session.add(
+        WatchlistSymbol(symbol="SPY", horizon="day", status="active", priority=80, thesis="us")
+    )
+    us_id = uuid4()
+    au_id = uuid4()
+    session.add(
+        PositionLifecycle(
+            id=us_id,
+            symbol="SPY",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=500,
+            current_price=505,
+            overnight_allowed=False,
+            venue="US",
+            exit_policy={},
+        )
+    )
+    session.add(
+        PositionLifecycle(
+            id=au_id,
+            symbol="BHP",
+            status="OPEN",
+            quantity=5,
+            average_entry_price=40,
+            current_price=41,
+            overnight_allowed=False,
+            venue="AU",
+            con_id=12345,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+
+    closing = await ClosingService(session, settings=settings, venue="AU").run_closing()
+    plans = closing.get("plans") or []
+    assert any(p.get("symbol") == "BHP" for p in plans)
+    assert not any(p.get("symbol") == "SPY" for p in plans)
+    us = await session.get(PositionLifecycle, us_id)
+    au = await session.get(PositionLifecycle, au_id)
+    assert us is not None and us.status == "OPEN"
+    assert au is not None and au.status in {"PENDING_CLOSE", "REDUCING", "OPEN"}

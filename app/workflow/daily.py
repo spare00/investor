@@ -750,28 +750,35 @@ class DailyWorkflowService:
 
                     if requires_live_market_prices(self.settings):
                         book = self.venue.value
-                        open_syms = [
-                            p.symbol
-                            for p in (
+                        open_rows = list(
+                            (
                                 await self.session.execute(
                                     sa_select(PositionLifecycle).where(
                                         PositionLifecycle.status.in_(
                                             ["OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"]
-                                        )
+                                        ),
+                                        PositionLifecycle.venue == book,
                                     )
                                 )
                             )
                             .scalars()
                             .all()
-                            if (getattr(p, "venue", None) or "US").upper() == book
-                        ]
+                        )
+                        open_syms = [p.symbol for p in open_rows]
+                        con_ids = {
+                            p.symbol.upper(): int(p.con_id)
+                            for p in open_rows
+                            if getattr(p, "con_id", None)
+                        }
                         if open_syms:
                             mon_prices = await fetch_live_last_prices(
-                                open_syms, settings=self.settings
+                                open_syms, settings=self.settings, con_ids=con_ids or None
                             )
                 except Exception as exc:  # noqa: BLE001
                     meta["last_monitor_price_error"] = str(exc)[:200]
-                mon_rows = await intra.monitor_all(prices=mon_prices or None)
+                mon_rows = await intra.monitor_all(
+                    prices=mon_prices or None, venue=self.venue.value
+                )
                 escalate_verdicts = {
                     EXIT_INTENT_REQUIRED,
                     ANALYSIS_REQUIRED,
@@ -787,7 +794,9 @@ class DailyWorkflowService:
                         or (r.get("stop") or {}).get("triggered")
                     )
                 ]
-                pending = await intra.bus.list_pending_actionable(limit=40)
+                pending = await intra.bus.list_pending_actionable(
+                    limit=40, venue=self.venue.value
+                )
                 trigger_event_ids = [str(e.id) for e in pending]
                 monitor_summary = {
                     "checked": len([r for r in mon_rows if not r.get("skipped")]),
@@ -810,7 +819,7 @@ class DailyWorkflowService:
 
                 pending = await IntradayEventBus(
                     self.session, settings=self.settings
-                ).list_pending_actionable(limit=40)
+                ).list_pending_actionable(limit=40, venue=self.venue.value)
                 trigger_event_ids = [str(e.id) for e in pending]
             except Exception as exc:  # noqa: BLE001
                 meta["last_event_drain_error"] = str(exc)[:200]
@@ -846,7 +855,8 @@ class DailyWorkflowService:
                     for p in (
                         await self.session.execute(
                             sa_select(PositionLifecycle).where(
-                                PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"])
+                                PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"]),
+                                PositionLifecycle.venue == self.venue.value,
                             )
                         )
                     )
@@ -941,7 +951,7 @@ class DailyWorkflowService:
                 from app.intraday.closing import ClosingService
 
                 force_close_result = await ClosingService(
-                    self.session, settings=self.settings
+                    self.session, settings=self.settings, venue=self.venue.value
                 ).run_closing(in_closing_window=True)
                 meta["last_force_close"] = {
                     "intent_ids": force_close_result.get("intent_ids") or [],
@@ -1006,9 +1016,9 @@ class DailyWorkflowService:
         # Horizon-aware force flatten + OrderIntents (optional paper submit).
         from app.intraday.closing import ClosingService
 
-        closing_svc = await ClosingService(self.session, settings=self.settings).run_closing(
-            in_closing_window=True
-        )
+        closing_svc = await ClosingService(
+            self.session, settings=self.settings, venue=self.venue.value
+        ).run_closing(in_closing_window=True)
         overnight_payload: dict[str, Any] = {"reviews": []}
         try:
             from datetime import date as date_cls
@@ -1018,7 +1028,7 @@ class DailyWorkflowService:
             session_day = date_cls.fromisoformat(run.session_date)
             holiday_gap = self.calendar.next_session_has_holiday_gap(session_day)
             overnight_payload = await ClosingService(
-                self.session, settings=self.settings
+                self.session, settings=self.settings, venue=self.venue.value
             ).overnight_review(next_session_holiday=holiday_gap)
             overnight_payload["next_session_holiday"] = holiday_gap
             await emit_overnight_review_alert(
@@ -1110,9 +1120,9 @@ class DailyWorkflowService:
             holiday_gap = self.calendar.next_session_has_holiday_gap(
                 session_day
             )
-            overnight = await ClosingService(self.session, settings=self.settings).overnight_review(
-                next_session_holiday=holiday_gap
-            )
+            overnight = await ClosingService(
+                self.session, settings=self.settings, venue=self.venue.value
+            ).overnight_review(next_session_holiday=holiday_gap)
             overnight["next_session_holiday"] = holiday_gap
             review["overnight_review"] = overnight
             await emit_overnight_review_alert(
@@ -1150,7 +1160,8 @@ class DailyWorkflowService:
                 (
                     await self.session.execute(
                         sa_select(PositionLifecycle).where(
-                            PositionLifecycle.status.in_(["CLOSED", "PENDING_CLOSE"])
+                            PositionLifecycle.status.in_(["CLOSED", "PENDING_CLOSE"]),
+                            PositionLifecycle.venue == self.venue.value,
                         )
                     )
                 )
@@ -1334,13 +1345,13 @@ class DailyWorkflowService:
                 for p in (
                     await self.session.execute(
                         sa_select(PositionLifecycle).where(
-                            PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"])
+                            PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"]),
+                            PositionLifecycle.venue == book,
                         )
                     )
                 )
                 .scalars()
                 .all()
-                if (getattr(p, "venue", None) or "US").upper() == book
             ]
             # Cadence follows open books when invested; otherwise focus/entry set —
             # not the entire watchlist (one scalp name must not force dense ticks

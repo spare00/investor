@@ -40,10 +40,11 @@ class StubMarketDataProvider:
         self._quotes = quotes or _STUB_LAST
 
     async def fetch_quotes(
-        self, symbols: list[str], *, allow_stub: bool = False
+        self, symbols: list[str], *, allow_stub: bool = False, con_ids: dict[str, int] | None = None
     ) -> list[RawMarketQuote]:
         from app.market.live_prices import requires_live_market_prices
 
+        _ = con_ids
         if requires_live_market_prices() and not allow_stub:
             logger.error(
                 "stub_quotes_blocked",
@@ -85,8 +86,11 @@ class AlpacaMarketDataProvider:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
 
-    async def fetch_quotes(self, symbols: list[str]) -> list[RawMarketQuote]:
+    async def fetch_quotes(
+        self, symbols: list[str], *, con_ids: dict[str, int] | None = None
+    ) -> list[RawMarketQuote]:
         settings = self.settings
+        _ = con_ids
         if not settings.enable_external_data or not settings.enable_market_data_collection:
             logger.warning("alpaca_market_disabled", action="empty")
             return []

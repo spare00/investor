@@ -187,3 +187,49 @@ async def test_evaluate_intraday_no_false_news_escalate(session: AsyncSession) -
     intra = out["intraday"]
     assert (intra.get("news") or {}).get("published", 0) == 0
     assert intra.get("trigger") == "interval"
+
+
+@pytest.mark.asyncio
+async def test_list_pending_actionable_filters_other_venue(session: AsyncSession) -> None:
+    from app.intraday.events import IntradayEventBus
+
+    bus = IntradayEventBus(session, settings=get_settings())
+    await bus.publish(
+        event_type="HIGH_IMPORTANCE_NEWS",
+        source="test",
+        symbols=["BHP"],
+        importance="high",
+        deduplication_key="au-news-1",
+        requires_analysis=True,
+        payload={"venue": "AU"},
+    )
+    await bus.publish(
+        event_type="HIGH_IMPORTANCE_NEWS",
+        source="test",
+        symbols=["SPY"],
+        importance="high",
+        deduplication_key="us-news-1",
+        requires_analysis=True,
+        payload={"venue": "US"},
+    )
+    await bus.publish(
+        event_type="HIGH_IMPORTANCE_NEWS",
+        source="test",
+        symbols=[],
+        importance="critical",
+        deduplication_key="macro-1",
+        requires_analysis=True,
+        payload={},  # untagged → multi-book
+    )
+    await session.flush()
+
+    us = await bus.list_pending_actionable(venue="US")
+    au = await bus.list_pending_actionable(venue="AU")
+    us_keys = {e.deduplication_key for e in us}
+    au_keys = {e.deduplication_key for e in au}
+    assert "us-news-1" in us_keys
+    assert "au-news-1" not in us_keys
+    assert "macro-1" in us_keys
+    assert "au-news-1" in au_keys
+    assert "us-news-1" not in au_keys
+    assert "macro-1" in au_keys

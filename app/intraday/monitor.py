@@ -42,17 +42,16 @@ class PositionMonitor:
         self.settings = settings or get_settings()
         self.bus = IntradayEventBus(session, settings=self.settings)
 
-    async def list_lifecycles(self) -> list[PositionLifecycle]:
-        return list(
-            (
-                await self.session.execute(
-                    select(PositionLifecycle).where(
-                        PositionLifecycle.status.in_(
-                            ["PENDING_OPEN", "OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"]
-                        )
-                    )
-                )
+    async def list_lifecycles(self, *, venue: str | None = None) -> list[PositionLifecycle]:
+        clauses = [
+            PositionLifecycle.status.in_(
+                ["PENDING_OPEN", "OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"]
             )
+        ]
+        if venue:
+            clauses.append(PositionLifecycle.venue == str(venue).upper())
+        return list(
+            (await self.session.execute(select(PositionLifecycle).where(*clauses)))
             .scalars()
             .all()
         )
@@ -109,7 +108,11 @@ class PositionMonitor:
                     requires_execution_review=True,
                     bypass_cooldown=True,
                     importance="critical",
-                    payload={"stop": stop, "price": price},
+                    payload={
+                        "stop": stop,
+                        "price": price,
+                        "venue": getattr(lifecycle, "venue", None) or "US",
+                    },
                 )
             else:
                 dist = (price - float(stop)) / price * 100.0
@@ -131,7 +134,11 @@ class PositionMonitor:
                 requires_analysis=True,
                 requires_execution_review=True,
                 importance="high",
-                payload={"take_profit": tp, "price": price},
+                payload={
+                    "take_profit": tp,
+                    "price": price,
+                    "venue": getattr(lifecycle, "venue", None) or "US",
+                },
             )
 
         # Max holding

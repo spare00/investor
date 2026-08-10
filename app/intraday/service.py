@@ -70,7 +70,12 @@ class IntradayService:
             "auto_execute_hard_stops": self.settings.auto_execute_hard_stops,
         }
 
-    async def monitor_all(self, prices: dict[str, float] | None = None) -> list[dict[str, Any]]:
+    async def monitor_all(
+        self,
+        prices: dict[str, float] | None = None,
+        *,
+        venue: str | None = None,
+    ) -> list[dict[str, Any]]:
         if not self.settings.enable_intraday_monitoring:
             return [{"skipped": True, "reason": "enable_intraday_monitoring_false"}]
         prices = prices or {}
@@ -84,8 +89,9 @@ class IntradayService:
             self.settings, emergency=self.controls.snapshot().state.value == "emergency_stop"
         )
         caps = ModeCapabilities(mode)
+        book = str(venue).upper() if venue else None
         out: list[dict[str, Any]] = []
-        for lc in await self.monitor.list_lifecycles():
+        for lc in await self.monitor.list_lifecycles(venue=book):
             result = await self.monitor.evaluate(
                 lc,
                 current_price=prices.get(lc.symbol),
@@ -192,7 +198,9 @@ class IntradayService:
                     idempotency_key=key,
                     decision_id=str(lc.decision_id) if lc.decision_id else str(uuid4()),
                     thesis="hard_stop",
-                    venue=venue_for_symbol(lc.symbol, self.settings).value,
+                    venue=getattr(lc, "venue", None)
+                    or venue_for_symbol(lc.symbol, self.settings).value,
+                    con_id=int(getattr(lc, "con_id", 0) or 0) or None,
                 )
             ],
         )

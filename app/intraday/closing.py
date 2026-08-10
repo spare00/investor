@@ -18,11 +18,26 @@ from sqlalchemy import select
 
 
 class ClosingService:
-    def __init__(self, session: AsyncSession, *, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        settings: Settings | None = None,
+        venue: str | None = None,
+    ) -> None:
+        from app.market.venues import resolve_venue
+
         self.session = session
         self.settings = settings or get_settings()
+        self.venue = resolve_venue(self.settings, venue=venue)
         self.bus = IntradayEventBus(session, settings=self.settings)
         self.engine = ClosingPolicyEngine()
+
+    def _open_lifecycle_clause(self) -> tuple[Any, ...]:
+        return (
+            PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"]),
+            PositionLifecycle.venue == self.venue.value,
+        )
 
     async def run_closing(self, *, in_closing_window: bool = True) -> dict[str, Any]:
         mode = resolve_mode(self.settings)
@@ -31,9 +46,7 @@ class ClosingService:
         lifecycles = list(
             (
                 await self.session.execute(
-                    select(PositionLifecycle).where(
-                        PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"])
-                    )
+                    select(PositionLifecycle).where(*self._open_lifecycle_clause())
                 )
             )
             .scalars()
@@ -64,13 +77,15 @@ class ClosingService:
         )
         notes = list(decision.notes)
         if in_closing_window:
+            session_day = datetime.now(UTC).date().isoformat()
             await self.bus.publish(
                 event_type="CLOSING_WINDOW_ENTERED",
                 source="closing_service",
-                deduplication_key=f"closing:{datetime.now(UTC).date().isoformat()}",
+                deduplication_key=f"{self.venue.value}:closing:{session_day}",
                 requires_risk_review=True,
                 importance="high",
                 bypass_cooldown=True,
+                payload={"venue": self.venue.value},
             )
             notes.append("new_entries_blocked" if not self.settings.allow_new_positions_in_closing_window else "entries_allowed")
             if self.settings.cancel_entry_orders_at_closing_window:
@@ -255,6 +270,8 @@ class ClosingService:
                     idempotency_key=key,
                     decision_id=str(lc.decision_id) if lc.decision_id else str(uuid4()),
                     thesis=f"force_close:{plan.rationale}",
+                    venue=getattr(lc, "venue", None) or self.venue.value,
+                    con_id=int(getattr(lc, "con_id", 0) or 0) or None,
                 )
             )
         if not intents:
@@ -287,9 +304,7 @@ class ClosingService:
         lifecycles = list(
             (
                 await self.session.execute(
-                    select(PositionLifecycle).where(
-                        PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"])
-                    )
+                    select(PositionLifecycle).where(*self._open_lifecycle_clause())
                 )
             )
             .scalars()

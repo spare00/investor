@@ -105,7 +105,9 @@ class NewsProvider(Protocol):
 class MarketDataProvider(Protocol):
     name: str
 
-    async def fetch_quotes(self, symbols: list[str]) -> list[RawMarketQuote]: ...
+    async def fetch_quotes(
+        self, symbols: list[str], *, con_ids: dict[str, int] | None = None
+    ) -> list[RawMarketQuote]: ...
 
 
 class MacroDataProvider(Protocol):
