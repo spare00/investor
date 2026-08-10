@@ -21,7 +21,11 @@ NOW = datetime(2026, 8, 6, 16, 0, tzinfo=UTC)
 async def test_risk_officer_hard_vetoes_non_live_prices() -> None:
     agent = RiskManagerAgent(
         llm=StubLLMClient(),
-        settings=Settings(enable_broker_orders=True, enable_external_data=True),
+        settings=Settings(
+            enable_broker_orders=True,
+            enable_external_data=True,
+            broker_provider="ibkr",
+        ),
     )
     out = await agent.run(
         RiskManagerInput(
@@ -71,7 +75,11 @@ def test_assess_collection_price_integrity_flags_stub() -> None:
     live_req, feed_live, providers, notes = assess_collection_price_integrity(
         providers=["stub"],
         market_count=3,
-        settings=Settings(enable_broker_orders=True, enable_external_data=True),
+        settings=Settings(
+            enable_broker_orders=True,
+            enable_external_data=True,
+            broker_provider="ibkr",
+        ),
     )
     assert live_req is True
     assert feed_live is False

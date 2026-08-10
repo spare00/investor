@@ -57,6 +57,7 @@ async def test_resolve_execution_prices_reuses_non_stub_candidates() -> None:
         enable_broker_orders=True,
         enable_external_data=True,
         enable_market_data_collection=True,
+        broker_provider="ibkr",
     )
     with patch(
         "app.market.live_prices.fetch_live_last_prices",
@@ -75,7 +76,11 @@ async def test_resolve_execution_prices_reuses_non_stub_candidates() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_execution_prices_skips_fetch_when_candidates_cover() -> None:
-    settings = Settings(enable_broker_orders=True, enable_external_data=True)
+    settings = Settings(
+        enable_broker_orders=True,
+        enable_external_data=True,
+        broker_provider="ibkr",
+    )
     with patch(
         "app.market.live_prices.fetch_live_last_prices",
         new=AsyncMock(return_value={"AAPL": 999.0}),
@@ -113,7 +118,11 @@ async def test_resolve_execution_prices_ignores_stub_candidates_when_live_requir
 
 @pytest.mark.asyncio
 async def test_resolve_execution_prices_fail_closed_when_live_empty() -> None:
-    settings = Settings(enable_broker_orders=True, enable_external_data=True)
+    settings = Settings(
+        enable_broker_orders=True,
+        enable_external_data=True,
+        broker_provider="ibkr",
+    )
     with patch(
         "app.market.live_prices.fetch_live_last_prices",
         new=AsyncMock(return_value={}),

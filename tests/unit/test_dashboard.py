@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -11,9 +12,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.agents.pipeline import AnalysisBundle
-from app.core.database import Base
+from app.core.database import Base, get_db_session
 from app.core.metrics import WORKFLOW_RUNS, metrics_payload
-from app.main import app
+from app.main import app as fastapi_app
 from app.schemas import (
     CIODecision,
     DevilsAdvocateOutput,
@@ -33,7 +34,6 @@ from app.schemas.common import (
     VolatilityState,
 )
 from app.services.audit import AuditService
-from app.services.llm import StubLLMClient
 
 
 NOW = datetime(2026, 8, 3, 16, 0, tzinfo=UTC)
@@ -110,49 +110,84 @@ async def test_audit_persist_and_metrics(session: AsyncSession) -> None:
 
 
 def test_dashboard_routes_exist() -> None:
-    client = TestClient(app)
-    assert client.get("/health").json()["phase"] == 7
-    dash = client.get("/dashboard")
-    assert dash.status_code == 200
-    assert b"Investor Ops" in dash.content
-    assert b"kpi-grid" in dash.content
-    assert b"function kpiFromMetric" in dash.content
-    assert b"Raw JSON" in dash.content
-    assert b"usSessionChip" in dash.content
-    assert b"renderUsSession" in dash.content
-    assert b"renderIntradayCadence" in dash.content
-    assert b"universePaused" in dash.content
-    assert b"refreshStrip" in dash.content
-    assert b"Promise.allSettled" in dash.content
-    summary = client.get("/dashboard/summary")
-    assert summary.status_code == 200
-    body = summary.json()
-    assert "force_close" in body
-    assert "hard_stop" in body
-    assert "monitor_positions" in body
-    assert "pending_events" in body
-    assert "llm_budget" in body
-    assert "latest_settlement" in body
-    assert "latest_reconciliation" in body
-    assert "latest_recovery" in body
-    assert "active_alerts" in body
-    assert "overnight_reviews" in body
-    assert "session_jobs" in body
-    assert "universe" in body
-    assert b"renderMonitor" in dash.content
-    assert b"renderSettlement" in dash.content
-    assert b"renderRecovery" in dash.content
-    assert b"renderActiveAlerts" in dash.content
-    assert b"ackAlert" in dash.content
-    assert b"overnightDetail" in dash.content
-    assert b"renderLlmBudgetPanel" in dash.content
-    assert b"overviewOpsStrip" in dash.content
-    assert b"renderOverviewOpsStrip" in dash.content
-    assert b"agentPerfNote" in dash.content
-    assert b"Horizon book" in dash.content
-    assert b"Startup / Intraday Recovery" in dash.content
-    assert b"Active Alerts" in dash.content
-    assert b"Position Monitor / Hard Stops" in dash.content
-    metrics = client.get("/metrics")
-    assert metrics.status_code == 200
-    assert b"investor_" in metrics.content or b"python_" in metrics.content
+    """HTTP smoke without local Postgres (CI has none on :5432)."""
+    import app.models as _models  # noqa: F401
+    from app.core import database as db
+    from app.core.config import clear_settings_cache
+
+    clear_settings_cache()
+    db._engine = None
+    db._session_factory = None
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _prepare() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_prepare())
+
+    async def _override_db():
+        async with factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    fastapi_app.dependency_overrides[get_db_session] = _override_db
+    try:
+        with TestClient(fastapi_app) as client:
+            assert client.get("/health").json()["phase"] == 7
+            dash = client.get("/dashboard")
+            assert dash.status_code == 200
+            assert b"Investor Ops" in dash.content
+            assert b"kpi-grid" in dash.content
+            assert b"function kpiFromMetric" in dash.content
+            assert b"Raw JSON" in dash.content
+            assert b"usSessionChip" in dash.content
+            assert b"renderUsSession" in dash.content
+            assert b"renderIntradayCadence" in dash.content
+            assert b"universePaused" in dash.content
+            assert b"refreshStrip" in dash.content
+            assert b"Promise.allSettled" in dash.content
+            assert b"renderMonitor" in dash.content
+            assert b"renderSettlement" in dash.content
+            assert b"renderRecovery" in dash.content
+            assert b"renderActiveAlerts" in dash.content
+            assert b"ackAlert" in dash.content
+            assert b"overnightDetail" in dash.content
+            assert b"renderLlmBudgetPanel" in dash.content
+            assert b"overviewOpsStrip" in dash.content
+            assert b"renderOverviewOpsStrip" in dash.content
+            assert b"agentPerfNote" in dash.content
+            assert b"Horizon book" in dash.content
+            assert b"Startup / Intraday Recovery" in dash.content
+            assert b"Active Alerts" in dash.content
+            assert b"Position Monitor / Hard Stops" in dash.content
+            summary = client.get("/dashboard/summary")
+            assert summary.status_code == 200, summary.text
+            body = summary.json()
+            assert "force_close" in body
+            assert "hard_stop" in body
+            assert "monitor_positions" in body
+            assert "pending_events" in body
+            assert "llm_budget" in body
+            assert "latest_settlement" in body
+            assert "latest_reconciliation" in body
+            assert "latest_recovery" in body
+            assert "active_alerts" in body
+            assert "overnight_reviews" in body
+            assert "session_jobs" in body
+            assert "universe" in body
+            metrics = client.get("/metrics")
+            assert metrics.status_code == 200
+            assert b"investor_" in metrics.content or b"python_" in metrics.content
+    finally:
+        fastapi_app.dependency_overrides.pop(get_db_session, None)
+        asyncio.run(engine.dispose())
+        clear_settings_cache()
+        db._engine = None
+        db._session_factory = None
