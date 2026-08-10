@@ -259,11 +259,11 @@ class DataCollectionPipeline:
 
         # Fail closed checks
         reasons: list[str] = []
-        index_quotes = {q.symbol: q for q in quotes if q.symbol in index}
+        index_quotes = {q.symbol: q for q in quotes if q.symbol in us_index}
         if len(index_quotes) < 4:
             reasons.append("missing_core_index_data")
         hard = self.settings.data_quality_hard_fail_threshold
-        for sym in index:
+        for sym in us_index:
             q = index_quotes.get(sym)
             if q and q.quality and q.quality.overall < hard:
                 reasons.append(f"quality_hard_fail:{sym}")
