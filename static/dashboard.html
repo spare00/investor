@@ -312,13 +312,17 @@
     }
     .briefing-summary .briefing-kv {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-      gap: 0.55rem 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
+      gap: 0.75rem 1.15rem;
       margin-top: 0;
+      align-items: start;
     }
-    .briefing-summary .briefing-kv div {
+    .briefing-summary .briefing-kv > div {
       font-size: 0.95rem;
       line-height: 1.35;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
     .briefing-summary .briefing-kv .k {
       display: block;
@@ -328,8 +332,23 @@
       margin: 0 0 0.15rem;
     }
     .briefing-summary .briefing-kv .v {
+      display: block;
       font-size: 1.05rem;
       font-weight: 600;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .briefing-summary .briefing-kv .v.mono {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.82rem;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+    .briefing-summary .span-2 {
+      grid-column: span 2;
+    }
+    @media (max-width: 720px) {
+      .briefing-summary .span-2 { grid-column: span 1; }
     }
     .briefing-materials-title {
       margin: 1.35rem 0 0.35rem;
@@ -2493,8 +2512,8 @@
               <div><span class="k">CIO action</span><span class="v">${pill(esc(cioAction), cioAction === "NO_TRADE" || cioAction === "STAY_CASH" ? "warn" : "good")}</span></div>
               <div><span class="k">Risk verdict</span><span class="v">${riskVerdict !== "—" ? pill(esc(riskVerdict), riskTone) : esc("—")}</span></div>
               <div><span class="k">Intents</span><span class="v">${esc(intentCount)}</span></div>
-              <div><span class="k">No-trade reason</span><span class="v">${esc(noTrade || "n/a")}</span></div>
-              <div><span class="k">Workflow</span><span class="v mono" style="font-size:0.82rem;font-weight:500">${esc(links.premarket_workflow_id || "—")}</span></div>
+              <div class="span-2"><span class="k">No-trade reason</span><span class="v">${esc(noTrade || "n/a")}</span></div>
+              <div class="span-2"><span class="k">Workflow</span><span class="v mono">${esc(links.premarket_workflow_id || "—")}</span></div>
             </div>
           </div>
           ${comp.note ? `<p class="muted">${esc(comp.note)}</p>` : ""}
