@@ -445,7 +445,7 @@
         </table>
       </section>
       <section>
-        <h2>Next Jobs <span class="muted" style="font-weight:500;font-size:0.85rem">(ET)</span></h2>
+        <h2>Next Jobs <span class="muted" style="font-weight:500;font-size:0.85rem">(ET · BNE)</span></h2>
         <ul id="jobs"><li class="muted">None</li></ul>
         <div id="sessionJobs" class="muted" style="margin-top:0.65rem"></div>
       </section>
@@ -788,6 +788,27 @@
 
     function fmtBne(iso, opts) {
       return fmtInTz(iso, TZ_BNE, "BNE", opts);
+    }
+
+    /** Dual wall-clock label: ``08-11 10:30 ET · 08-11 00:30 BNE``. */
+    function fmtDual(iso, opts) {
+      if (!iso) return "";
+      const et = fmtEt(iso, opts);
+      const bne = fmtBne(iso, opts);
+      if (!et) return bne || "";
+      if (!bne || et === bne) return et;
+      return `${et} · ${bne}`;
+    }
+
+    function fmtJobWhen(job) {
+      if (!job) return "n/a";
+      if (job.next_run_et && job.next_run_bne) {
+        return `${fmtEt(job.next_run_et)} · ${fmtBne(job.next_run_bne)}`;
+      }
+      if (job.display?.us_eastern && job.display?.brisbane) {
+        return `${fmtEt(job.display.us_eastern)} · ${fmtBne(job.display.brisbane)}`;
+      }
+      return fmtDual(job.next_run_time || job.planned_at) || "n/a";
     }
 
     /** @deprecated use fmtEt / fmtBne — kept as BNE default so nothing silently shows UTC. */
@@ -1643,16 +1664,19 @@
         el.innerHTML = `<div class="muted">No session job plan (prepare a trading day)</div>`;
         return;
       }
-      const show = rows.slice(0, 12);
+      // Prefer open/running jobs near "now", then a short completed tail.
+      const open = rows.filter((j) => ["planned", "running", "failed"].includes(String(j.status || "").toLowerCase()));
+      const done = rows.filter((j) => !open.includes(j));
+      const show = (open.length ? open : done).slice(0, 14);
       const body = show.map((j) => `<tr>
           <td class="mono">${esc(j.job_key)}</td>
-          <td class="mono">${esc(fmtEt(j.planned_at))}</td>
-          <td>${pill(j.status || "—", j.status === "completed" ? "good" : j.status === "skipped" ? "warn" : "")}</td>
+          <td class="mono">${esc(fmtDual(j.planned_at))}</td>
+          <td>${pill(j.status || "—", j.status === "completed" ? "good" : j.status === "running" ? "warn" : j.status === "skipped" || j.status === "failed" ? "bad" : "")}</td>
           <td class="muted">${j.interval_minutes != null ? esc(j.interval_minutes) + "m" : "—"}</td>
         </tr>`).join("");
       el.innerHTML =
-        `<div class="muted" style="margin-bottom:0.35rem">Session plan (first ${show.length}/${rows.length})</div>` +
-        dataTable(["Job", "Planned", "Status", "Interval"], body, 4);
+        `<div class="muted" style="margin-bottom:0.35rem">Session plan (${open.length ? "upcoming/open" : "recent"} ${show.length}/${rows.length})</div>` +
+        dataTable(["Job", "Planned (ET · BNE)", "Status", "Interval"], body, 4);
     }
 
     async function refreshOverview() {
@@ -1734,7 +1758,11 @@
             : `<div class="muted" style="margin-top:0.4rem">No symbol actions</div>`}`;
       }
       document.getElementById("jobs").innerHTML = (data.next_jobs || []).length
-        ? data.next_jobs.map(j => `<li class="mono">${esc(j.id)}: ${esc(fmtEt(j.next_run_time))}</li>`).join("")
+        ? data.next_jobs.map((j) => {
+            const kind = j.kind === "session" ? "session" : "runtime";
+            const st = j.status ? ` [${j.status}]` : "";
+            return `<li class="mono"><span class="muted">${esc(kind)}</span> ${esc(j.id || j.name)}${esc(st)}: ${esc(fmtJobWhen(j))}</li>`;
+          }).join("")
         : `<li class="muted">No scheduled jobs</li>`;
       document.getElementById("agents").innerHTML = AGENT_ORDER.map(name => {
         const a = (data.agents || {})[name];
@@ -2115,7 +2143,7 @@
         <div class="muted" style="margin:0.65rem 0 0.35rem">LLM · day ${esc(formatTokens(budget.total_tokens))} tok · ${esc(budget.calls ?? 0)} calls · month A$${esc(fmtNum(budget.month_aud_estimate, 2))}</div>
         <div class="muted">Allowlist: ${esc((status.allowlist || []).join(", ") || "—")}</div>
         <ul style="margin-top:0.55rem">${jobs.length
-          ? jobs.map((j) => `<li class="mono">${esc(j.id || j.name)}: ${esc(fmtEt(j.next_run_time) || "n/a")}</li>`).join("")
+          ? jobs.map((j) => `<li class="mono">${esc(j.id || j.name)}: ${esc(fmtJobWhen(j))}</li>`).join("")
           : `<li class="muted">No scheduled jobs</li>`}</ul>
         ${rawBlock(status)}`);
 

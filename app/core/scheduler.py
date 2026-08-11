@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,6 +18,10 @@ logger = get_logger(__name__)
 
 _scheduler: AsyncIOScheduler | None = None
 _job_log: list[dict[str, Any]] = []
+
+# Bound a single due-job action so a wedged IBKR/LLM call cannot pin
+# daily_workflow_dispatch forever (APScheduler max_instances=1).
+_JOB_ACTION_TIMEOUT_SECONDS = 480
 
 
 def get_scheduler() -> AsyncIOScheduler | None:
@@ -243,12 +248,31 @@ async def _dispatch_due_jobs() -> None:
                     job.status = "running"
                     job.started_at = now
                     await session.flush()
+                    await session.commit()
                     venue, _ = parse_scoped_job_key(job.job_key)
                     if venue.value not in services:
                         services[venue.value] = DailyWorkflowService(
                             session, settings=settings, owner="scheduler", venue=venue
                         )
-                    await _run_job_action(services[venue.value], job.job_key, job.session_date)
+                    try:
+                        await asyncio.wait_for(
+                            _run_job_action(
+                                services[venue.value], job.job_key, job.session_date
+                            ),
+                            timeout=float(_JOB_ACTION_TIMEOUT_SECONDS),
+                        )
+                    except TimeoutError:
+                        job.status = "failed"
+                        job.error = f"job_action_timeout:{_JOB_ACTION_TIMEOUT_SECONDS}s"
+                        job.completed_at = datetime.now(UTC)
+                        logger.error(
+                            "scheduler_job_timeout",
+                            job=job.job_key,
+                            session_date=job.session_date,
+                            timeout_s=_JOB_ACTION_TIMEOUT_SECONDS,
+                        )
+                        await session.commit()
+                        continue
                     job.status = "completed"
                     job.completed_at = datetime.now(UTC)
                     entry = {
@@ -262,16 +286,19 @@ async def _dispatch_due_jobs() -> None:
                     if len(_job_log) > 100:
                         del _job_log[:-100]
                     logger.info("scheduler_job_done", **entry)
+                    await session.commit()
                 except DailyWorkflowError as exc:
                     job.status = "skipped"
                     job.error = str(exc)
                     job.completed_at = datetime.now(UTC)
                     logger.warning("scheduler_job_skipped", job=job.job_key, error=str(exc))
+                    await session.commit()
                 except Exception as exc:  # noqa: BLE001
                     job.status = "failed"
                     job.error = str(exc)[:500]
                     job.completed_at = datetime.now(UTC)
                     logger.exception("scheduler_job_failed", job=job.job_key)
+                    await session.commit()
                 finally:
                     try:
                         await leases.release(job_lease, "scheduler")

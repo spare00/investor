@@ -51,6 +51,65 @@ from fastapi.responses import Response
 router = APIRouter(tags=["dashboard"])
 
 
+def _enriched_next_jobs(
+    session_jobs: list[dict[str, Any]],
+    *,
+    active_ops_venue: str,
+    upcoming_limit: int = 8,
+) -> list[dict[str, Any]]:
+    """APScheduler pollers + next planned session jobs, with ET/BNE labels."""
+    rows: list[dict[str, Any]] = []
+    for job in upcoming_jobs():
+        nrt = job.get("next_run_time")
+        labels: dict[str, Any] = {"utc": None, "us_eastern": None, "brisbane": None}
+        if nrt:
+            try:
+                labels = dual_timezone_labels(datetime.fromisoformat(str(nrt)))
+            except ValueError:
+                pass
+        rows.append(
+            {
+                **job,
+                "kind": "runtime",
+                "display": labels,
+                "next_run_et": labels.get("us_eastern"),
+                "next_run_bne": labels.get("brisbane"),
+            }
+        )
+
+    open_statuses = {"planned", "running"}
+    upcoming = [
+        j
+        for j in session_jobs
+        if str(j.get("status") or "").lower() in open_statuses and j.get("planned_at")
+    ]
+
+    def _upcoming_key(row: dict[str, Any]) -> tuple[int, str]:
+        venue_rank = 0 if row.get("venue") == active_ops_venue else 1
+        return (venue_rank, str(row.get("planned_at") or ""))
+
+    upcoming.sort(key=_upcoming_key)
+    for job in upcoming[:upcoming_limit]:
+        rows.append(
+            {
+                "id": job.get("job_key"),
+                "name": job.get("job_key"),
+                "kind": "session",
+                "venue": job.get("venue"),
+                "status": job.get("status"),
+                "next_run_time": job.get("planned_at"),
+                "next_run_et": job.get("planned_at_et"),
+                "next_run_bne": job.get("planned_at_bne"),
+                "display": {
+                    "utc": job.get("planned_at"),
+                    "us_eastern": job.get("planned_at_et"),
+                    "brisbane": job.get("planned_at_bne"),
+                },
+            }
+        )
+    return rows
+
+
 @router.get("/metrics")
 async def prometheus_metrics() -> Response:
     body, content_type = metrics_payload()
@@ -327,16 +386,23 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     ).get_market_status(now).to_dict()
     au_session = venue_sessions.get("AU")
     workflow_summary: dict[str, Any] | None = None
+    workflows_by_venue: dict[str, Any] = {}
     session_jobs: list[dict[str, Any]] = []
+    active_ops_venue = str(ops_target.get("active_ops_venue") or primary)
     try:
-        daily = DailyWorkflowService(session, settings=settings, venue=primary)
-        run = await daily.get_current()
-        if run is not None:
+        # Dual-book: load each venue's current session (US/AU dates often differ).
+        for venue in enabled_venues(settings):
+            daily = DailyWorkflowService(session, settings=settings, venue=venue)
+            run = await daily.get_current()
+            if run is None:
+                continue
             meta = dict(run.metadata_json or {})
-            workflow_summary = {
+            summary = {
                 "session_date": run.session_date,
                 "state": run.current_state,
                 "status": run.status,
+                "venue": venue.value,
+                "calendar_name": run.calendar_name,
                 "intraday_reanalysis_count": int(run.intraday_reanalysis_count or 0),
                 "max_intraday_reanalyses": int(settings.max_intraday_reanalyses),
                 "last_intraday_eval_at": meta.get("last_intraday_eval_at"),
@@ -346,6 +412,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 "last_news_ingest": meta.get("last_news_ingest"),
                 "postmarket_review": meta.get("postmarket_review"),
             }
+            workflows_by_venue[venue.value] = summary
             jrows = list(
                 (
                     await session.execute(
@@ -359,21 +426,43 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 .all()
             )
             for j in jrows:
-                if not str(j.job_key).startswith(f"{primary}:") and ":" in str(j.job_key):
-                    # Skip other venues' jobs when dual-book rows share a calendar date.
+                if not str(j.job_key).startswith(f"{venue.value}:"):
                     continue
                 jmeta = j.metadata_json if isinstance(j.metadata_json, dict) else {}
+                planned_iso = j.planned_at.isoformat() if j.planned_at else None
+                labels = (
+                    dual_timezone_labels(j.planned_at)
+                    if j.planned_at is not None
+                    else {"utc": None, "us_eastern": None, "brisbane": None}
+                )
                 session_jobs.append(
                     {
                         "job_key": j.job_key,
-                        "planned_at": j.planned_at.isoformat() if j.planned_at else None,
+                        "planned_at": planned_iso,
+                        "planned_at_et": labels.get("us_eastern"),
+                        "planned_at_bne": labels.get("brisbane"),
                         "status": j.status,
                         "interval_minutes": jmeta.get("interval_minutes"),
-                        "venue": primary,
+                        "venue": venue.value,
                     }
                 )
+
+        # Cadence strip follows the active ops venue (AU during ASX RTH).
+        workflow_summary = workflows_by_venue.get(active_ops_venue) or workflows_by_venue.get(
+            primary
+        )
+        if workflow_summary is None and workflows_by_venue:
+            workflow_summary = next(iter(workflows_by_venue.values()))
+
+        def _job_sort_key(row: dict[str, Any]) -> tuple[int, str]:
+            # Active venue first, then chronological.
+            venue_rank = 0 if row.get("venue") == active_ops_venue else 1
+            return (venue_rank, str(row.get("planned_at") or ""))
+
+        session_jobs.sort(key=_job_sort_key)
     except Exception:  # noqa: BLE001 — dashboard should still render
         workflow_summary = None
+        workflows_by_venue = {}
         session_jobs = []
 
     universe_summary: dict[str, Any] | None = None
@@ -682,6 +771,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             "venue_phases": ops_target.get("venue_phases") or {},
             "pause_and_emergency_global": True,
             "workflow": workflow_summary,
+            "workflows_by_venue": workflows_by_venue,
         },
         "universe": universe_summary,
         "force_close": force_close_ops,
@@ -764,7 +854,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             }
             for e in errors
         ],
-        "next_jobs": upcoming_jobs(),
+        "next_jobs": _enriched_next_jobs(session_jobs, active_ops_venue=active_ops_venue),
         "session_jobs": session_jobs,
         "llm_budget": snapshot_llm_budget().to_dict(),
     }

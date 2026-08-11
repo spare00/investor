@@ -188,60 +188,87 @@ class IbkrMarketDataProvider:
 
         now = datetime.now(UTC)
         out: list[RawMarketQuote] = []
+        # reqTickersAsync can hang indefinitely on a wedged Gateway session; bound it.
+        timeout = max(5, int(settings.provider_request_timeout_seconds))
         try:
-            contracts = []
-            for sym in syms:
-                cid = None
-                if con_ids:
-                    raw = con_ids.get(sym) or con_ids.get(sym.upper())
-                    cid = int(raw) if raw else None
-                contract = await self._qualify(ib, Stock, sym, con_id=cid)
-                if contract is not None:
-                    contracts.append(contract)
-            if not contracts:
-                return []
-            tickers = await ib.reqTickersAsync(*contracts)
-            # Brief settle for delayed ticks.
-            await asyncio.sleep(0.8)
-            tickers = await ib.reqTickersAsync(*contracts)
-            by_sym = {str(t.contract.symbol).upper(): t for t in tickers if t.contract}
-            for sym in syms:
-                t = by_sym.get(sym)
-                if t is None:
-                    logger.warning("ibkr_ticker_missing", symbol=sym)
-                    continue
-                last = self._last_price(t)
-                if last is None or last <= 0:
-                    logger.warning("ibkr_ticker_no_price", symbol=sym)
-                    continue
-                bid = float(t.bid) if t.bid and t.bid > 0 else None
-                ask = float(t.ask) if t.ask and t.ask > 0 else None
-                out.append(
-                    RawMarketQuote(
-                        symbol=sym,
-                        as_of=now,
-                        provider=self.name,
-                        last=float(last),
-                        bid=bid,
-                        ask=ask,
-                        volume=float(t.volume) if t.volume and t.volume > 0 else None,
-                        raw_payload={
-                            "con_id": getattr(t.contract, "conId", None),
-                            "exchange": getattr(t.contract, "primaryExchange", None)
-                            or getattr(t.contract, "exchange", None),
-                            "currency": getattr(t.contract, "currency", None),
-                            "last": last,
-                            "close": getattr(t, "close", None),
-                            "market_price": getattr(t, "marketPrice", lambda: None)(),
-                        },
-                    )
-                )
+            out = await asyncio.wait_for(
+                self._fetch_quotes_inner(ib, Stock, syms, con_ids=con_ids, now=now),
+                timeout=float(timeout),
+            )
+        except TimeoutError:
+            logger.error(
+                "ibkr_md_fetch_timeout",
+                requested=len(syms),
+                timeout_s=timeout,
+            )
+            await self.disconnect()
+            return []
         except Exception:  # noqa: BLE001
             logger.exception("ibkr_md_fetch_failed")
             # Drop sticky broken sessions so the next poll reconnects cleanly.
             await self.disconnect()
+            return []
 
         logger.info("ibkr_quotes_fetched", requested=len(syms), returned=len(out))
+        return out
+
+    async def _fetch_quotes_inner(
+        self,
+        ib: Any,
+        stock_cls: Any,
+        syms: list[str],
+        *,
+        con_ids: dict[str, int] | None,
+        now: datetime,
+    ) -> list[RawMarketQuote]:
+        out: list[RawMarketQuote] = []
+        contracts = []
+        for sym in syms:
+            cid = None
+            if con_ids:
+                raw = con_ids.get(sym) or con_ids.get(sym.upper())
+                cid = int(raw) if raw else None
+            contract = await self._qualify(ib, stock_cls, sym, con_id=cid)
+            if contract is not None:
+                contracts.append(contract)
+        if not contracts:
+            return []
+        tickers = await ib.reqTickersAsync(*contracts)
+        # Brief settle for delayed ticks.
+        await asyncio.sleep(0.8)
+        tickers = await ib.reqTickersAsync(*contracts)
+        by_sym = {str(t.contract.symbol).upper(): t for t in tickers if t.contract}
+        for sym in syms:
+            t = by_sym.get(sym)
+            if t is None:
+                logger.warning("ibkr_ticker_missing", symbol=sym)
+                continue
+            last = self._last_price(t)
+            if last is None or last <= 0:
+                logger.warning("ibkr_ticker_no_price", symbol=sym)
+                continue
+            bid = float(t.bid) if t.bid and t.bid > 0 else None
+            ask = float(t.ask) if t.ask and t.ask > 0 else None
+            out.append(
+                RawMarketQuote(
+                    symbol=sym,
+                    as_of=now,
+                    provider=self.name,
+                    last=float(last),
+                    bid=bid,
+                    ask=ask,
+                    volume=float(t.volume) if t.volume and t.volume > 0 else None,
+                    raw_payload={
+                        "con_id": getattr(t.contract, "conId", None),
+                        "exchange": getattr(t.contract, "primaryExchange", None)
+                        or getattr(t.contract, "exchange", None),
+                        "currency": getattr(t.contract, "currency", None),
+                        "last": last,
+                        "close": getattr(t, "close", None),
+                        "market_price": getattr(t, "marketPrice", lambda: None)(),
+                    },
+                )
+            )
         return out
 
     async def _qualify(

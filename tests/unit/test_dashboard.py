@@ -181,6 +181,7 @@ def test_dashboard_routes_exist() -> None:
             assert "active_alerts" in body
             assert "overnight_reviews" in body
             assert "session_jobs" in body
+            assert "workflows_by_venue" in body.get("market_status", {})
             assert "universe" in body
             metrics = client.get("/metrics")
             assert metrics.status_code == 200
