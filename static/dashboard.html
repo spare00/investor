@@ -2200,7 +2200,7 @@
         <div class="muted" style="margin:0.65rem 0 0.35rem">LLM · day ${esc(formatTokens(budget.total_tokens))} tok · ${esc(budget.calls ?? 0)} calls · month A$${esc(fmtNum(budget.month_aud_estimate, 2))}</div>
         <div class="muted">Allowlist: ${esc((status.allowlist || []).join(", ") || "—")}</div>
         <ul style="margin-top:0.55rem">${jobs.length
-          ? jobs.map((j) => `<li class="mono">${esc(j.id || j.name)}: ${esc(fmtJobWhen(j))}</li>`).join("")
+          ? jobs.map((j) => `<li class="mono">${esc(j.id || j.name)}: ${esc(fmtJobWhen(j, opsClockVenue))}</li>`).join("")
           : `<li class="muted">No scheduled jobs</li>`}</ul>
         ${rawBlock(status)}`);
 
