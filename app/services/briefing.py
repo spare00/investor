@@ -270,10 +270,33 @@ class BriefingService:
         intraday = await self._intraday_for_session(run.session_date, include_raw=include_raw)
 
         meta = dict(run.metadata_json or {})
-        latest_cio_action = next(
-            (a["summary"].get("portfolio_action") for a in premarket_agents if a["agent"] == AgentName.CIO.value and a["present"]),
+        risk_summary = next(
+            (
+                a["summary"]
+                for a in premarket_agents
+                if a["agent"] == AgentName.RISK_MANAGER.value and a["present"]
+            ),
             None,
-        ) or meta.get("cio_action")
+        ) or {}
+        cio_summary = next(
+            (
+                a["summary"]
+                for a in premarket_agents
+                if a["agent"] == AgentName.CIO.value and a["present"]
+            ),
+            None,
+        ) or {}
+        # Prefer workflow meta, but fall back to agent materials so the strip
+        # matches what operators see in the Risk / CIO cards below.
+        latest_cio_action = (
+            cio_summary.get("portfolio_action")
+            or meta.get("cio_action")
+        )
+        risk_verdict = meta.get("risk_verdict") or risk_summary.get("overall_verdict")
+        no_trade_reason = (
+            meta.get("no_trade_reason")
+            or cio_summary.get("reason_not_to_trade")
+        )
         intent_count = meta.get("intent_count")
         if not intent_count and wf_id is not None:
             intent_count = await self._order_count_for_workflow(wf_id)
@@ -287,8 +310,8 @@ class BriefingService:
                 "analysis_workflow_run_id": str(wf_id) if wf_id else None,
                 "latest_decision_id": str(run.latest_decision_id) if run.latest_decision_id else None,
                 "cio_action": latest_cio_action,
-                "risk_verdict": meta.get("risk_verdict"),
-                "no_trade_reason": meta.get("no_trade_reason"),
+                "risk_verdict": risk_verdict,
+                "no_trade_reason": no_trade_reason,
                 "analysis_completed_at": meta.get("analysis_completed_at"),
                 "intent_count": intent_count,
                 "last_briefing_workflow_id": meta.get("last_briefing_workflow_id"),
@@ -297,7 +320,7 @@ class BriefingService:
             "premarket": {
                 "workflow_id": str(wf_id),
                 "agents": premarket_agents,
-                "cio": next(
+                "cio": cio_summary or next(
                     (a["summary"] for a in premarket_agents if a["agent"] == AgentName.CIO.value),
                     None,
                 ),

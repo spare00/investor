@@ -196,6 +196,32 @@ async def test_briefing_service_assembles_premarket(session: AsyncSession) -> No
 
 
 @pytest.mark.asyncio
+async def test_briefing_risk_verdict_falls_back_to_agent(
+    session: AsyncSession,
+) -> None:
+    """Summary strip should mirror Risk Manager materials when meta is sparse."""
+    analysis = _analysis()
+    await AuditService(session).persist_analysis(analysis)
+    session.add(
+        DailyWorkflowRun(
+            id=uuid4(),
+            session_date="2026-08-07",
+            calendar_name="NYSE",
+            current_state="PREMARKET_PREPARATION",
+            status="running",
+            analysis_workflow_run_id=analysis.workflow_id,
+            latest_decision_id=analysis.cio.decision_id,
+            metadata_json={},  # no risk_verdict / cio_action persisted
+        )
+    )
+    await session.flush()
+
+    briefing = await BriefingService(session).build(session_date="2026-08-07")
+    assert briefing["daily_workflow"]["risk_verdict"] == "approved"
+    assert briefing["daily_workflow"]["cio_action"] == "SCALE_IN"
+
+
+@pytest.mark.asyncio
 async def test_briefing_finds_manual_intraday_workflow(session: AsyncSession) -> None:
     """Dashboard Intraday Eval persists under a fresh workflow_id not on daily.analysis_workflow_run_id."""
     analysis = _analysis()

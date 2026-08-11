@@ -295,6 +295,47 @@
       background: var(--bg); color: var(--text); border: 1px solid var(--line);
       border-radius: 6px; padding: 0.35rem 0.55rem; font: inherit;
     }
+    .briefing-summary {
+      margin: 0.35rem 0 1.15rem;
+      padding: 0.85rem 1rem;
+      border: 1px solid color-mix(in srgb, var(--accent, #6ea8fe) 35%, var(--line));
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--bg) 40%, var(--panel));
+    }
+    .briefing-summary > .label {
+      margin: 0 0 0.55rem;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .briefing-summary .briefing-kv {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+      gap: 0.55rem 1rem;
+      margin-top: 0;
+    }
+    .briefing-summary .briefing-kv div {
+      font-size: 0.95rem;
+      line-height: 1.35;
+    }
+    .briefing-summary .briefing-kv .k {
+      display: block;
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 0 0 0.15rem;
+    }
+    .briefing-summary .briefing-kv .v {
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+    .briefing-materials-title {
+      margin: 1.35rem 0 0.35rem;
+      padding-top: 0.85rem;
+      border-top: 1px solid var(--line);
+    }
     .briefing-agent {
       border-top: 1px solid var(--line); padding: 0.85rem 0 0.35rem; margin-top: 0.65rem;
     }
@@ -2411,8 +2452,13 @@
         const dw = data.daily_workflow || {};
         const book = data.venue || "—";
         const latestCio = ((data.premarket || {}).cio) || {};
+        const riskAgent = ((data.premarket || {}).agents || []).find((a) => a.agent === "risk_manager" && a.present);
         const cioAction = latestCio.portfolio_action || dw.cio_action || "—";
-        const riskVerdict = dw.risk_verdict || "—";
+        const riskVerdict = dw.risk_verdict || (riskAgent && riskAgent.summary && riskAgent.summary.overall_verdict) || "—";
+        const noTrade = dw.no_trade_reason || latestCio.reason_not_to_trade || "";
+        const intentCount = dw.intent_count != null ? dw.intent_count : "—";
+        const riskTone = /halt|reject|block/i.test(String(riskVerdict)) ? "bad"
+          : /approv|ok|pass/i.test(String(riskVerdict)) ? "good" : "";
         const comp = data.completeness || {};
         if (metaEl) {
           metaEl.innerHTML = `${esc(book)} · ${esc(data.session_date)} · ${esc(dw.state || "?")} · agents ${comp.agent_reports_found ?? 0}/${comp.agent_reports_expected ?? 6}`;
@@ -2441,15 +2487,19 @@
         const links = data.links || {};
         bodyEl.className = "";
         bodyEl.innerHTML = `
-          <div class="briefing-kv" style="margin-bottom:0.75rem">
-            <div><span class="k">CIO action</span>${pill(esc(cioAction), cioAction === "NO_TRADE" || cioAction === "STAY_CASH" ? "warn" : "good")}</div>
-            <div><span class="k">Risk verdict</span>${esc(riskVerdict)}</div>
-            <div><span class="k">Intents</span>${esc(dw.intent_count ?? "—")}</div>
-            <div><span class="k">No-trade</span>${esc(dw.no_trade_reason || latestCio.reason_not_to_trade || "—")}</div>
-            <div><span class="k">Workflow</span><span class="mono">${esc(links.premarket_workflow_id || "—")}</span></div>
+          <div class="briefing-summary">
+            <p class="label">Session summary · from materials below</p>
+            <div class="briefing-kv">
+              <div><span class="k">CIO action</span><span class="v">${pill(esc(cioAction), cioAction === "NO_TRADE" || cioAction === "STAY_CASH" ? "warn" : "good")}</span></div>
+              <div><span class="k">Risk verdict</span><span class="v">${riskVerdict !== "—" ? pill(esc(riskVerdict), riskTone) : esc("—")}</span></div>
+              <div><span class="k">Intents</span><span class="v">${esc(intentCount)}</span></div>
+              <div><span class="k">No-trade reason</span><span class="v">${esc(noTrade || "n/a")}</span></div>
+              <div><span class="k">Workflow</span><span class="v mono" style="font-size:0.82rem;font-weight:500">${esc(links.premarket_workflow_id || "—")}</span></div>
+            </div>
           </div>
           ${comp.note ? `<p class="muted">${esc(comp.note)}</p>` : ""}
-          <h2 style="margin-top:1rem">Latest materials for CIO</h2>
+          <h2 class="briefing-materials-title">Latest materials for CIO</h2>
+          <p class="muted" style="margin:0 0 0.65rem">Source detail for the summary above — each agent report for this workflow.</p>
           ${agentsHtml || `<p class="muted">No agent reports.</p>`}
           <h2 style="margin-top:1.25rem">All analyses this session</h2>
           ${(data.session_analyses || []).length
