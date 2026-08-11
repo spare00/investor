@@ -116,6 +116,20 @@
     }
     section.wide { grid-column: span 8; }
     section.full { grid-column: span 12; }
+    /* Overview: jobs need width for the session plan; universe is denser as a side panel. */
+    section.jobs { grid-column: span 7; }
+    section.universe { grid-column: span 5; }
+    section.jobs #jobs {
+      max-height: 14rem;
+      overflow: auto;
+      margin: 0;
+      padding-left: 1.1rem;
+    }
+    section.jobs #sessionJobs {
+      max-height: 22rem;
+      overflow: auto;
+    }
+    section.jobs #sessionJobs table { font-size: 0.82rem; }
     h2 {
       margin: 0 0 0.75rem;
       font-size: 0.8rem;
@@ -350,7 +364,7 @@
     }
     @media (max-width: 900px) {
       main { grid-template-columns: 1fr; padding: 1rem; }
-      section, section.wide, section.full { grid-column: span 1; }
+      section, section.wide, section.full, section.jobs, section.universe { grid-column: span 1; }
       header { flex-direction: column; align-items: flex-start; }
       .tabs { padding: 0.75rem 1rem 0; }
       .usage-strip { padding: 0.55rem 1rem; }
@@ -444,12 +458,12 @@
           <tbody id="orders"><tr><td colspan="4" class="muted">None</td></tr></tbody>
         </table>
       </section>
-      <section>
+      <section class="jobs">
         <h2>Next Jobs <span class="muted" style="font-weight:500;font-size:0.85rem" id="jobsClockHint">(ET · BNE)</span></h2>
         <ul id="jobs"><li class="muted">None</li></ul>
         <div id="sessionJobs" class="muted" style="margin-top:0.65rem"></div>
       </section>
-      <section class="wide">
+      <section class="universe">
         <h2>Universe <button id="btnUniverse" type="button" style="float:right;font-size:0.8rem;padding:0.25rem 0.55rem" onclick="refreshUniverseNow()">Refresh</button></h2>
         <div id="universeMeta" class="muted">Loading…</div>
         <div id="universeBook" style="margin-top:0.5rem"></div>
@@ -1737,8 +1751,8 @@
       setJobsClockHint(opsClockVenue);
       document.getElementById("asOf").textContent =
         data.as_of?.utc
-          ? fmtBookSmart(data.as_of.utc, opsClockVenue)
-          : fmtBookSmart(data.as_of?.us_eastern || data.as_of?.brisbane, opsClockVenue);
+          ? fmtBookSmart(data.as_of.utc, opsClockVenue, { withSeconds: false })
+          : fmtBookSmart(data.as_of?.us_eastern || data.as_of?.brisbane, opsClockVenue, { withSeconds: false });
       renderLlmUsage(data.llm_budget);
       renderLlmBudgetPanel(data.llm_budget);
       renderAgentLamps(data.agent_lamps, data.agents);
