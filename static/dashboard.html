@@ -1004,8 +1004,18 @@
         if (countdown) bits.push(countdown);
         if (sess.is_early_close) bits.push("early close");
         const wf = ms && ms.workflow;
-        if (wf && wf.state) bits.push(`workflow ${wf.state}`);
+        if (wf && wf.state) {
+          bits.push(`workflow ${wf.venue || ms.active_ops_venue || ""} ${wf.state}`.trim());
+        }
+        const byVenue = (ms && ms.workflows_by_venue) || {};
+        for (const [v, w] of Object.entries(byVenue)) {
+          if (wf && w && w.session_date === wf.session_date && w.state === wf.state && (w.venue || v) === (wf.venue || ms.active_ops_venue)) {
+            continue;
+          }
+          if (w && w.state) bits.push(`${v} ${w.state}`);
+        }
         if (ms && ms.primary_venue) bits.push(`primary ${ms.primary_venue}`);
+        if (ms && ms.active_ops_venue) bits.push(`ops ${ms.active_ops_venue}`);
         metaEl.textContent = bits.join(" · ") || "No session detail";
       }
 
@@ -1051,6 +1061,9 @@
             bits.push(`RTH ${sessionClock(aSess.regular_open)}–${sessionClock(aSess.regular_close)} Sydney`);
           }
           if (aCount) bits.push(aCount);
+          const awf = ((ms && ms.workflows_by_venue) || {}).AU;
+          if (awf && awf.state) bits.push(`workflow ${awf.state}`);
+          if (ms && ms.active_ops_venue === "AU") bits.push("ops active");
           auMetaEl.textContent = bits.join(" · ") || "No ASX session detail";
         }
       }
@@ -1385,7 +1398,7 @@
             </tr>`).join("")
           : "";
         setEl.innerHTML =
-          `<div class="muted" style="margin-bottom:0.35rem">Settlement · ${esc(fmtEt(settle.created_at))} · orders ${esc(settle.order_count)} · fills ${esc(settle.execution_count)}</div>` +
+          `<div class="muted" style="margin-bottom:0.35rem">Settlement · ${esc(fmtDual(settle.created_at))} · orders ${esc(settle.order_count)} · fills ${esc(settle.execution_count)}</div>` +
           `<div style="margin-bottom:0.5rem"><span class="muted">Overnight </span>${overnightPos}</div>` +
           dataTable(["Symbol", "Realized", "Unrealized", "Flag"], prows, 4);
       } else {
@@ -1402,7 +1415,7 @@
             </tr>`).join("")
           : "";
         reconEl.innerHTML =
-          `<div class="muted" style="margin-bottom:0.35rem">Latest recon · ${esc(fmtEt(recon.created_at))} · ${esc(recon.sync_type)} · ${esc(recon.result)}</div>` +
+          `<div class="muted" style="margin-bottom:0.35rem">Latest recon · ${esc(fmtDual(recon.created_at))} · ${esc(recon.sync_type)} · ${esc(recon.result)}</div>` +
           dataTable(["Type", "Broker id", "Detail"], irows, 3);
       } else {
         reconEl.innerHTML = `<div class="muted">No reconciliation run yet</div>`;
@@ -1603,7 +1616,7 @@
             </tr>`).join("")
           : "";
         plansEl.innerHTML =
-          `<div class="muted" style="margin-bottom:0.35rem">Latest closing · ${esc(fmtEt(closing.created_at))} · ${esc(closing.policy || "")}</div>` +
+          `<div class="muted" style="margin-bottom:0.35rem">Latest closing · ${esc(fmtDual(closing.created_at))} · ${esc(closing.policy || "")}</div>` +
           dataTable(["Symbol", "Action", "Qty", "Book", "Rationale"], rows, 5);
       } else {
         plansEl.innerHTML = `<div class="muted">No closing review yet</div>`;
@@ -1623,28 +1636,34 @@
         dataTable(["Symbol", "Side", "Qty", "Status", "Thesis"], irows, 5);
     }
 
-    function renderIntradayCadence(wf, sessionJobs) {
+    function renderIntradayCadence(wf, sessionJobs, activeVenue) {
       const el = document.getElementById("intradayCadence");
       if (!el) return;
       if (!wf) {
         el.innerHTML = pill("no daily workflow", "warn");
         return;
       }
+      const venue = wf.venue || activeVenue || "";
+      const scoped = (sessionJobs || []).filter((j) => {
+        if (!venue) return true;
+        return String(j.venue || "") === venue || String(j.job_key || "").startsWith(`${venue}:`);
+      });
       const used = wf.intraday_reanalysis_count ?? 0;
       const max = wf.max_intraday_reanalyses ?? "—";
       const budgetCls = max !== "—" && used >= max ? "bad" : used ? "good" : "";
-      const intra = (sessionJobs || []).filter((j) => {
+      const intra = scoped.filter((j) => {
         const k = String(j.job_key || "");
         return k.includes("intraday_eval");
       });
       const interval = intra.find((j) => j.interval_minutes != null);
-      const planned = (sessionJobs || []).filter((j) => j.status === "planned").length;
-      const done = (sessionJobs || []).filter((j) => j.status === "completed" || j.status === "skipped").length;
+      const planned = scoped.filter((j) => j.status === "planned").length;
+      const done = scoped.filter((j) => j.status === "completed" || j.status === "skipped").length;
       el.innerHTML = [
+        venue ? pill(`book ${venue}`, "") : "",
         pill(`WF ${wf.state || "—"}`, ""),
         pill(`reeval ${used}/${max}`, budgetCls),
         interval ? pill(`plan ${interval.interval_minutes}m`, "") : "",
-        pill(`jobs ${done}/${(sessionJobs || []).length || 0}`, ""),
+        pill(`jobs ${done}/${scoped.length || 0}`, ""),
         wf.last_monitor && wf.last_monitor.actionable != null
           ? pill(`mon ${wf.last_monitor.actionable}`, wf.last_monitor.actionable ? "warn" : "")
           : "",
@@ -1652,7 +1671,7 @@
           ? pill(`news ${wf.last_news_ingest.published}`, wf.last_news_ingest.published ? "warn" : "")
           : "",
         wf.last_intraday_result ? pill(String(wf.last_intraday_result), "") : "",
-        wf.last_intraday_eval_at ? pill(`last ${fmtEt(wf.last_intraday_eval_at)}`, "") : "",
+        wf.last_intraday_eval_at ? pill(`last ${fmtDual(wf.last_intraday_eval_at)}`, "") : "",
       ].filter(Boolean).join(" ");
     }
 
@@ -1735,7 +1754,11 @@
       renderRecovery(data);
       renderActiveAlerts(data);
       renderMonitor(data);
-      renderIntradayCadence(data.market_status && data.market_status.workflow, data.session_jobs);
+      renderIntradayCadence(
+        data.market_status && data.market_status.workflow,
+        data.session_jobs,
+        data.market_status && data.market_status.active_ops_venue,
+      );
       renderSessionJobs(data.session_jobs);
       const cio = data.cio;
       if (cio) {

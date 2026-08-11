@@ -6,6 +6,7 @@ re-resolving ``symbol``/currency on every order or market-data poll.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.core.config import Settings, get_settings
@@ -22,6 +23,19 @@ _BY_SYMBOL_KEY: dict[tuple[str, str | None, str | None], Any] = {}
 def clear_contract_cache() -> None:
     _BY_CON_ID.clear()
     _BY_SYMBOL_KEY.clear()
+
+
+def _qualify_timeout(settings: Settings) -> float:
+    return float(max(5, int(settings.broker_request_timeout_seconds)))
+
+
+async def _qualify_async(ib: Any, contract: Any, *, settings: Settings, label: str) -> Any:
+    timeout = _qualify_timeout(settings)
+    try:
+        return await asyncio.wait_for(ib.qualifyContractsAsync(contract), timeout=timeout)
+    except TimeoutError:
+        logger.warning("ibkr_qualify_timeout", label=label, timeout_s=timeout)
+        return None
 
 
 def cache_contract(contract: Any) -> Any:
@@ -78,7 +92,9 @@ async def resolve_stock_contract(
         bare = contract_from_con_id(cid)
         if bare is not None:
             try:
-                qualified = await ib.qualifyContractsAsync(bare)
+                qualified = await _qualify_async(
+                    ib, bare, settings=cfg, label=f"conId:{cid}"
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("ibkr_conid_qualify_failed", con_id=cid, error=str(exc)[:160])
                 qualified = None
@@ -113,7 +129,9 @@ async def resolve_stock_contract(
     for exchange, ccy in candidates:
         contract = stock_cls(sym, exchange, ccy)
         try:
-            qualified = await ib.qualifyContractsAsync(contract)
+            qualified = await _qualify_async(
+                ib, contract, settings=cfg, label=f"{sym}:{exchange}:{ccy}"
+            )
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             continue

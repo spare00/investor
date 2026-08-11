@@ -72,6 +72,18 @@ class IbkrBroker:
         if port in {7496, 4001} and not self.settings.ibkr_allow_live_ports:
             raise BrokerError(f"ibkr_port_looks_live:{port}")
 
+    def _request_timeout(self) -> float:
+        return float(max(5, int(self.settings.broker_request_timeout_seconds)))
+
+    async def _ib_wait(self, awaitable: Any, *, label: str) -> Any:
+        """Bound Gateway RPCs so a wedged session cannot hang recon/orders forever."""
+        timeout = self._request_timeout()
+        try:
+            return await asyncio.wait_for(awaitable, timeout=timeout)
+        except TimeoutError as exc:
+            logger.error("ibkr_request_timeout", label=label, timeout_s=timeout)
+            raise BrokerError(f"ibkr_timeout:{label}") from exc
+
     async def _ensure_connected(self) -> Any:
         self._ensure_paper_mode()
         async with self._lock:
@@ -332,7 +344,9 @@ class IbkrBroker:
     async def get_open_orders(self) -> list[OrderResult]:
         ib = await self._ensure_connected()
         try:
-            await ib.reqOpenOrdersAsync()
+            await self._ib_wait(ib.reqOpenOrdersAsync(), label="reqOpenOrders")
+        except BrokerError:
+            raise
         except Exception:  # noqa: BLE001
             pass
         await asyncio.sleep(0.2)
@@ -344,7 +358,9 @@ class IbkrBroker:
         out: list[dict[str, object]] = []
         # Request fresh positions, then read cache (avoid sync _run helpers).
         try:
-            await ib.reqPositionsAsync()
+            await self._ib_wait(ib.reqPositionsAsync(), label="reqPositions")
+        except BrokerError:
+            raise
         except Exception:  # noqa: BLE001
             pass
         await asyncio.sleep(0.2)
@@ -403,7 +419,9 @@ class IbkrBroker:
         return out
 
     async def _account_summary_rows(self, ib: Any, account: str) -> list[Any]:
-        return list(await ib.accountSummaryAsync(account) or [])
+        return list(
+            await self._ib_wait(ib.accountSummaryAsync(account), label="accountSummary") or []
+        )
 
     @staticmethod
     def _summary_map_from_rows(rows: list[Any]) -> dict[str, tuple[str, str]]:

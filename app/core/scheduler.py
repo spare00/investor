@@ -22,6 +22,9 @@ _job_log: list[dict[str, Any]] = []
 # Bound a single due-job action so a wedged IBKR/LLM call cannot pin
 # daily_workflow_dispatch forever (APScheduler max_instances=1).
 _JOB_ACTION_TIMEOUT_SECONDS = 480
+_CATCH_UP_TIMEOUT_SECONDS = 480
+_UNIVERSE_REFRESH_TIMEOUT_SECONDS = 900
+_BROKER_RECON_TIMEOUT_SECONDS = 120
 
 
 def get_scheduler() -> AsyncIOScheduler | None:
@@ -327,14 +330,26 @@ async def _dispatch_due_jobs() -> None:
                 svc = DailyWorkflowService(
                     session, settings=settings, owner="scheduler", venue=venue
                 )
-                catch = await svc.catch_up_to_intraday(fake_llm=fake, now=now)
+                try:
+                    catch = await asyncio.wait_for(
+                        svc.catch_up_to_intraday(fake_llm=fake, now=now),
+                        timeout=float(_CATCH_UP_TIMEOUT_SECONDS),
+                    )
+                except TimeoutError:
+                    logger.error(
+                        "scheduler_catch_up_timeout",
+                        venue=venue.value,
+                        timeout_s=_CATCH_UP_TIMEOUT_SECONDS,
+                    )
+                    await session.rollback()
+                    continue
                 if not (catch.get("catch_up") or {}).get("skipped", True):
                     logger.info(
                         "scheduler_session_catch_up",
                         venue=venue.value,
                         **(catch.get("catch_up") or {}),
                     )
-            await session.commit()
+                await session.commit()
         except DailyWorkflowError as exc:
             logger.warning("scheduler_catch_up_skipped", error=str(exc))
             await session.commit()
@@ -407,7 +422,10 @@ async def _refresh_universe() -> None:
             ]
             svc = UniverseService(session, settings=settings)
             try:
-                result = await svc.refresh(holdings=holdings)
+                result = await asyncio.wait_for(
+                    svc.refresh(holdings=holdings),
+                    timeout=float(_UNIVERSE_REFRESH_TIMEOUT_SECONDS),
+                )
                 replan: dict[str, Any] = {}
                 try:
                     from app.market.venues import enabled_venues
@@ -419,6 +437,7 @@ async def _refresh_universe() -> None:
                             session, settings=settings, owner="scheduler", venue=venue
                         ).replan_intraday_jobs()
                         replan[venue.value] = part
+                        await session.commit()
                 except Exception:  # noqa: BLE001
                     logger.exception("universe_refresh_replan_failed")
                     replan = {"skipped": True, "reason": "replan_failed"}
@@ -429,13 +448,31 @@ async def _refresh_universe() -> None:
                     "at": datetime.now(UTC).isoformat(),
                     "proposals": result.get("proposals"),
                     "reason": result.get("reason"),
-                    "replan_purged": replan.get("purged"),
-                    "replan_created": replan.get("created"),
+                    "replan": {
+                        v: {
+                            "purged": (part or {}).get("purged"),
+                            "created": (part or {}).get("created"),
+                        }
+                        for v, part in (replan or {}).items()
+                        if isinstance(part, dict)
+                    }
+                    if isinstance(replan, dict) and any(
+                        isinstance(v, dict) for v in replan.values()
+                    )
+                    else None,
+                    "replan_purged": replan.get("purged") if isinstance(replan, dict) else None,
+                    "replan_created": replan.get("created") if isinstance(replan, dict) else None,
                 }
                 _job_log.append(entry)
                 if len(_job_log) > 100:
                     del _job_log[:-100]
                 logger.info("universe_refresh_done", **{k: v for k, v in entry.items() if v is not None})
+            except TimeoutError:
+                await session.rollback()
+                logger.error(
+                    "universe_refresh_timeout",
+                    timeout_s=_UNIVERSE_REFRESH_TIMEOUT_SECONDS,
+                )
             except Exception:  # noqa: BLE001
                 await session.rollback()
                 logger.exception("universe_refresh_failed")
@@ -471,46 +508,54 @@ async def _reconcile_broker() -> None:
             return
         try:
             try:
-                from app.intraday.broker_updates import BrokerUpdateProcessor
 
-                recon_svc = ReconciliationService(session, settings=settings)
-                book = None
-                try:
-                    book = await recon_svc.fetch_book()
-                except Exception as exc:  # noqa: BLE001
-                    recon = await recon_svc.run("SCHEDULED")  # records BROKER_UNAVAILABLE
-                    recon.setdefault("fetch_error", str(exc)[:200])
-                else:
-                    recon = await recon_svc.run("SCHEDULED", book=book)
-                try:
-                    from app.alerts.ops import emit_reconciliation_alert
+                async def _recon_once() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], Any]:
+                    from app.intraday.broker_updates import BrokerUpdateProcessor
 
-                    await emit_reconciliation_alert(
-                        session,
-                        settings,
-                        result=str(recon.get("result") or ""),
-                        issues=list(recon.get("issues") or []),
-                        sync_type="SCHEDULED",
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("broker_recon_alert_failed", error=str(exc)[:200])
-                poll: dict[str, Any] = {}
-                sync: dict[str, Any] = {}
-                book = recon.get("book") or book
-                if book is not None:
+                    recon_svc = ReconciliationService(session, settings=settings)
+                    book = None
                     try:
-                        poll = await BrokerUpdateProcessor(
-                            session, settings=settings
-                        ).poll_and_apply(remote_orders=book.orders)
+                        book = await recon_svc.fetch_book()
                     except Exception as exc:  # noqa: BLE001
-                        poll = {"error": str(exc)[:200]}
+                        recon = await recon_svc.run("SCHEDULED")  # records BROKER_UNAVAILABLE
+                        recon.setdefault("fetch_error", str(exc)[:200])
+                    else:
+                        recon = await recon_svc.run("SCHEDULED", book=book)
                     try:
-                        sync = await PositionManager(session, settings=settings).sync_from_broker(
-                            account=book.account,
-                            positions=book.positions,
+                        from app.alerts.ops import emit_reconciliation_alert
+
+                        await emit_reconciliation_alert(
+                            session,
+                            settings,
+                            result=str(recon.get("result") or ""),
+                            issues=list(recon.get("issues") or []),
+                            sync_type="SCHEDULED",
                         )
                     except Exception as exc:  # noqa: BLE001
-                        sync = {"error": str(exc)[:200]}
+                        logger.warning("broker_recon_alert_failed", error=str(exc)[:200])
+                    poll: dict[str, Any] = {}
+                    sync: dict[str, Any] = {}
+                    book = recon.get("book") or book
+                    if book is not None:
+                        try:
+                            poll = await BrokerUpdateProcessor(
+                                session, settings=settings
+                            ).poll_and_apply(remote_orders=book.orders)
+                        except Exception as exc:  # noqa: BLE001
+                            poll = {"error": str(exc)[:200]}
+                        try:
+                            sync = await PositionManager(session, settings=settings).sync_from_broker(
+                                account=book.account,
+                                positions=book.positions,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            sync = {"error": str(exc)[:200]}
+                    return recon, poll, sync, book
+
+                recon, poll, sync, book = await asyncio.wait_for(
+                    _recon_once(),
+                    timeout=float(_BROKER_RECON_TIMEOUT_SECONDS),
+                )
                 await session.commit()
                 entry = {
                     "job": "broker_reconciliation",
@@ -534,6 +579,12 @@ async def _reconcile_broker() -> None:
                 logger.info(
                     "broker_recon_done",
                     **{k: v for k, v in entry.items() if v is not None},
+                )
+            except TimeoutError:
+                await session.rollback()
+                logger.error(
+                    "broker_recon_timeout",
+                    timeout_s=_BROKER_RECON_TIMEOUT_SECONDS,
                 )
             except Exception:  # noqa: BLE001
                 await session.rollback()
