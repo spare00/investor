@@ -510,7 +510,14 @@ async def _reconcile_broker() -> None:
             try:
 
                 async def _recon_once() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], Any]:
+                    from app.execution.order_manager import OrderManager
                     from app.intraday.broker_updates import BrokerUpdateProcessor
+
+                    # Heal local open orders missing at Gateway before comparing books.
+                    try:
+                        await OrderManager(session, settings=settings).sync_statuses_from_broker()
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("broker_recon_order_sync_failed", error=str(exc)[:200])
 
                     recon_svc = ReconciliationService(session, settings=settings)
                     book = None

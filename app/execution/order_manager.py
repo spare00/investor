@@ -289,18 +289,50 @@ class OrderManager:
 
     async def sync_statuses_from_broker(self) -> dict[str, Any]:
         """Refresh local open/pending orders from broker truth."""
-        openish = {"new", "accepted", "partially_filled", "pending_submit", "pending_new"}
+        # Include both InternalOrderState values and legacy lowercase broker strings.
+        openish = {
+            "new",
+            "accepted",
+            "partially_filled",
+            "pending_submit",
+            "pending_new",
+            InternalOrderState.SUBMITTING.value,
+            InternalOrderState.SUBMITTED.value,
+            InternalOrderState.ACCEPTED.value,
+            InternalOrderState.PARTIALLY_FILLED.value,
+            InternalOrderState.CANCEL_PENDING.value,
+            InternalOrderState.REPLACE_PENDING.value,
+        }
         result = await self.session.execute(
             select(Order).where(Order.status.in_(list(openish)))
         )
         rows = list(result.scalars().all())
         updated = 0
         errors = 0
+        missing = 0
         for row in rows:
             if not row.broker_order_id:
                 continue
             try:
                 br = await self.broker.get_order(row.broker_order_id)
+            except BrokerError as exc:
+                # Gone from Gateway open book — close local so recon stops MATERIAL_DRIFT.
+                if "ibkr_order_not_found" in str(exc) or "order_not_found" in str(exc):
+                    row.status = InternalOrderState.CANCELLED.value
+                    row.raw_payload = {
+                        **(row.raw_payload or {}),
+                        "broker_sync": {"missing_remote": True, "error": str(exc)[:200]},
+                    }
+                    updated += 1
+                    missing += 1
+                    continue
+                errors += 1
+                logger.warning(
+                    "order_status_sync_failed",
+                    broker_order_id=row.broker_order_id,
+                    error=str(exc),
+                )
+                continue
             except Exception as exc:  # noqa: BLE001
                 errors += 1
                 logger.warning(
@@ -309,7 +341,7 @@ class OrderManager:
                     error=str(exc),
                 )
                 continue
-            new_status = br.status.value
+            new_status = _internal_status(br.status)
             if row.status != new_status:
                 row.status = new_status
                 row.raw_payload = {**(row.raw_payload or {}), "broker_sync": br.raw or {}}
@@ -327,5 +359,16 @@ class OrderManager:
                         )
                     )
         await self.session.flush()
-        logger.info("orders_synced_from_broker", checked=len(rows), updated=updated, errors=errors)
-        return {"checked": len(rows), "updated": updated, "errors": errors}
+        logger.info(
+            "orders_synced_from_broker",
+            checked=len(rows),
+            updated=updated,
+            missing_remote=missing,
+            errors=errors,
+        )
+        return {
+            "checked": len(rows),
+            "updated": updated,
+            "missing_remote": missing,
+            "errors": errors,
+        }

@@ -144,6 +144,16 @@ class AlertService:
                     alert=existing,
                 )
 
+        # Survive process restart: do not re-insert when an active/acked row
+        # already exists for this dedupe key (in-memory map is empty after boot).
+        db_hit = await self._find_active_by_dedupe(key)
+        if db_hit is not None:
+            return EmitResult(
+                emitted=False,
+                reason="deduplicated_db",
+                alert_id=db_hit.id if hasattr(db_hit, "id") else None,
+            )
+
         try:
             self.provider.send(alert)
         except Exception:
@@ -249,6 +259,27 @@ class AlertService:
             return await self.session.get(AlertRecordModel, alert_id)
         except Exception:
             logger.exception("alert_db_load_failed", alert_id=str(alert_id))
+            return None
+
+    async def _find_active_by_dedupe(self, dedupe_key: str) -> Any:
+        if self.session is None or AlertRecordModel is None or not dedupe_key:
+            return None
+        try:
+            from sqlalchemy import select
+
+            return (
+                await self.session.execute(
+                    select(AlertRecordModel)
+                    .where(
+                        AlertRecordModel.deduplication_key == dedupe_key,
+                        AlertRecordModel.status.in_(["active", "acknowledged"]),
+                    )
+                    .order_by(AlertRecordModel.detected_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        except Exception:
+            logger.exception("alert_dedupe_db_lookup_failed", dedupe_key=dedupe_key)
             return None
 
     async def _update_db_status(

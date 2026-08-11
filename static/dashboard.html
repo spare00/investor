@@ -119,6 +119,10 @@
     /* Overview: jobs need width for the session plan; universe is denser as a side panel. */
     section.jobs { grid-column: span 7; }
     section.universe { grid-column: span 5; }
+    section.alerts #activeAlertsDetail {
+      max-height: 16rem;
+      overflow: auto;
+    }
     section.jobs #jobs {
       max-height: 14rem;
       overflow: auto;
@@ -550,7 +554,7 @@
         <div id="llmBudgetMeta" class="muted">Loading…</div>
         <div id="llmBudgetDetail" style="margin-top:0.5rem"></div>
       </section>
-      <section>
+      <section class="wide alerts">
         <h2>Active Alerts</h2>
         <div id="activeAlertsMeta" class="muted">Loading…</div>
         <div id="activeAlertsDetail" style="margin-top:0.5rem"></div>
@@ -1443,8 +1447,8 @@
         const prows = pnl.length
           ? pnl.map((p) => `<tr>
               <td class="mono">${esc(p.symbol)}</td>
-              <td>${esc(p.net_realized_pl ?? p.realized ?? "—")}</td>
-              <td>${esc(p.unrealized_pl ?? "—")}</td>
+              <td>${esc(p.net_realized_pl != null || p.realized != null ? fmtNum(p.net_realized_pl ?? p.realized, 2) : "—")}</td>
+              <td>${esc(p.unrealized_pl != null ? fmtNum(p.unrealized_pl, 2) : "—")}</td>
               <td>${p.conflict ? pill("conflict", "bad") : "—"}</td>
             </tr>`).join("")
           : "";
@@ -1536,11 +1540,29 @@
         detail.innerHTML = `<div class="muted">No active operational alerts</div>`;
         return;
       }
-      const rows = alerts.map((a) => `<tr>
+      // Collapse identical code+message spam (e.g. recon every minute after restart).
+      const groups = [];
+      const byKey = new Map();
+      for (const a of alerts) {
+        const k = `${a.code || ""}|${a.message || ""}|${a.severity || ""}`;
+        if (byKey.has(k)) {
+          const g = byKey.get(k);
+          g.count += 1;
+          if (a.detected_at && (!g.latest || a.detected_at > g.latest)) {
+            g.latest = a.detected_at;
+            g.id = a.id;
+          }
+        } else {
+          const g = { ...a, count: 1, latest: a.detected_at };
+          byKey.set(k, g);
+          groups.push(g);
+        }
+      }
+      const rows = groups.map((a) => `<tr>
           <td>${pill(a.severity || "info", a.severity === "critical" ? "bad" : a.severity === "warning" ? "warn" : "")}</td>
-          <td class="mono">${esc(a.code || "")}</td>
+          <td class="mono">${esc(a.code || "")}${a.count > 1 ? ` ×${a.count}` : ""}</td>
           <td>${esc(a.message || "")}</td>
-          <td class="muted">${esc(fmtBne(a.detected_at))}</td>
+          <td class="muted">${esc(fmtBne(a.latest || a.detected_at))}</td>
           <td>
             <button type="button" style="font-size:0.75rem;padding:0.15rem 0.4rem;margin-right:0.25rem"
               onclick="ackAlert('${esc(a.id)}')">Ack</button>
@@ -1601,11 +1623,11 @@
             return `<tr>
               <td class="mono">${esc(p.symbol)}</td>
               <td>${esc(p.status)}</td>
-              <td>${esc(p.quantity)}</td>
-              <td>${esc(p.current_price ?? "—")}</td>
-              <td>${esc(p.stop_price ?? "—")}</td>
+              <td>${esc(fmtNum(p.quantity, 4))}</td>
+              <td>${esc(p.current_price != null ? fmtNum(p.current_price, 3) : "—")}</td>
+              <td>${esc(p.stop_price != null ? fmtNum(p.stop_price, 3) : "—")}</td>
               <td>${pill(v, vCls)}</td>
-              <td class="muted">${esc(p.unrealized_pl ?? "")}</td>
+              <td class="muted">${esc(p.unrealized_pl != null && p.unrealized_pl !== "" ? fmtNum(p.unrealized_pl, 2) : "")}</td>
             </tr>`;
           }).join("")
         : "";

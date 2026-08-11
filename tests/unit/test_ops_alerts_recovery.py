@@ -103,6 +103,36 @@ async def test_recon_in_sync_auto_resolves_open_alerts(
 
 
 @pytest.mark.asyncio
+async def test_recon_alert_dedupes_across_service_instances(
+    session: AsyncSession, settings: Settings
+) -> None:
+    """Restart clears in-memory dedupe; DB active row must still suppress spam."""
+    first = await emit_reconciliation_alert(
+        session, settings, result="MATERIAL_DRIFT", issues=[{"x": 1}], sync_type="SCHEDULED"
+    )
+    assert first is not None and first.emitted is True
+
+    second = await emit_reconciliation_alert(
+        session, settings, result="MATERIAL_DRIFT", issues=[{"x": 2}], sync_type="SCHEDULED"
+    )
+    assert second is not None and second.emitted is False
+    assert second.reason == "deduplicated_db"
+
+    from app.models import AlertRecordModel
+    from sqlalchemy import func, select
+
+    n = (
+        await session.execute(
+            select(func.count()).select_from(AlertRecordModel).where(
+                AlertRecordModel.alert_type == "recon.material_drift",
+                AlertRecordModel.status == "active",
+            )
+        )
+    ).scalar_one()
+    assert n == 1
+
+
+@pytest.mark.asyncio
 async def test_emergency_and_llm_budget_alerts(settings: Settings) -> None:
     emergency = await emit_emergency_stop_alert(
         None, settings, reason="operator", source="test"
