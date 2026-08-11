@@ -803,20 +803,21 @@
       return fb === "AU" ? "AU" : "US";
     }
 
-    /** Book-aware dual clock: active/job book leads, other clock trails. */
+    /** Single clock for the active/job book — no dual ET·BNE clutter. */
     function fmtBookSmart(iso, venue, opts) {
       if (!iso) return "";
       const book = String(venue || opsClockVenue || "US").toUpperCase() === "AU" ? "AU" : "US";
-      const primary = book === "AU" ? fmtBne(iso, opts) : fmtEt(iso, opts);
-      const secondary = book === "AU" ? fmtEt(iso, opts) : fmtBne(iso, opts);
-      if (!primary) return secondary || "";
-      if (!secondary || primary === secondary) return primary;
-      return `${primary} · ${secondary}`;
+      return book === "AU" ? fmtBne(iso, opts) : fmtEt(iso, opts);
     }
 
-    /** Dual wall-clock label: follows active ops book by default. */
+    /** Prefer book clock; keep dual only when explicitly needed elsewhere. */
     function fmtDual(iso, opts) {
-      return fmtBookSmart(iso, opsClockVenue, opts);
+      if (!iso) return "";
+      const et = fmtEt(iso, opts);
+      const bne = fmtBne(iso, opts);
+      if (!et) return bne || "";
+      if (!bne || et === bne) return et;
+      return `${et} · ${bne}`;
     }
 
     function fmtJobWhen(job, fallbackVenue) {
@@ -827,17 +828,17 @@
         || (book === "AU" ? (job.next_run_bne || job.display?.brisbane) : (job.next_run_et || job.display?.us_eastern))
         || job.next_run_et || job.next_run_bne
         || job.display?.us_eastern || job.display?.brisbane;
-      return fmtBookSmart(iso, book) || "n/a";
+      return fmtBookSmart(iso, book, { withSeconds: false }) || "n/a";
     }
 
     function setJobsClockHint(venue) {
       const el = document.getElementById("jobsClockHint");
       if (!el) return;
       const book = String(venue || "US").toUpperCase() === "AU" ? "AU" : "US";
-      el.textContent = book === "AU" ? "(AU book · BNE · ET)" : "(US book · ET · BNE)";
+      el.textContent = book === "AU" ? "(AU · BNE)" : "(US · ET)";
       el.title = book === "AU"
-        ? "Active ops book is AU — Brisbane leads, Eastern trails"
-        : "Active ops book is US — Eastern leads, Brisbane trails";
+        ? "Active ops book is AU — times in Brisbane"
+        : "Active ops book is US — times in US Eastern";
     }
 
     /** @deprecated use fmtEt / fmtBne — kept as BNE default so nothing silently shows UTC. */
@@ -1717,11 +1718,11 @@
       const done = rows.filter((j) => !open.includes(j));
       const show = (open.length ? open : done).slice(0, 14);
       const clockHdr = String(activeVenue || opsClockVenue || "US").toUpperCase() === "AU"
-        ? "Planned (BNE · ET)"
-        : "Planned (ET · BNE)";
+        ? "Planned (BNE)"
+        : "Planned (ET)";
       const body = show.map((j) => `<tr>
           <td class="mono">${esc(j.job_key)}</td>
-          <td class="mono">${esc(fmtBookSmart(j.planned_at, resolveJobBook(j, activeVenue)))}</td>
+          <td class="mono">${esc(fmtBookSmart(j.planned_at, resolveJobBook(j, activeVenue), { withSeconds: false }))}</td>
           <td>${pill(j.status || "—", j.status === "completed" ? "good" : j.status === "running" ? "warn" : j.status === "skipped" || j.status === "failed" ? "bad" : "")}</td>
           <td class="muted">${j.interval_minutes != null ? esc(j.interval_minutes) + "m" : "—"}</td>
         </tr>`).join("");
