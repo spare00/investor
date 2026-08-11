@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     # Trading safety
     trading_mode: TradingMode = TradingMode.PAPER
     live_trading_enabled: bool = False
+    # Paper: allow trading when core US index overlays are missing but venue quotes exist.
+    paper_relaxed_data_gates: bool = True
     live_trading_confirmation_token: SecretStr | None = None
     expected_live_confirmation_token: SecretStr = SecretStr(
         "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"

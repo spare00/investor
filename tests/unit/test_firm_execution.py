@@ -106,4 +106,46 @@ async def test_materialize_no_trade_creates_no_intents(session: AsyncSession) ->
     assert result["actor"] == "cio_bottom_up"
     assert result["intent_count"] == 0
     assert result["broker_orders_submitted"] is False
-    assert result["live_trading_blocked"] is True
+    assert result["validation_approved"] is True
+    assert "no_symbols_to_materialize" in result["notes"]
+    assert result["live_trading_blocked"] is False
+
+
+@pytest.mark.asyncio
+async def test_materialize_no_trade_skips_live_price_gate(session: AsyncSession) -> None:
+    clear_settings_cache()
+    settings = Settings(
+        enable_broker_orders=True,
+        enable_automated_execution=True,
+        enable_external_data=True,
+        broker_provider="ibkr",
+        trading_mode=TradingMode.PAPER,
+    )
+    cio = CIODecision(
+        decision_id=uuid4(),
+        timestamp=datetime.now(UTC),
+        market_regime=MarketRegime.NEUTRAL,
+        portfolio_action=PortfolioAction.NO_TRADE,
+        symbol_actions=[],
+        cash_target_pct=100.0,
+        risk_approval=True,
+        hard_veto_honored=True,
+        reason_not_to_trade="flat",
+    )
+    portfolio = PortfolioStateInput(
+        as_of=datetime.now(UTC),
+        equity=25_000.0,
+        cash=25_000.0,
+        cash_pct=100.0,
+        gross_exposure_pct=0.0,
+    )
+    result = await materialize_cio_decision(
+        session,
+        cio,
+        portfolio=portfolio,
+        latest_prices={"AAPL": 220.0},
+        settings=settings,
+    )
+    assert result["intent_count"] == 0
+    assert result["validation_approved"] is True
+    assert "live_prices_unavailable" not in ",".join(result["notes"])

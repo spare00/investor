@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 
 from app.agents.risk_manager import RiskManagerAgent
-from app.core.config import Settings
+from app.core.config import Settings, TradingMode
 from app.market.live_prices import assess_collection_price_integrity
 from app.risk.types import VetoCode
 from app.schemas.risk_manager import PortfolioStateInput, RiskManagerInput
@@ -79,6 +79,8 @@ def test_assess_collection_price_integrity_flags_stub() -> None:
             enable_broker_orders=True,
             enable_external_data=True,
             broker_provider="ibkr",
+            trading_mode=TradingMode.LIVE,
+            live_trading_enabled=True,
         ),
     )
     assert live_req is True

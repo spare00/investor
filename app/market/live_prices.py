@@ -11,6 +11,7 @@ from typing import Iterable
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.market.paper_gates import paper_relaxed_data_gates
 
 logger = get_logger(__name__)
 
@@ -171,11 +172,18 @@ def assess_collection_price_integrity(
     if market_count <= 0:
         notes.append("no_market_quotes")
         return True, False, cleaned, notes
+    if paper_relaxed_data_gates(cfg) and market_count > 0:
+        if not cleaned or any(not is_simulation_price_provider(p) for p in cleaned):
+            notes.append("paper_relaxed_price_feed")
+            return True, True, cleaned or ["ibkr"], notes
     if any(is_simulation_price_provider(p) for p in cleaned):
         notes.append("simulation_provider_present")
         return True, False, cleaned, notes
     if not cleaned:
         notes.append("missing_provider_labels")
+        if paper_relaxed_data_gates(cfg) and market_count > 0:
+            notes.append("paper_relaxed_price_feed")
+            return True, True, cleaned or ["ibkr"], notes
         return True, False, cleaned, notes
     if not any(not is_simulation_price_provider(p) for p in cleaned):
         notes.append("no_live_provider")

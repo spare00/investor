@@ -114,7 +114,22 @@ async def materialize_cio_decision(
     )
 
     needed = {str(a.symbol).upper() for a in (decision.symbol_actions or []) if a.symbol}
-    needed |= {str(k).upper() for k in (latest_prices or {})}
+    if not needed:
+        notes.append("no_symbols_to_materialize")
+        return {
+            "validation_approved": True,
+            "validation_rejections": [],
+            "intent_ids": [],
+            "intent_count": 0,
+            "broker_orders_submitted": False,
+            "orders_submitted": 0,
+            "paper_auto_submit_allowed": paper_auto_submit_allowed(cfg),
+            "notes": notes,
+            "actor": "cio_bottom_up",
+            "live_trading_blocked": False,
+            "prices_used": {},
+        }
+
     prices, price_notes = await resolve_execution_prices(
         needed, candidate_prices=latest_prices, settings=cfg
     )

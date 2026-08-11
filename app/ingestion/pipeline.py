@@ -275,6 +275,12 @@ class DataCollectionPipeline:
         if any(m.get("status") == "error" for m in metas) and not quotes:
             reasons.append("providers_failed_minimum_unmet")
 
+        from app.market.paper_gates import relax_fail_closed_reasons
+
+        reasons, paper_warnings = relax_fail_closed_reasons(
+            reasons, quote_count=len(quotes), settings=self.settings
+        )
+
         # Build legacy CollectionBundle for AgentPipeline compatibility
         legacy = await self._to_legacy_bundle(
             wf, started, quotes, bars, news, filings, macro_dict, economic, reasons
@@ -359,6 +365,7 @@ class DataCollectionPipeline:
             collection_type=collection_type,
             fail_closed=result.fail_closed,
             reasons=result.fail_closed_reasons,
+            paper_warnings=paper_warnings,
         )
         return result
 
