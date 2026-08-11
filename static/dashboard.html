@@ -888,6 +888,11 @@
       return fb === "AU" ? "AU" : "US";
     }
 
+    /** Book-local clock: iso first, then US→ET / AU→BNE. */
+    function fmtBook(iso, venue, opts) {
+      return fmtBookSmart(iso, venue, opts);
+    }
+
     /** Single clock for the active/job book — no dual ET·BNE clutter. */
     function fmtBookSmart(iso, venue, opts) {
       if (!iso) return "";
@@ -2436,8 +2441,8 @@
         body = rawBlock(s);
       }
       const when = agent.run?.started_at
-        ? fmtBookSmart(book, agent.run.started_at)
-        : (agent.run?.display?.brisbane || agent.run?.display?.us_eastern || "");
+        ? (fmtBook(agent.run.started_at, book) || agent.run?.display?.us_eastern || agent.run?.display?.brisbane || "")
+        : (agent.run?.display?.us_eastern || agent.run?.display?.brisbane || "");
       return `<article class="briefing-agent">
         <h3>${esc(agent.label || agent.agent)} ${missing ? pill("missing", "warn") : pill("ok", "good")}
           <span class="muted" style="font-weight:400;font-size:0.8rem;margin-left:0.35rem">${esc(when)}</span>
@@ -2482,7 +2487,7 @@
         const riskTone = /halt|reject|block/i.test(String(riskVerdict)) ? "bad"
           : /approv|ok|pass/i.test(String(riskVerdict)) ? "good" : "";
         const materialsKind = materials.kind || "premarket";
-        const materialsWhen = materials.started_at ? fmtBookSmart(book, materials.started_at) : "";
+        const materialsWhen = materials.started_at ? fmtBook(materials.started_at, book) : "";
         const comp = data.completeness || {};
         if (metaEl) {
           metaEl.innerHTML = `${esc(book)} · ${esc(data.session_date)} · ${esc(dw.state || "?")} · agents ${comp.agent_reports_found ?? 0}/${comp.agent_reports_expected ?? 6}`;
@@ -2499,7 +2504,9 @@
               const agentBits = (row.agents || []).length
                 ? `<details style="margin-top:0.45rem"><summary class="muted">Agent materials (${row.agents_present || 0}/6)</summary>${(row.agents || []).map((a) => renderBriefingAgent(a, book)).join("")}</details>`
                 : `<p class="muted" style="margin:0.35rem 0 0">No full agent dump for this tick (decision summary only).</p>`;
-              const when = row.as_of ? fmtBookSmart(book, row.as_of) : (row.display?.brisbane || row.display?.us_eastern || "");
+              const when = row.as_of
+                ? (fmtBook(row.as_of, book) || row.display?.us_eastern || row.display?.brisbane || "")
+                : (row.display?.us_eastern || row.display?.brisbane || "");
               return `<div class="intraday-card">
                 <div><strong>${esc(when)}</strong> · ${pill(esc(row.portfolio_action || "?"), "")} · thesis ${esc(row.thesis_status || "—")} · ${pill(row.risk_approval ? "risk ok" : "risk blocked", row.risk_approval ? "good" : "bad")}</div>
                 <div class="muted" style="margin-top:0.25rem">regime ${esc(row.market_regime || "—")} · mode ${esc(row.mode || "—")}</div>
@@ -2530,7 +2537,7 @@
           ${(data.session_analyses || []).length
             ? (data.session_analyses || []).map((bundle) => `
                 <div class="intraday-card">
-                  <div><strong>${esc(fmtBookSmart(book, bundle.started_at) || "—")}</strong>
+                  <div><strong>${esc(fmtBook(bundle.started_at, book) || "—")}</strong>
                     · wf <span class="mono">${esc((bundle.workflow_id || "").slice(0, 8))}</span>
                     · ${pill(esc(bundle.cio_action || "?"), "")}
                     · agents ${bundle.agents_present || 0}/6
