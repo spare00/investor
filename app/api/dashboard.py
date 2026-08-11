@@ -145,14 +145,26 @@ async def list_decisions(
 @router.get("/dashboard/briefing")
 async def dashboard_briefing(
     session_date: str | None = None,
+    venue: str | None = None,
     raw: bool = False,
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     """Readable daily report of agent materials that fed the CIO."""
-    return await BriefingService(session).build(
+    from app.market.session_ops import resolve_active_session_venue
+    from app.market.venues import run_calendar_name
+
+    settings = get_settings()
+    active = resolve_active_session_venue(settings)
+    book = (venue or (active.value if active else None) or "US").upper()
+    calendar = run_calendar_name(book, settings)
+    payload = await BriefingService(session).build(
         session_date=session_date or None,
         include_raw=bool(raw),
+        calendar_name=calendar,
     )
+    payload["venue"] = book
+    payload["calendar_name"] = calendar
+    return payload
 
 
 @router.get("/agents/runs")

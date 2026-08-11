@@ -286,7 +286,8 @@
     .briefing-toolbar {
       display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; margin-bottom: 0.85rem;
     }
-    .briefing-toolbar input[type="date"] {
+    .briefing-toolbar input[type="date"],
+    .briefing-toolbar select {
       background: var(--bg); color: var(--text); border: 1px solid var(--line);
       border-radius: 6px; padding: 0.35rem 0.55rem; font: inherit;
     }
@@ -482,7 +483,13 @@
       <section class="full">
         <h2>Daily CIO Briefing</h2>
         <div class="briefing-toolbar">
-          <label class="muted" for="briefingDate">Session (ET)</label>
+          <label class="muted" for="briefingVenue">Book</label>
+          <select id="briefingVenue">
+            <option value="auto">Auto (active)</option>
+            <option value="AU">AU</option>
+            <option value="US">US</option>
+          </select>
+          <label class="muted" for="briefingDate">Session</label>
           <input id="briefingDate" type="date" />
           <button type="button" id="btnBriefingLoad" onclick="refreshBriefing()">Load</button>
           <label class="muted" style="display:flex;align-items:center;gap:0.35rem;margin-left:0.35rem">
@@ -1761,6 +1768,10 @@
       const wfSession = (data.market_status && data.market_status.workflow && data.market_status.workflow.session_date) || null;
       const briefingDate = document.getElementById("briefingDate");
       if (briefingDate && wfSession && !briefingDate.value) briefingDate.value = wfSession;
+      const briefingVenue = document.getElementById("briefingVenue");
+      if (briefingVenue && !briefingVenue.dataset.touched) {
+        briefingVenue.value = "auto";
+      }
       const ts = data.market_status.trading_state;
       const cls = ts === "active" ? "good" : ts === "paused" ? "warn" : "bad";
       document.getElementById("tradingState").innerHTML =
@@ -2354,6 +2365,7 @@
 
     async function refreshBriefing() {
       const dateEl = document.getElementById("briefingDate");
+      const venueEl = document.getElementById("briefingVenue");
       const rawEl = document.getElementById("briefingRaw");
       const metaEl = document.getElementById("briefingMeta");
       const bodyEl = document.getElementById("briefingBody");
@@ -2362,6 +2374,8 @@
       bodyEl.textContent = "Loading briefing…";
       const q = new URLSearchParams();
       if (dateEl && dateEl.value) q.set("session_date", dateEl.value);
+      if (venueEl && venueEl.value && venueEl.value !== "auto") q.set("venue", venueEl.value);
+      else if (opsClockVenue) q.set("venue", opsClockVenue);
       if (rawEl && rawEl.checked) q.set("raw", "true");
       const path = `/dashboard/briefing${q.toString() ? `?${q}` : ""}`;
       try {
@@ -2373,12 +2387,13 @@
           return;
         }
         const dw = data.daily_workflow || {};
+        const book = data.venue || "—";
         const latestCio = ((data.premarket || {}).cio) || {};
         const cioAction = latestCio.portfolio_action || dw.cio_action || "—";
         const riskVerdict = dw.risk_verdict || "—";
         const comp = data.completeness || {};
         if (metaEl) {
-          metaEl.innerHTML = `${esc(data.session_date)} · ${esc(dw.state || "?")} · agents ${comp.agent_reports_found ?? 0}/${comp.agent_reports_expected ?? 6}`;
+          metaEl.innerHTML = `${esc(book)} · ${esc(data.session_date)} · ${esc(dw.state || "?")} · agents ${comp.agent_reports_found ?? 0}/${comp.agent_reports_expected ?? 6}`;
         }
         const agentsHtml = ((data.premarket || {}).agents || []).map(renderBriefingAgent).join("");
         const intra = data.intraday || [];
