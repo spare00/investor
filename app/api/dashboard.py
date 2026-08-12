@@ -51,13 +51,70 @@ from fastapi.responses import Response
 router = APIRouter(tags=["dashboard"])
 
 
-def _enriched_next_jobs(
-    session_jobs: list[dict[str, Any]],
-    *,
-    active_ops_venue: str,
-    upcoming_limit: int = 8,
-) -> list[dict[str, Any]]:
-    """APScheduler pollers + next planned session jobs, with ET/BNE labels."""
+def _parse_session_job_key(job_key: str) -> dict[str, Any]:
+    raw = str(job_key or "")
+    venue, _, rest = raw.partition(":")
+    if not rest:
+        rest = raw
+        venue = ""
+    if rest.startswith("intraday_eval_"):
+        try:
+            plan_index = int(rest.rsplit("_", 1)[-1])
+        except ValueError:
+            plan_index = None
+        return {"venue": venue, "job_type": "intraday_eval", "plan_index": plan_index}
+    return {"venue": venue, "job_type": rest, "plan_index": None}
+
+
+def _session_job_display_name(job_type: str, *, intraday_seq: int | None) -> str:
+    if job_type == "intraday_eval" and intraday_seq is not None:
+        return f"Intraday eval #{intraday_seq}"
+    labels = {
+        "premarket_analysis": "Premarket analysis",
+        "closing_window": "Closing window",
+        "postmarket_review": "Postmarket review",
+        "universe_refresh": "Universe refresh",
+        "force_close": "Force close",
+    }
+    return labels.get(job_type, job_type.replace("_", " "))
+
+
+def enrich_session_jobs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add book-day sequence numbers and human labels (independent of plan_index suffix)."""
+    by_venue: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        parsed = _parse_session_job_key(str(row.get("job_key") or ""))
+        venue = str(row.get("venue") or parsed["venue"] or "")
+        by_venue.setdefault(venue, []).append({**row, "venue": venue})
+
+    enriched: list[dict[str, Any]] = []
+    for _venue, group in by_venue.items():
+        group.sort(key=lambda r: str(r.get("planned_at") or ""))
+        intra_n = 0
+        for session_seq, row in enumerate(group, start=1):
+            parsed = _parse_session_job_key(str(row.get("job_key") or ""))
+            job_type = str(parsed["job_type"])
+            intra_seq: int | None = None
+            if job_type == "intraday_eval":
+                intra_n += 1
+                intra_seq = intra_n
+            enriched.append(
+                {
+                    **row,
+                    "session_seq": session_seq,
+                    "intraday_seq": intra_seq,
+                    "job_type": job_type,
+                    "plan_index": parsed["plan_index"],
+                    "display_name": _session_job_display_name(
+                        job_type, intraday_seq=intra_seq
+                    ),
+                }
+            )
+    return enriched
+
+
+def _enriched_next_jobs() -> list[dict[str, Any]]:
+    """APScheduler runtime pollers only — session plan lives in session_jobs."""
     rows: list[dict[str, Any]] = []
     for job in upcoming_jobs():
         nrt = job.get("next_run_time")
@@ -77,36 +134,6 @@ def _enriched_next_jobs(
             }
         )
 
-    open_statuses = {"planned", "running"}
-    upcoming = [
-        j
-        for j in session_jobs
-        if str(j.get("status") or "").lower() in open_statuses and j.get("planned_at")
-    ]
-
-    def _upcoming_key(row: dict[str, Any]) -> tuple[int, str]:
-        venue_rank = 0 if row.get("venue") == active_ops_venue else 1
-        return (venue_rank, str(row.get("planned_at") or ""))
-
-    upcoming.sort(key=_upcoming_key)
-    for job in upcoming[:upcoming_limit]:
-        rows.append(
-            {
-                "id": job.get("job_key"),
-                "name": job.get("job_key"),
-                "kind": "session",
-                "venue": job.get("venue"),
-                "status": job.get("status"),
-                "next_run_time": job.get("planned_at"),
-                "next_run_et": job.get("planned_at_et"),
-                "next_run_bne": job.get("planned_at_bne"),
-                "display": {
-                    "utc": job.get("planned_at"),
-                    "us_eastern": job.get("planned_at_et"),
-                    "brisbane": job.get("planned_at_bne"),
-                },
-            }
-        )
     return rows
 
 
@@ -431,7 +458,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                         select(ScheduledJobRecord)
                         .where(ScheduledJobRecord.session_date == run.session_date)
                         .order_by(ScheduledJobRecord.planned_at)
-                        .limit(80)
+                        .limit(120)
                     )
                 )
                 .scalars()
@@ -450,10 +477,14 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 session_jobs.append(
                     {
                         "job_key": j.job_key,
+                        "session_date": j.session_date,
                         "planned_at": planned_iso,
                         "planned_at_et": labels.get("us_eastern"),
                         "planned_at_bne": labels.get("brisbane"),
+                        "started_at": j.started_at.isoformat() if j.started_at else None,
+                        "completed_at": j.completed_at.isoformat() if j.completed_at else None,
                         "status": j.status,
+                        "error": j.error,
                         "interval_minutes": jmeta.get("interval_minutes"),
                         "venue": venue.value,
                     }
@@ -471,6 +502,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             venue_rank = 0 if row.get("venue") == active_ops_venue else 1
             return (venue_rank, str(row.get("planned_at") or ""))
 
+        session_jobs = enrich_session_jobs(session_jobs)
         session_jobs.sort(key=_job_sort_key)
     except Exception:  # noqa: BLE001 — dashboard should still render
         workflow_summary = None
@@ -866,7 +898,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             }
             for e in errors
         ],
-        "next_jobs": _enriched_next_jobs(session_jobs, active_ops_venue=active_ops_venue),
+        "next_jobs": _enriched_next_jobs(),
         "session_jobs": session_jobs,
         "llm_budget": snapshot_llm_budget().to_dict(),
     }

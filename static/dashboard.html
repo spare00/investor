@@ -124,16 +124,20 @@
       overflow: auto;
     }
     section.jobs #jobs {
-      max-height: 14rem;
+      max-height: 6rem;
       overflow: auto;
       margin: 0;
       padding-left: 1.1rem;
     }
     section.jobs #sessionJobs {
-      max-height: 22rem;
+      max-height: 28rem;
       overflow: auto;
     }
     section.jobs #sessionJobs table { font-size: 0.82rem; }
+    section.jobs #sessionJobs tr.row-current td {
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+    section.jobs #sessionJobs tr.row-done td { opacity: 0.72; }
     h2 {
       margin: 0 0 0.75rem;
       font-size: 0.8rem;
@@ -524,7 +528,8 @@
         </table>
       </section>
       <section class="jobs">
-        <h2>Next Jobs <span class="muted" style="font-weight:500;font-size:0.85rem" id="jobsClockHint">(ET · BNE)</span></h2>
+        <h2>Session Jobs <span class="muted" style="font-weight:500;font-size:0.85rem" id="jobsClockHint">(ET · BNE)</span></h2>
+        <div class="muted" style="font-size:0.78rem;margin:-0.35rem 0 0.5rem">Runtime pollers</div>
         <ul id="jobs"><li class="muted">None</li></ul>
         <div id="sessionJobs" class="muted" style="margin-top:0.65rem"></div>
       </section>
@@ -1813,30 +1818,81 @@
       ].filter(Boolean).join(" ");
     }
 
+    function sessionJobStatusPill(status) {
+      const st = String(status || "").toLowerCase();
+      if (st === "completed") return pill(status, "good");
+      if (st === "running") return pill(status, "warn");
+      if (st === "failed") return pill(status, "bad");
+      if (st === "skipped") return pill(status, "bad");
+      return pill(status || "—", "");
+    }
+
+    function pickCurrentSessionJobRow(rows) {
+      if (!rows.length) return -1;
+      const running = rows.findIndex((j) => String(j.status || "").toLowerCase() === "running");
+      if (running >= 0) return running;
+      const nowMs = Date.now();
+      let nextIdx = -1;
+      let nextDelta = Infinity;
+      rows.forEach((j, i) => {
+        const st = String(j.status || "").toLowerCase();
+        if (st !== "planned") return;
+        const t = j.planned_at ? Date.parse(j.planned_at) : NaN;
+        if (Number.isNaN(t)) return;
+        const delta = t - nowMs;
+        if (delta >= 0 && delta < nextDelta) {
+          nextDelta = delta;
+          nextIdx = i;
+        }
+      });
+      if (nextIdx >= 0) return nextIdx;
+      const lastDone = rows.map((j, i) => (
+        ["completed", "skipped", "failed"].includes(String(j.status || "").toLowerCase()) ? i : -1
+      )).filter((i) => i >= 0).pop();
+      return lastDone != null ? lastDone : 0;
+    }
+
     function renderSessionJobs(jobs, activeVenue) {
       const el = document.getElementById("sessionJobs");
       if (!el) return;
-      const rows = jobs || [];
+      const venue = String(activeVenue || opsClockVenue || "US").toUpperCase();
+      const rows = (jobs || []).filter((j) => {
+        const jv = String(j.venue || "");
+        if (jv) return jv === venue;
+        const k = String(j.job_key || "");
+        return k.startsWith(`${venue}:`) || !k.includes(":");
+      });
       if (!rows.length) {
-        el.innerHTML = `<div class="muted">No session job plan (prepare a trading day)</div>`;
+        el.innerHTML = `<div class="muted">No session job plan for ${esc(venue)} (prepare a trading day)</div>`;
         return;
       }
-      // Prefer open/running jobs near "now", then a short completed tail.
-      const open = rows.filter((j) => ["planned", "running", "failed"].includes(String(j.status || "").toLowerCase()));
-      const done = rows.filter((j) => !open.includes(j));
-      const show = (open.length ? open : done).slice(0, 14);
-      const clockHdr = String(activeVenue || opsClockVenue || "US").toUpperCase() === "AU"
-        ? "Planned (BNE)"
-        : "Planned (ET)";
-      const body = show.map((j) => `<tr>
-          <td class="mono">${esc(j.job_key)}</td>
-          <td class="mono">${esc(fmtBookSmart(j.planned_at, resolveJobBook(j, activeVenue), { withSeconds: false }))}</td>
-          <td>${pill(j.status || "—", j.status === "completed" ? "good" : j.status === "running" ? "warn" : j.status === "skipped" || j.status === "failed" ? "bad" : "")}</td>
+      const clockHdr = venue === "AU" ? "Planned (BNE)" : "Planned (ET)";
+      const sessionDate = rows[0]?.session_date || "—";
+      const done = rows.filter((j) => ["completed", "skipped", "failed"].includes(String(j.status || "").toLowerCase())).length;
+      const currentIdx = pickCurrentSessionJobRow(rows);
+      const body = rows.map((j, i) => {
+        const st = String(j.status || "").toLowerCase();
+        const rowCls = [
+          i === currentIdx ? "row-current" : "",
+          ["completed", "skipped"].includes(st) ? "row-done" : "",
+        ].filter(Boolean).join(" ");
+        const label = j.display_name || j.job_key;
+        const planKey = j.plan_index != null ? `key _${j.plan_index}` : "";
+        return `<tr class="${rowCls}">
+          <td class="mono">${esc(j.intraday_seq != null ? `#${j.intraday_seq}` : j.session_seq != null ? String(j.session_seq) : "—")}</td>
+          <td>${esc(label)}<div class="muted mono" style="font-size:0.72rem">${esc(j.job_key)}${planKey ? ` · ${esc(planKey)}` : ""}</div></td>
+          <td class="mono">${esc(fmtBookSmart(j.planned_at, resolveJobBook(j, venue), { withSeconds: false }))}</td>
+          <td>${sessionJobStatusPill(j.status)}</td>
           <td class="muted">${j.interval_minutes != null ? esc(j.interval_minutes) + "m" : "—"}</td>
-        </tr>`).join("");
+        </tr>`;
+      }).join("");
       el.innerHTML =
-        `<div class="muted" style="margin-bottom:0.35rem">Session plan (${open.length ? "upcoming/open" : "recent"} ${show.length}/${rows.length})</div>` +
-        dataTable(["Job", clockHdr, "Status", "Interval"], body, 4);
+        `<div class="muted" style="margin-bottom:0.35rem">${esc(venue)} session ${esc(sessionDate)} · ${done}/${rows.length} done · scroll for full plan</div>` +
+        dataTable(["#", "Job", clockHdr, "Status", "Interval"], body, 5);
+      const currentRow = el.querySelector("tr.row-current");
+      if (currentRow) {
+        currentRow.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
     }
 
     async function refreshOverview() {
@@ -1929,11 +1985,9 @@
       }
       document.getElementById("jobs").innerHTML = (data.next_jobs || []).length
         ? data.next_jobs.map((j) => {
-            const kind = j.kind === "session" ? "session" : "runtime";
-            const st = j.status ? ` [${j.status}]` : "";
-            return `<li class="mono"><span class="muted">${esc(kind)}</span> ${esc(j.id || j.name)}${esc(st)}: ${esc(fmtJobWhen(j, opsClockVenue))}</li>`;
+            return `<li class="mono"><span class="muted">runtime</span> ${esc(j.id || j.name)}: ${esc(fmtJobWhen(j, opsClockVenue))}</li>`;
           }).join("")
-        : `<li class="muted">No scheduled jobs</li>`;
+        : `<li class="muted">No runtime pollers</li>`;
       document.getElementById("agents").innerHTML = AGENT_ORDER.map(name => {
         const a = (data.agents || {})[name];
         const lamp = a?.lamp || "silent";
