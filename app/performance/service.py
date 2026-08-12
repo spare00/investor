@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -447,6 +447,7 @@ class PerformanceService:
             select(CIODecisionRecord)
             .where(CIODecisionRecord.decision_timestamp >= period_start)
             .where(CIODecisionRecord.decision_timestamp <= period_end)
+            .order_by(desc(CIODecisionRecord.decision_timestamp))
             .limit(limit)
         )
         rows = list(result.scalars().all())
@@ -675,6 +676,7 @@ class PerformanceService:
                 )
         if persist:
             await self.session.flush()
+        evaluations.sort(key=lambda e: str(e.get("evaluated_at") or ""), reverse=True)
         summary = summarize_decision_evaluations(evaluations)
         return {
             "count": len(evaluations),

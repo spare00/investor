@@ -2221,8 +2221,11 @@
       const summary = decisions.summary || {};
       const byH = summary.by_horizon || {};
       const firm = summary.firm || {};
-      const evalRows = evals.length
-        ? evals.slice(0, 40).map((e) => {
+      const sortedEvals = [...evals].sort(
+        (a, b) => String(b.evaluated_at || "").localeCompare(String(a.evaluated_at || "")),
+      );
+      const evalRows = sortedEvals.length
+        ? sortedEvals.slice(0, 40).map((e) => {
             const m = e.metrics || {};
             const dir = m.directional_correct;
             const dirVal = metricVal(dir);
@@ -2233,7 +2236,7 @@
                 ? pill("✗", "bad")
                 : pill(dirSt === "UNAVAILABLE" ? "n/a" : "—", "");
             return `<tr>
-              <td class="mono">${esc(fmtEt(e.evaluated_at))}</td>
+              <td class="mono">${esc(fmtBookSmart(e.evaluated_at, opsClockVenue, { withSeconds: true }))}</td>
               <td>${esc(e.universe_horizon || "—")}</td>
               <td>${esc(e.symbol || (e.scope === "portfolio" ? "book" : "—"))}</td>
               <td>${esc(e.action || m.action || m.raw_action || "—")}</td>
