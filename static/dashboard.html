@@ -138,6 +138,25 @@
       background: color-mix(in srgb, var(--accent) 12%, transparent);
     }
     section.jobs #sessionJobs tr.row-done td { opacity: 0.72; }
+    #decisionEval .decision-eval-scroll {
+      max-height: 23rem;
+      overflow: auto;
+      margin-top: 0.5rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    #decisionEval .decision-eval-scroll table {
+      font-size: 0.82rem;
+      margin: 0;
+      width: 100%;
+    }
+    #decisionEval .decision-eval-scroll thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: color-mix(in srgb, var(--panel) 96%, #0d1117);
+      box-shadow: 0 1px 0 var(--line);
+    }
     h2 {
       margin: 0 0 0.75rem;
       font-size: 0.8rem;
@@ -766,6 +785,9 @@
       document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === `panel-${name}`));
       if (name === "briefing") {
         refreshBriefing().catch(() => {});
+      }
+      if (name === "agents") {
+        refreshAgentsTab().catch(() => {});
       }
     }
 
@@ -2141,11 +2163,16 @@
     }
 
     async function refreshAgentsTab() {
-      const [agents, calibration, decisions] = await Promise.all([
+      const [agents, calibration, decisions, summary] = await Promise.all([
         fetchJson("/performance/agents"),
         fetchJson("/performance/calibration"),
         fetchJson("/performance/decisions"),
+        fetchJson("/dashboard/summary").catch(() => ({})),
       ]);
+      if (summary && summary.market_status) {
+        opsClockVenue = summary.market_status.active_ops_venue || opsClockVenue;
+        setJobsClockHint(opsClockVenue);
+      }
       const buckets = agents.calibration?.buckets || [];
       const dirObs = agents.directional_accuracy?.observation_count ?? 0;
       const noteEl = document.getElementById("agentPerfNote");
@@ -2236,7 +2263,7 @@
                 ? pill("✗", "bad")
                 : pill(dirSt === "UNAVAILABLE" ? "n/a" : "—", "");
             return `<tr>
-              <td class="mono">${esc(fmtBookSmart(e.evaluated_at, opsClockVenue, { withSeconds: true }))}</td>
+              <td class="mono">${esc(fmtDual(e.evaluated_at, { withSeconds: true }))}</td>
               <td>${esc(e.universe_horizon || "—")}</td>
               <td>${esc(e.symbol || (e.scope === "portfolio" ? "book" : "—"))}</td>
               <td>${esc(e.action || m.action || m.raw_action || "—")}</td>
@@ -2267,8 +2294,10 @@
         ])}
         <div class="muted" style="margin:0.85rem 0 0.35rem">Hit rate by horizon</div>
         ${hzCards.length ? kpiGrid(hzCards) : ""}
-        <div class="muted" style="margin:0.65rem 0 0.5rem">Horizon price from market_snapshots inside book window; pending until horizon elapses</div>
-        ${dataTable(["When", "Book", "Sym", "Action", "Dir.", "Return", "vs Bench", "Quality"], evalRows)}
+        <div class="muted" style="margin:0.65rem 0 0.35rem">Latest evaluations (newest first) · scroll table</div>
+        <div class="decision-eval-scroll">
+          ${dataTable(["When (ET · BNE)", "Book", "Sym", "Action", "Dir.", "Return", "vs Bench", "Quality"], evalRows, 8)}
+        </div>
         ${rawBlock(decisions)}`);
     }
 

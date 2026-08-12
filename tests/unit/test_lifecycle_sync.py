@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -74,6 +75,48 @@ async def test_sync_from_broker_positions_upserts_and_closes(session: AsyncSessi
     await session.refresh(rows[0])
     assert rows[0].status == "CLOSED"
     assert rows[0].quantity == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_reuses_pending_close_lifecycle_by_con_id(session: AsyncSession) -> None:
+    """Broker still holding size must not INSERT a second OPEN lifecycle for same con_id."""
+    mon = PositionMonitor(session, settings=Settings(app_env="test"))
+    con_id = 60009472
+    pending = PositionLifecycle(
+        id=uuid4(),
+        symbol="VAS",
+        status="PENDING_CLOSE",
+        quantity=876.0,
+        average_entry_price=114.1,
+        current_price=114.07,
+        venue="AU",
+        currency="AUD",
+        con_id=con_id,
+        opened_at=datetime.now(UTC),
+        metadata_json={"closed_by": "closing_window"},
+    )
+    session.add(pending)
+    await session.flush()
+
+    out = await mon.sync_from_broker_positions(
+        [
+            {
+                "symbol": "VAS",
+                "qty": 876,
+                "avg_entry_price": 114.1,
+                "market_value": 99925.32,
+                "con_id": con_id,
+                "exchange": "ASX",
+                "currency": "AUD",
+            }
+        ]
+    )
+    assert out["upserted"] == 1
+    rows = list((await session.execute(select(PositionLifecycle))).scalars().all())
+    assert len(rows) == 1
+    assert rows[0].id == pending.id
+    assert rows[0].status == "OPEN"
+    assert rows[0].quantity == 876.0
 
 
 @pytest.mark.asyncio

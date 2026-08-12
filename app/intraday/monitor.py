@@ -27,6 +27,14 @@ EXIT_INTENT_REQUIRED = "EXIT_INTENT_REQUIRED"
 RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
 EMERGENCY_ACTION_REQUIRED = "EMERGENCY_ACTION_REQUIRED"
 
+_ACTIVE_LIFECYCLE_STATUSES = (
+    "OPEN",
+    "PENDING_OPEN",
+    "ADDING",
+    "REDUCING",
+    "PENDING_CLOSE",
+)
+
 
 @dataclass(slots=True)
 class MonitorResult:
@@ -44,9 +52,7 @@ class PositionMonitor:
 
     async def list_lifecycles(self, *, venue: str | None = None) -> list[PositionLifecycle]:
         clauses = [
-            PositionLifecycle.status.in_(
-                ["PENDING_OPEN", "OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"]
-            )
+            PositionLifecycle.status.in_(list(_ACTIVE_LIFECYCLE_STATUSES))
         ]
         if venue:
             clauses.append(PositionLifecycle.venue == str(venue).upper())
@@ -252,11 +258,7 @@ class PositionMonitor:
                 await self.session.execute(
                     select(PositionLifecycle)
                     .where(PositionLifecycle.con_id == int(con_id))
-                    .where(
-                        PositionLifecycle.status.in_(
-                            ["OPEN", "PENDING_OPEN", "ADDING", "REDUCING"]
-                        )
-                    )
+                    .where(PositionLifecycle.status.in_(_ACTIVE_LIFECYCLE_STATUSES))
                     .limit(1)
                 )
             ).scalar_one_or_none()
@@ -266,11 +268,7 @@ class PositionMonitor:
                     select(PositionLifecycle)
                     .where(PositionLifecycle.symbol == symbol.upper())
                     .where(PositionLifecycle.venue == resolved_venue)
-                    .where(
-                        PositionLifecycle.status.in_(
-                            ["OPEN", "PENDING_OPEN", "ADDING", "REDUCING"]
-                        )
-                    )
+                    .where(PositionLifecycle.status.in_(_ACTIVE_LIFECYCLE_STATUSES))
                     .limit(1)
                 )
             ).scalar_one_or_none()
@@ -285,6 +283,15 @@ class PositionMonitor:
                 existing.con_id = int(con_id)
             if px > 0:
                 existing.current_price = px
+            if existing.status == "PENDING_CLOSE" and quantity > 0:
+                # Broker still holds size — do not spawn a second OPEN row (uq_lifecycles_con_id_open).
+                existing.status = "OPEN"
+                existing.closed_at = None
+                meta = dict(existing.metadata_json or {})
+                meta.pop("closed_by", None)
+                meta.pop("closed_at", None)
+                meta["reopened_by"] = "broker_position_sync"
+                existing.metadata_json = meta
             if stop_price is not None and existing.stop_price is None:
                 existing.stop_price = stop_price
                 policy = dict(existing.exit_policy or {})
