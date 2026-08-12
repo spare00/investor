@@ -98,6 +98,23 @@ class AuditService:
 
         cio = analysis.cio
         payload = cio.model_dump(mode="json")
+        from app.market.venues import resolve_venue, venue_for_symbol
+
+        plan_syms = [
+            str(p.get("symbol") or "").upper()
+            for p in payload.get("symbol_actions") or []
+            if isinstance(p, dict) and p.get("symbol")
+        ]
+        trace_book = (payload.get("trace") or {}).get("book") or {}
+        raw_venue = trace_book.get("venue") if isinstance(trace_book, dict) else None
+        if raw_venue:
+            book_venue = str(raw_venue).upper()
+        elif plan_syms:
+            book_venue = venue_for_symbol(plan_syms[0]).value
+        else:
+            book_venue = resolve_venue().value
+        if book_venue in {"US", "AU"}:
+            payload["venue"] = book_venue
         try:
             from app.performance.price_lookup import DecisionPriceResolver
             from app.universe.service import UniverseService
@@ -124,11 +141,16 @@ class AuditService:
                     if resolved.price is not None:
                         plan["decision_price"] = resolved.price
                         plan["decision_price_source"] = resolved.source
-            # Portfolio reference print from primary benchmark when missing.
+            # Portfolio reference print from book benchmark when missing.
             if payload.get("reference_price") is None and payload.get("decision_price") is None:
                 from app.core.config import get_settings
 
-                bench = str(get_settings().primary_benchmark or "SPY").upper()
+                cfg = get_settings()
+                bench = (
+                    str(cfg.primary_benchmark_au or "VAS").upper()
+                    if book_venue == "AU"
+                    else str(cfg.primary_benchmark or "SPY").upper()
+                )
                 resolved = await resolver.decision_price(bench, cio.timestamp, book="unknown")
                 if resolved.price is not None:
                     payload["reference_price"] = resolved.price

@@ -168,6 +168,13 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                 trace["latency_ms"] = latency_ms
                 trace.setdefault("decision_timestamp", datetime.now(UTC).isoformat())
                 trace.setdefault("run_id", str(run_id))
+                input_trace = getattr(payload, "trace", None)
+                input_book = getattr(input_trace, "book", None) if input_trace is not None else None
+                if input_book and not trace.get("book"):
+                    if isinstance(input_book, dict):
+                        trace["book"] = input_book
+                    elif hasattr(input_book, "model_dump"):
+                        trace["book"] = input_book.model_dump(mode="json")
                 data["trace"] = trace
             data.setdefault("timestamp", datetime.now(UTC).isoformat())
             try:

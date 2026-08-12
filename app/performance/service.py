@@ -14,8 +14,11 @@ from app.core.config import Settings, get_settings
 from app.models import (
     AgentEvaluationRecord,
     AgentOutcomeEvaluation,
+    AgentReport,
+    AgentRun,
     CIODecisionRecord,
     DailyPerformance,
+    DailyWorkflowRun,
     DecisionEvaluationRecord,
     PortfolioSnapshot,
     PositionLifecycle,
@@ -79,6 +82,37 @@ def _jsonable(value: Any) -> Any:
     if hasattr(value, "value") and not isinstance(value, (str, int, float, bool)):
         return value.value
     return value
+
+
+def _decision_book_venue(
+    *,
+    payload: dict[str, Any],
+    workflow_id: Any,
+    wf_venues: dict[Any, str],
+    symbol: str | None,
+    settings: Settings,
+) -> str:
+    """Resolve US/AU ops book for a CIO decision row (workflow → payload → symbol)."""
+    from app.market.venues import resolve_venue, venue_for_symbol
+
+    raw = payload.get("venue") or payload.get("book_venue")
+    if raw:
+        v = str(raw).upper()
+        if v in {"US", "AU"}:
+            return v
+    if workflow_id is not None and workflow_id in wf_venues:
+        return wf_venues[workflow_id]
+    if symbol:
+        return venue_for_symbol(symbol, settings).value
+    return resolve_venue(settings).value
+
+
+def _benchmark_for_venue(venue: str, settings: Settings) -> str:
+    if str(venue).upper() == "AU":
+        return str(settings.primary_benchmark_au or "VAS").upper()
+    return str(settings.primary_benchmark or "SPY").upper()
+
+
 from app.performance.valuation import build_portfolio_valuation
 
 
@@ -451,10 +485,38 @@ class PerformanceService:
             .limit(limit)
         )
         rows = list(result.scalars().all())
+        wf_ids = {row.workflow_id for row in rows if row.workflow_id}
+        wf_venues: dict[Any, str] = {}
+        if wf_ids:
+            wf_rows = await self.session.execute(
+                select(DailyWorkflowRun.id, DailyWorkflowRun.metadata_json).where(
+                    DailyWorkflowRun.id.in_(wf_ids)
+                )
+            )
+            for wf_id, meta in wf_rows.all():
+                raw = (meta or {}).get("venue")
+                if raw:
+                    v = str(raw).upper()
+                    if v in {"US", "AU"}:
+                        wf_venues[wf_id] = v
+            agent_rows = await self.session.execute(
+                select(AgentRun.workflow_id, AgentReport.payload)
+                .join(AgentReport, AgentReport.agent_run_id == AgentRun.id)
+                .where(AgentRun.workflow_id.in_(wf_ids))
+                .where(AgentRun.agent_name == "market_intelligence")
+            )
+            for wf_id, rep_payload in agent_rows.all():
+                if wf_id in wf_venues:
+                    continue
+                book = (rep_payload or {}).get("trace", {}).get("book") or {}
+                raw = book.get("venue") if isinstance(book, dict) else None
+                if raw:
+                    v = str(raw).upper()
+                    if v in {"US", "AU"}:
+                        wf_venues[wf_id] = v
         wl = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
         watchlist_hz = {r.symbol.upper(): str(r.horizon) for r in wl if r.symbol}
         resolver = DecisionPriceResolver(self.session)
-        benchmark = str(self.settings.primary_benchmark or "SPY").upper()
 
         evaluations: list[dict[str, Any]] = []
         filled = 0
@@ -464,6 +526,19 @@ class PerformanceService:
         for row in rows:
             payload = dict(row.payload or {})
             plans = list(payload.get("symbol_actions") or [])
+            plan_syms = [
+                str(p.get("symbol") or "").upper()
+                for p in plans
+                if isinstance(p, dict) and p.get("symbol")
+            ]
+            decision_venue = _decision_book_venue(
+                payload=payload,
+                workflow_id=row.workflow_id,
+                wf_venues=wf_venues,
+                symbol=plan_syms[0] if plan_syms else None,
+                settings=self.settings,
+            )
+            benchmark = _benchmark_for_venue(decision_venue, self.settings)
             plan_horizons = [
                 universe_horizon_for_plan(p if isinstance(p, dict) else {}, watchlist_horizon=watchlist_hz)
                 for p in plans
@@ -527,6 +602,7 @@ class PerformanceService:
                 "action": row.portfolio_action,
                 "symbol": benchmark if port_dec.price else None,
                 "scope": "portfolio",
+                "venue": decision_venue,
                 "universe_horizon": primary,
                 "horizons": sorted(set(plan_horizons)) if plan_horizons else [],
                 "evaluation_horizon": eval_label,
@@ -602,6 +678,13 @@ class PerformanceService:
                     "action": plan.get("action"),
                     "symbol": sym,
                     "scope": "symbol",
+                    "venue": _decision_book_venue(
+                        payload=payload,
+                        workflow_id=row.workflow_id,
+                        wf_venues=wf_venues,
+                        symbol=sym,
+                        settings=self.settings,
+                    ),
                     "universe_horizon": hz,
                     "evaluation_horizon": sym_label,
                     "decision_price": plan_price or None,

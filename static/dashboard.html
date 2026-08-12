@@ -927,6 +927,19 @@
       return book === "AU" ? fmtBne(iso, opts) : fmtEt(iso, opts);
     }
 
+    function resolveEvalVenue(e) {
+      const v = String(e?.venue || "").toUpperCase();
+      if (v === "AU" || v === "US") return v;
+      const sym = String(e?.symbol || "").toUpperCase();
+      const auSyms = new Set([
+        "BHP", "CBA", "WBC", "NAB", "ANZ", "MQG", "VAS", "IOZ", "NDQ", "JPEQ",
+        "RIO", "FMG", "WES", "WOW", "STO", "ORG", "WDS", "CSL", "XRO", "REA",
+      ]);
+      if (auSyms.has(sym)) return "AU";
+      if (sym) return "US";
+      return "US";
+    }
+
     /** Prefer book clock; keep dual only when explicitly needed elsewhere. */
     function fmtDual(iso, opts) {
       if (!iso) return "";
@@ -2245,9 +2258,9 @@
         ${rawBlock(calibration)}`);
 
       const evals = decisions.evaluations || [];
-      const summary = decisions.summary || {};
-      const byH = summary.by_horizon || {};
-      const firm = summary.firm || {};
+      const evalSummary = decisions.summary || {};
+      const byH = evalSummary.by_horizon || {};
+      const firm = evalSummary.firm || {};
       const sortedEvals = [...evals].sort(
         (a, b) => String(b.evaluated_at || "").localeCompare(String(a.evaluated_at || "")),
       );
@@ -2263,7 +2276,7 @@
                 ? pill("✗", "bad")
                 : pill(dirSt === "UNAVAILABLE" ? "n/a" : "—", "");
             return `<tr>
-              <td class="mono">${esc(fmtDual(e.evaluated_at, { withSeconds: true }))}</td>
+              <td class="mono">${esc(fmtBookSmart(e.evaluated_at, resolveEvalVenue(e), { withSeconds: true }))}</td>
               <td>${esc(e.universe_horizon || "—")}</td>
               <td>${esc(e.symbol || (e.scope === "portfolio" ? "book" : "—"))}</td>
               <td>${esc(e.action || m.action || m.raw_action || "—")}</td>
@@ -2296,7 +2309,7 @@
         ${hzCards.length ? kpiGrid(hzCards) : ""}
         <div class="muted" style="margin:0.65rem 0 0.35rem">Latest evaluations (newest first) · scroll table</div>
         <div class="decision-eval-scroll">
-          ${dataTable(["When (ET · BNE)", "Book", "Sym", "Action", "Dir.", "Return", "vs Bench", "Quality"], evalRows, 8)}
+          ${dataTable(["When", "Book", "Sym", "Action", "Dir.", "Return", "vs Bench", "Quality"], evalRows, 8)}
         </div>
         ${rawBlock(decisions)}`);
     }
