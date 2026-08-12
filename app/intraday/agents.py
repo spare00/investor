@@ -290,6 +290,13 @@ class IntradayAgentService:
             if workflow_run is not None:
                 meta_w = dict(getattr(workflow_run, "metadata_json", None) or {})
                 meta_w["reanalysis"] = self.bus.dump_reanalysis_state()
+                now_link = datetime.now(UTC)
+                meta_w["last_briefing_workflow_id"] = str(analysis.workflow_id)
+                meta_w["last_briefing_kind"] = "intraday"
+                meta_w["last_briefing_at"] = now_link.isoformat()
+                meta_w["cio_action"] = portfolio_action
+                meta_w["risk_verdict"] = analysis.risk.overall_verdict.value
+                meta_w["intent_count"] = int(execution.get("intent_count") or 0)
                 workflow_run.metadata_json = meta_w
             await self.session.flush()
             return {

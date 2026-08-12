@@ -23,6 +23,28 @@ from app.models import (
 from app.schemas.common import AgentName
 
 _ET = ZoneInfo("America/New_York")
+_SYD = ZoneInfo("Australia/Sydney")
+
+_CALENDAR_TZ: dict[str, ZoneInfo] = {
+    "NYSE": _ET,
+    "XNYS": _ET,
+    "NASDAQ": _ET,
+    "XNAS": _ET,
+    "ASX": _SYD,
+    "XASX": _SYD,
+}
+
+
+def session_day_bounds_utc(
+    session_date: str, *, calendar_name: str = "NYSE"
+) -> tuple[datetime, datetime]:
+    """Book session calendar day → UTC [start, end). ASX uses Sydney; US uses ET."""
+    tz = _CALENDAR_TZ.get(calendar_name.upper(), _ET)
+    day = date.fromisoformat(session_date)
+    start_local = datetime(day.year, day.month, day.day, tzinfo=tz)
+    end_local = start_local + timedelta(days=1)
+    return start_local.astimezone(UTC), end_local.astimezone(UTC)
+
 
 _AGENT_LABELS = {
     AgentName.MARKET_INTELLIGENCE.value: "Market Intelligence",
@@ -32,14 +54,6 @@ _AGENT_LABELS = {
     AgentName.DEVILS_ADVOCATE.value: "Devil's Advocate",
     AgentName.CIO.value: "CIO",
 }
-
-
-def session_day_bounds_utc(session_date: str) -> tuple[datetime, datetime]:
-    """ET session calendar day → UTC [start, end)."""
-    day = date.fromisoformat(session_date)
-    start_et = datetime(day.year, day.month, day.day, tzinfo=_ET)
-    end_et = start_et + timedelta(days=1)
-    return start_et.astimezone(UTC), end_et.astimezone(UTC)
 
 
 def summarize_mi(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -271,7 +285,9 @@ class BriefingService:
         # Manual dashboard "Intraday Eval" / WorkflowService uses a fresh workflow_id
         # that is not written to analysis_workflow_run_id — recover by session day.
         if len(agent_map) < 6:
-            fallback_wf, fallback_map = await self._latest_agents_for_session(run.session_date)
+            fallback_wf, fallback_map = await self._latest_agents_for_session(
+                run.session_date, calendar_name=calendar_name
+            )
             meta_probe = dict(run.metadata_json or {})
             linked = meta_probe.get("last_briefing_workflow_id")
             if linked:
@@ -296,35 +312,74 @@ class BriefingService:
             default=None,
         )
 
-        session_analyses = await self._session_analyses(run.session_date, include_raw=include_raw)
-        intraday = await self._intraday_for_session(run.session_date, include_raw=include_raw)
+        meta = dict(run.metadata_json or {})
 
-        # Show the newest full agent workflow in the summary + materials panel.
+        session_analyses = await self._session_analyses(
+            run.session_date, calendar_name=calendar_name, include_raw=include_raw
+        )
+        intraday = await self._intraday_for_session(
+            run.session_date, calendar_name=calendar_name, include_raw=include_raw
+        )
+
+        # Newest full agent workflow for summary + materials (book-local session day).
         display_wf_id = premarket_wf_id
         materials_kind = "premarket"
         materials_at: str | None = premarket_at.isoformat() if premarket_at else None
-        latest_bundle = session_analyses[0] if session_analyses else None
-        if latest_bundle and latest_bundle.get("workflow_id"):
-            latest_at = _parse_iso(latest_bundle.get("started_at"))
-            if latest_at and (premarket_at is None or latest_at >= premarket_at):
-                display_wf_id = UUID(str(latest_bundle["workflow_id"]))
-                materials_kind = (
-                    "intraday"
-                    if str(display_wf_id) != str(premarket_wf_id)
-                    else "premarket"
-                )
-                materials_at = latest_bundle.get("started_at")
-                if str(display_wf_id) != str(premarket_wf_id):
-                    agent_map = await self._agents_for_workflow(display_wf_id)
+        display_agent_map = agent_map
 
-        display_agents = (
-            _agents_from_map(agent_map, cio_row=cio_row, include_raw=include_raw)
-            if str(display_wf_id) != str(premarket_wf_id)
-            else premarket_agents
+        candidates: list[tuple[datetime | None, UUID, str]] = [
+            (premarket_at, premarket_wf_id, "premarket"),
+        ]
+        linked_at = _parse_iso(meta.get("last_briefing_at"))
+        linked_raw = meta.get("last_briefing_workflow_id")
+        if linked_raw and linked_at:
+            try:
+                raw_kind = str(meta.get("last_briefing_kind") or "intraday")
+                kind = "intraday" if raw_kind.startswith("intraday") else raw_kind
+                candidates.append((linked_at, UUID(str(linked_raw)), kind))
+            except ValueError:
+                pass
+        for bundle in session_analyses:
+            at = _parse_iso(bundle.get("started_at"))
+            wf_raw = bundle.get("workflow_id")
+            if not wf_raw or not at:
+                continue
+            try:
+                wf = UUID(str(wf_raw))
+            except ValueError:
+                continue
+            kind = "intraday" if str(wf) != str(premarket_wf_id) else "premarket"
+            candidates.append((at, wf, kind))
+
+        best_at: datetime | None = None
+        best_wf = premarket_wf_id
+        best_kind = "premarket"
+        for at, wf, kind in candidates:
+            if at is None:
+                continue
+            if best_at is not None and at < best_at:
+                continue
+            wf_map = (
+                agent_map
+                if str(wf) == str(premarket_wf_id)
+                else await self._agents_for_workflow(wf)
+            )
+            if not wf_map:
+                continue
+            best_at = at
+            best_wf = wf
+            best_kind = kind
+            display_agent_map = wf_map
+
+        display_wf_id = best_wf
+        materials_kind = best_kind
+        materials_at = best_at.isoformat() if best_at else materials_at
+
+        display_agents = _agents_from_map(
+            display_agent_map, cio_row=cio_row, include_raw=include_raw
         )
         found = sum(1 for a in display_agents if a["present"])
 
-        meta = dict(run.metadata_json or {})
         risk_summary = next(
             (
                 a["summary"]
@@ -462,9 +517,9 @@ class BriefingService:
         return out
 
     async def _latest_agents_for_session(
-        self, session_date: str
+        self, session_date: str, *, calendar_name: str = "NYSE"
     ) -> tuple[UUID | None, dict[str, tuple[AgentRun, AgentReport]]]:
-        start, end = session_day_bounds_utc(session_date)
+        start, end = session_day_bounds_utc(session_date, calendar_name=calendar_name)
         runs = list(
             (
                 await self.session.execute(
@@ -506,10 +561,10 @@ class BriefingService:
         return len(rows)
 
     async def _session_analyses(
-        self, session_date: str, *, include_raw: bool
+        self, session_date: str, *, calendar_name: str = "NYSE", include_raw: bool
     ) -> list[dict[str, Any]]:
-        """All distinct agent workflow bundles for the ET session day (newest first)."""
-        start, end = session_day_bounds_utc(session_date)
+        """All distinct agent workflow bundles for the book session day (newest first)."""
+        start, end = session_day_bounds_utc(session_date, calendar_name=calendar_name)
         runs = list(
             (
                 await self.session.execute(
@@ -587,9 +642,9 @@ class BriefingService:
         ).scalar_one_or_none()
 
     async def _intraday_for_session(
-        self, session_date: str, *, include_raw: bool
+        self, session_date: str, *, calendar_name: str = "NYSE", include_raw: bool
     ) -> list[dict[str, Any]]:
-        start, end = session_day_bounds_utc(session_date)
+        start, end = session_day_bounds_utc(session_date, calendar_name=calendar_name)
         rows = list(
             (
                 await self.session.execute(

@@ -140,6 +140,24 @@ def test_session_day_bounds() -> None:
     assert (end - start).total_seconds() == 86400
 
 
+def test_session_day_bounds_asx_includes_morning_bne() -> None:
+    """AU intraday ticks (e.g. 10:19 BNE) must fall inside the ASX session_date window."""
+    start, end = session_day_bounds_utc("2026-08-12", calendar_name="ASX")
+    # 10:19 BNE on 2026-08-12 = 00:19 UTC same calendar date
+    tick = datetime(2026, 8, 12, 0, 19, tzinfo=UTC)
+    assert start <= tick < end
+    # 08:01 BNE premarket = prior UTC evening but still ASX session_date 2026-08-12
+    pre = datetime(2026, 8, 11, 22, 1, tzinfo=UTC)
+    assert start <= pre < end
+
+
+def test_session_day_bounds_nyse_excludes_early_bne_tick() -> None:
+    """Same 10:19 BNE tick is outside a US ET session_date window (US fix path)."""
+    start, end = session_day_bounds_utc("2026-08-12", calendar_name="NYSE")
+    tick = datetime(2026, 8, 12, 0, 19, tzinfo=UTC)
+    assert not (start <= tick < end)
+
+
 @pytest.mark.asyncio
 async def test_briefing_service_assembles_premarket(session: AsyncSession) -> None:
     analysis = _analysis()
@@ -219,6 +237,50 @@ async def test_briefing_risk_verdict_falls_back_to_agent(
     briefing = await BriefingService(session).build(session_date="2026-08-07")
     assert briefing["daily_workflow"]["risk_verdict"] == "approved"
     assert briefing["daily_workflow"]["cio_action"] == "SCALE_IN"
+
+
+@pytest.mark.asyncio
+async def test_briefing_prefers_asx_intraday_over_premarket(session: AsyncSession) -> None:
+    """Scheduled AU intraday must surface in summary, not stick on premarket."""
+
+    pre_wf = uuid4()
+    intra_wf = uuid4()
+    pre_at = datetime(2026, 8, 11, 22, 1, tzinfo=UTC)  # 08:01 BNE
+    intra_at = datetime(2026, 8, 12, 0, 19, tzinfo=UTC)  # 10:19 BNE
+
+    for wf, ts, action in (
+        (pre_wf, pre_at, PortfolioAction.NO_TRADE),
+        (intra_wf, intra_at, PortfolioAction.HOLD),
+    ):
+        analysis = _analysis(workflow_id=wf)
+        analysis.cio.portfolio_action = action
+        await AuditService(session).persist_analysis(analysis)
+
+    run = DailyWorkflowRun(
+        id=uuid4(),
+        session_date="2026-08-12",
+        calendar_name="ASX",
+        current_state="INTRADAY",
+        status="running",
+        analysis_workflow_run_id=pre_wf,
+        latest_decision_id=analysis.cio.decision_id,
+        metadata_json={
+            "last_briefing_workflow_id": str(intra_wf),
+            "last_briefing_kind": "intraday",
+            "last_briefing_at": intra_at.isoformat(),
+            "cio_action": "HOLD",
+            "risk_verdict": "approved",
+        },
+    )
+    session.add(run)
+    await session.flush()
+
+    briefing = await BriefingService(session).build(
+        session_date="2026-08-12", calendar_name="ASX"
+    )
+    assert briefing["materials"]["kind"] == "intraday"
+    assert briefing["materials"]["workflow_id"] == str(intra_wf)
+    assert briefing["daily_workflow"]["cio_action"] == "HOLD"
 
 
 @pytest.mark.asyncio
