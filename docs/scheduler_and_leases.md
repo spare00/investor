@@ -14,6 +14,8 @@
   3. Interval job `broker_reconciliation` (when `ENABLE_BROKER_CONNECTION` or `ENABLE_BROKER_ORDERS`) under lease `scheduler:broker_recon`. Cadence: `BROKER_RECONCILIATION_INTERVAL_SECONDS` (default 60).
 - Due-job dispatch under `scheduler:dispatch` does **not** call LLM/Risk/Broker directly. Session catch-up (after that lease is released) may run analysis under venue-scoped leases; universe refresh may call the Universe Manager agent.
 
+Each due job is wrapped in `wait_for` using `effective_job_action_timeout_seconds()` — **480s for both local and cloud**. Local 14B must finish inside that cap (compact briefs, Quant/Risk skip chat). Timeouts increment `investor_scheduler_job_timeouts_total` and show on dashboard `committee_watch`. Do not treat a longer cap as the first response to a growing watchlist.
+
 Job plans are created in `DailyWorkflowService.prepare` from Calendar Service session times. Job keys are **venue-scoped** (`US:premarket_analysis`, `AU:intraday_eval_0`, …) so the same calendar date can hold both ASX and US books. Default `ENABLED_VENUES=US,AU` prepares/dispatches both (non-overlapping BNE wall-clock). Set `ENABLED_VENUES=US` (or `AU`) to run a single book. `intraday_eval_*` spacing follows the tightest active-watchlist horizon (scalp ≈ 2m, day ≈ 5m, …), floored so planned ticks stay near `1.5 × MAX_INTRADAY_REANALYSES` for the session; overdue intraday jobs are coalesced **per venue** to the latest. Universe refresh (scheduler or `POST /universe/refresh`) **replans** pending `intraday_eval_*` rows so cadence tracks horizon changes. Runtime gates (`min_gap`, agent cooldowns, `MAX_INTRADAY_REANALYSES`) still skip or cap early / excess runs.
 
 ### 24h BNE wall-clock (dual book)

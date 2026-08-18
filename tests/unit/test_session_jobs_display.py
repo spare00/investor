@@ -34,6 +34,7 @@ def test_enrich_session_jobs_intraday_seq_by_planned_time() -> None:
     assert by_key["AU:intraday_eval_5"]["intraday_seq"] == 2
     assert by_key["AU:intraday_eval_6"]["intraday_seq"] == 3
     assert by_key["AU:intraday_eval_6"]["plan_index"] == 6
+    assert by_key["AU:intraday_eval_0"]["duration_s"] is None
 
 
 def test_enrich_session_jobs_includes_premarket_in_session_seq() -> None:

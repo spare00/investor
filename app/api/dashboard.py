@@ -18,7 +18,12 @@ from app.agents.activity import (
 )
 from app.core.config import get_settings
 from app.core.database import get_db_session
-from app.core.metrics import metrics_payload
+from app.core.metrics import (
+    FOCUS_SYMBOLS,
+    WATCHLIST_SYMBOLS,
+    metrics_payload,
+)
+from app.ops.committee_watch import build_committee_watch, job_duration_seconds
 from app.core.scheduler import upcoming_jobs
 from app.core.timeutils import dual_timezone_labels, utc_now
 from app.execution.order_manager import OrderManager
@@ -109,6 +114,7 @@ def enrich_session_jobs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "display_name": _session_job_display_name(
                         job_type, intraday_seq=intra_seq
                     ),
+                    "duration_s": job_duration_seconds(row),
                 }
             )
     return enriched
@@ -520,6 +526,28 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     except Exception:  # noqa: BLE001
         universe_summary = None
 
+    watch_n = 0
+    focus_n = 0
+    if isinstance(universe_summary, dict):
+        watch_n = len(universe_summary.get("watchlist") or [])
+        focus = universe_summary.get("focus") or {}
+        if isinstance(focus, dict):
+            focus_n = len(focus.get("symbols") or [])
+        try:
+            WATCHLIST_SYMBOLS.set(watch_n)
+            FOCUS_SYMBOLS.set(focus_n)
+        except Exception:  # noqa: BLE001
+            pass
+    committee_watch = build_committee_watch(
+        session_jobs,
+        timeout_cap_seconds=settings.effective_job_action_timeout_seconds(),
+        watchlist_symbols=watch_n,
+        focus_symbols=focus_n,
+        allowlist_symbols=len(settings.trade_allowlist or []),
+        llm_is_local=settings.llm_is_local(),
+        now=now,
+    )
+
     from app.execution.firm_execution import paper_auto_submit_allowed
 
     force_close_ops = {
@@ -903,5 +931,6 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
         ],
         "next_jobs": _enriched_next_jobs(),
         "session_jobs": session_jobs,
+        "committee_watch": committee_watch,
         "llm_budget": snapshot_llm_budget().to_dict(),
     }

@@ -28,6 +28,48 @@ _UNIVERSE_REFRESH_TIMEOUT_SECONDS = 900
 _BROKER_RECON_TIMEOUT_SECONDS = 120
 
 
+def _scheduler_job_kind(job_key: str) -> str:
+    key = job_key.split(":", 1)[-1]
+    if key.startswith("intraday_eval"):
+        return "intraday_eval"
+    if key.startswith("premarket"):
+        return "premarket"
+    if key.startswith("universe"):
+        return "universe"
+    return key or "other"
+
+
+def _observe_scheduler_job(
+    job: Any,
+    *,
+    timeout_s: float,
+    timed_out: bool,
+) -> None:
+    """Record wall time vs the 8-minute cap so growing books are visible."""
+    from app.core.metrics import (
+        COMMITTEE_HEADROOM_RATIO,
+        COMMITTEE_TIMEOUT_CAP_SECONDS,
+        LAST_COMMITTEE_SECONDS,
+        SCHEDULER_JOB_DURATION,
+        SCHEDULER_JOB_TIMEOUTS,
+    )
+
+    kind = _scheduler_job_kind(str(getattr(job, "job_key", "") or ""))
+    elapsed: float | None = None
+    started = getattr(job, "started_at", None)
+    if started is not None:
+        start = started if started.tzinfo else started.replace(tzinfo=UTC)
+        elapsed = max(0.0, (datetime.now(UTC) - start).total_seconds())
+        SCHEDULER_JOB_DURATION.labels(kind=kind).observe(elapsed)
+    if timed_out:
+        SCHEDULER_JOB_TIMEOUTS.labels(kind=kind).inc()
+    if kind == "intraday_eval":
+        COMMITTEE_TIMEOUT_CAP_SECONDS.set(float(timeout_s))
+        if elapsed is not None:
+            LAST_COMMITTEE_SECONDS.set(elapsed)
+            COMMITTEE_HEADROOM_RATIO.set(max(0.0, 1.0 - elapsed / max(1.0, float(timeout_s))))
+
+
 def get_scheduler() -> AsyncIOScheduler | None:
     return _scheduler
 
@@ -270,6 +312,7 @@ async def _dispatch_due_jobs() -> None:
                         job.status = "failed"
                         job.error = f"job_action_timeout:{int(timeout_s)}s"
                         job.completed_at = datetime.now(UTC)
+                        _observe_scheduler_job(job, timeout_s=timeout_s, timed_out=True)
                         logger.error(
                             "scheduler_job_timeout",
                             job=job.job_key,
@@ -280,6 +323,7 @@ async def _dispatch_due_jobs() -> None:
                         continue
                     job.status = "completed"
                     job.completed_at = datetime.now(UTC)
+                    _observe_scheduler_job(job, timeout_s=timeout_s, timed_out=False)
                     entry = {
                         "job": job.job_key,
                         "session_date": job.session_date,
@@ -302,6 +346,14 @@ async def _dispatch_due_jobs() -> None:
                     job.status = "failed"
                     job.error = str(exc)[:500]
                     job.completed_at = datetime.now(UTC)
+                    try:
+                        _observe_scheduler_job(
+                            job,
+                            timeout_s=float(settings.effective_job_action_timeout_seconds()),
+                            timed_out=False,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                     logger.exception("scheduler_job_failed", job=job.job_key)
                     await session.commit()
                 finally:
@@ -344,6 +396,12 @@ async def _dispatch_due_jobs() -> None:
                         venue=venue.value,
                         timeout_s=catch_timeout,
                     )
+                    try:
+                        from app.core.metrics import SCHEDULER_JOB_TIMEOUTS
+
+                        SCHEDULER_JOB_TIMEOUTS.labels(kind="catch_up").inc()
+                    except Exception:  # noqa: BLE001
+                        pass
                     await session.rollback()
                     continue
                 if not (catch.get("catch_up") or {}).get("skipped", True):

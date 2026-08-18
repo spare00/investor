@@ -514,6 +514,7 @@
         <div id="auSessionState" class="stat" style="font-size:1.05rem;margin-top:0.35rem" hidden>—</div>
         <div id="auSessionMeta" class="muted" hidden></div>
         <div id="intradayCadence" class="muted" style="margin-top:0.45rem"></div>
+        <div id="committeeWatch" class="muted" style="margin-top:0.35rem"></div>
         <div id="tradingState" style="margin-top:0.65rem"></div>
         <div id="tradingMeta" class="muted"></div>
         <div id="overviewOpsStrip" style="margin-top:0.65rem"></div>
@@ -637,6 +638,7 @@
         <h2>LLM Budget</h2>
         <div id="llmBudgetMeta" class="muted">Loading…</div>
         <div id="llmBudgetDetail" style="margin-top:0.5rem"></div>
+        <div id="committeeWatchOps" class="muted" style="margin-top:0.65rem"></div>
       </section>
       <section class="wide alerts">
         <h2>Active Alerts</h2>
@@ -1814,11 +1816,12 @@
         dataTable(["Symbol", "Side", "Qty", "Status", "Thesis"], irows, 5);
     }
 
-    function renderIntradayCadence(wf, sessionJobs, activeVenue) {
+    function renderIntradayCadence(wf, sessionJobs, activeVenue, watch) {
       const el = document.getElementById("intradayCadence");
       if (!el) return;
       if (!wf) {
         el.innerHTML = pill("no daily workflow", "warn");
+        renderCommitteeWatch(watch);
         return;
       }
       const venue = wf.venue || activeVenue || "";
@@ -1851,6 +1854,45 @@
         wf.last_intraday_result ? pill(String(wf.last_intraday_result), "") : "",
         wf.last_intraday_eval_at ? pill(`last ${fmtDual(wf.last_intraday_eval_at)}`, "") : "",
       ].filter(Boolean).join(" ");
+      renderCommitteeWatch(watch);
+    }
+
+    function renderCommitteeWatchOps(watch) {
+      const el = document.getElementById("committeeWatchOps");
+      if (!el) return;
+      if (!watch) {
+        el.innerHTML = "";
+        return;
+      }
+      const rows = (watch.recent || []).map((j) => `<tr>
+        <td class="mono">${esc(j.job_key || "—")}</td>
+        <td>${sessionJobStatusPill(j.status)}</td>
+        <td class="muted">${j.duration_s != null ? esc(Math.round(Number(j.duration_s))) + "s" : "—"}</td>
+        <td>${j.timeout ? pill("timeout", "bad") : ""}</td>
+      </tr>`).join("");
+      el.innerHTML =
+        `<div class="muted" style="margin-bottom:0.35rem">Committee wall time vs ${esc(String(watch.timeout_cap_seconds))}s job cap · ${esc(watch.detail || "")}</div>` +
+        (rows ? dataTable(["Job", "Status", "Took", "Flag"], rows, 4) : `<div class="muted">No finished intraday evals this session</div>`);
+    }
+
+    function renderCommitteeWatch(watch) {
+      const el = document.getElementById("committeeWatch");
+      if (!el) return;
+      if (!watch) {
+        el.innerHTML = "";
+        return;
+      }
+      const lvl = watch.level || "ok";
+      const cls = lvl === "bad" ? "bad" : lvl === "warn" ? "warn" : "good";
+      const last = watch.last_eval_seconds;
+      el.innerHTML = [
+        pill(watch.llm_is_local ? "LLM local" : "LLM cloud", watch.llm_is_local ? "good" : ""),
+        last != null ? pill(`eval ${Math.round(last)}s / ${watch.timeout_cap_seconds}s`, cls) : pill("eval — / " + watch.timeout_cap_seconds + "s", ""),
+        watch.headroom_pct != null ? pill(`headroom ${Math.round(watch.headroom_pct)}%`, cls) : "",
+        pill(`watch ${watch.watchlist_symbols} · focus ${watch.focus_symbols}`, watch.watchlist_symbols >= 30 ? "warn" : ""),
+        watch.timeouts_session ? pill(`${watch.timeouts_session} timeout`, "bad") : pill("no timeout", "good"),
+      ].filter(Boolean).join(" ");
+      el.title = watch.detail || "";
     }
 
     function sessionJobStatusPill(status) {
@@ -1918,12 +1960,13 @@
           <td>${esc(label)}<div class="muted mono" style="font-size:0.72rem">${esc(j.job_key)}${planKey ? ` · ${esc(planKey)}` : ""}</div></td>
           <td class="mono">${esc(fmtBookSmart(j.planned_at, resolveJobBook(j, venue), { withSeconds: false }))}</td>
           <td>${sessionJobStatusPill(j.status)}</td>
+          <td class="muted">${j.duration_s != null ? esc(Math.round(Number(j.duration_s))) + "s" : "—"}</td>
           <td class="muted">${j.interval_minutes != null ? esc(j.interval_minutes) + "m" : "—"}</td>
         </tr>`;
       }).join("");
       el.innerHTML =
         `<div class="muted" style="margin-bottom:0.35rem">${esc(venue)} session ${esc(sessionDate)} · ${done}/${rows.length} done · scroll for full plan</div>` +
-        dataTable(["#", "Job", clockHdr, "Status", "Interval"], body, 5);
+        dataTable(["#", "Job", clockHdr, "Status", "Took", "Interval"], body, 6);
       const currentRow = el.querySelector("tr.row-current");
       if (currentRow) {
         currentRow.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -1996,7 +2039,9 @@
         data.market_status && data.market_status.workflow,
         data.session_jobs,
         data.market_status && data.market_status.active_ops_venue,
+        data.committee_watch,
       );
+      renderCommitteeWatchOps(data.committee_watch);
       renderSessionJobs(data.session_jobs, data.market_status && data.market_status.active_ops_venue);
       const cio = data.cio;
       if (cio) {

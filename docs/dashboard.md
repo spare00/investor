@@ -15,7 +15,9 @@
 | Operations | `/dashboard/summary` + `/operations/*` | Monitor, force-close, settlement/recon/overnight, recovery, alerts, LLM budget, universe horizons, ops KPIs |
 | Audit | `/status`, `/health`, `/decisions` | Status pills, risk caps, decision audit table |
 
-Overview and the top strip show **US equity session phase** (`REGULAR`, `PREMARKET`, `AFTER_HOURS`, …) from `MarketCalendarService` via `market_status.us_session`, plus operator trading controls and daily workflow state when present. `session_jobs` lists DB-planned daily jobs (not only APScheduler pollers in `next_jobs`).
+Overview and the top strip show **US equity session phase** (`REGULAR`, `PREMARKET`, `AFTER_HOURS`, …) from `MarketCalendarService` via `market_status.us_session`, plus operator trading controls and daily workflow state when present. `session_jobs` lists DB-planned daily jobs (not only APScheduler pollers in `next_jobs`) and a **Took** column (wall seconds when `started_at`/`completed_at` exist).
+
+`committee_watch` on `/dashboard/summary` compares the last `intraday_eval` wall time to the 8-minute job cap, counts `job_action_timeout` failures this session, and shows watchlist/focus size. Overview renders it under Market Sessions; Operations repeats recent evals under LLM Budget. Token/A$ bars remain OpenAI counters — **monitor only** when `LLM_RUNTIME=local`. See [operations_runbook.md](operations_runbook.md#committee-wall-time-watch).
 
 Each non-Overview panel keeps a collapsed **Raw JSON** details block for debugging.
 

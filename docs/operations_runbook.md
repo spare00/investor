@@ -34,6 +34,52 @@ LLM_LOCAL_MAX_TOKENS=800
 
 Python owns indicators and Hard Vetoes. Local LLM is reserved for MI (themes), Macro (regime), Devil (yes/no), and CIO (actions). Quant and Risk skip chat and use engines. Each agent has its own `num_ctx` / `max_tokens` / model slot (`GET /health` → `agent_roles`). Ollama still benefits from a derived `*-ctx` model so the *maximum* window is large enough; each request sends a smaller `num_ctx` (4k–8k) so 14B can finish inside the 8-minute job cap. Scheduler job timeout stays 8 minutes for local and cloud. `GET /health` should show `llm_is_local: true`. Cloud `gpt-*` model names are rewritten to the local model. Intraday cadence then follows horizon policy (scalp ~2m) instead of the 12-call spend floor.
 
+### Switch back to cloud GPT (keep the same pipeline)
+
+Do **not** delete local knobs. Flip the runtime:
+
+```
+LLM_RUNTIME=cloud
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=...
+LLM_MODEL=gpt-4o-mini
+```
+
+Then restart the API. Quant and Risk resume chat; Macro∥Quant run in parallel; the AUD/token budget applies again. `GET /health` should show `llm_is_local: false`.
+
+### Committee wall-time watch
+
+As managed symbols grow, local 14B evals can creep toward the 8-minute `job_action_timeout` and start failing as `job_action_timeout:480s`. The dashboard and `/metrics` exist so that shows up before it is frequent.
+
+| Level | Meaning |
+|-------|---------|
+| `ok` | Last finished `intraday_eval` used under 70% of the cap, no timeouts this session |
+| `warn` | Last eval used ≥ 70% of the cap (headroom thinning) |
+| `bad` | A timeout this session, or last eval used ≥ 90% of the cap |
+
+Where to look:
+
+- Overview cadence pills (`LLM local/cloud`, `eval Ns / 480s`, headroom %, watch/focus counts, timeout count)
+- Operations → LLM Budget → recent eval wall times (`Took`)
+- Session jobs table **Took** column
+- `GET /dashboard/summary` → `committee_watch`
+
+```bash
+curl -s localhost:8000/dashboard/summary | jq '{
+  llm_is_local: .committee_watch.llm_is_local,
+  last_s: .committee_watch.last_eval_seconds,
+  cap: .committee_watch.timeout_cap_seconds,
+  headroom_pct: .committee_watch.headroom_pct,
+  level: .committee_watch.level,
+  timeouts: .committee_watch.timeouts_session,
+  watch: .committee_watch.watchlist_symbols,
+  focus: .committee_watch.focus_symbols
+}'
+curl -s localhost:8000/metrics | rg 'investor_(last_committee_seconds|committee_headroom_ratio|scheduler_job_timeouts_total|watchlist_symbols|focus_symbols)'
+```
+
+If timeouts become frequent: shrink focus/watch (Universe Manager / allowlist), keep Quant/Risk on Python locally, do not raise the 8-minute cap as the first move, or switch `LLM_RUNTIME=cloud` if GPU wall time is the bottleneck.
+
 Verify:
 
 ```bash
@@ -41,7 +87,7 @@ python -m app.cli daily-workflow prepare
 python -m app.cli scheduler list
 python -m app.cli universe show
 python -m app.cli closing run   # or wait for closing_window job
-curl -s localhost:8000/dashboard/summary | jq '{workflow:.market_status.workflow,force_close,hard_stop,settlement:.latest_settlement,recon:.latest_reconciliation,recovery:.latest_recovery,alerts:(.active_alerts|length),session_jobs:(.session_jobs|length)}'
+curl -s localhost:8000/dashboard/summary | jq '{workflow:.market_status.workflow,force_close,hard_stop,settlement:.latest_settlement,recon:.latest_reconciliation,recovery:.latest_recovery,alerts:(.active_alerts|length),session_jobs:(.session_jobs|length),committee_watch}'
 ```
 
 Overview shows reeval budget (`reeval used/max`), planned interval, session job plan, paused hygiene names, force-close arming, latest recovery, and active operational alerts.

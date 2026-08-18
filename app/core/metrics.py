@@ -46,7 +46,7 @@ WORKFLOW_DURATION = Histogram(
     "investor_workflow_duration_seconds",
     "Workflow wall time",
     ["kind"],
-    buckets=(0.5, 1, 2, 5, 10, 30, 60, 120, 300),
+    buckets=(0.5, 1, 2, 5, 10, 30, 60, 120, 180, 240, 300, 360, 420, 480, 600),
 )
 
 # Phase 7 operational metrics (low-cardinality labels only)
@@ -72,7 +72,7 @@ AGENT_LATENCY = Histogram(
     "investor_agent_latency_seconds",
     "Agent wall time",
     ["agent"],
-    buckets=(0.1, 0.5, 1, 2, 5, 10, 30, 60, 120),
+    buckets=(0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 180, 300),
 )
 
 LLM_REPAIR_ATTEMPTS = Counter(
@@ -150,6 +150,38 @@ LLM_BUDGET_EXCEEDED = Counter(
     "investor_llm_budget_exceeded_total",
     "LLM calls blocked by daily budget",
     ["reason"],
+)
+
+SCHEDULER_JOB_DURATION = Histogram(
+    "investor_scheduler_job_duration_seconds",
+    "Scheduler job wall time (intraday evals can approach the 8-minute cap)",
+    ["kind"],
+    buckets=(30, 60, 120, 180, 240, 300, 360, 420, 480, 600),
+)
+SCHEDULER_JOB_TIMEOUTS = Counter(
+    "investor_scheduler_job_timeouts_total",
+    "Scheduler jobs killed by job_action_timeout",
+    ["kind"],
+)
+LAST_COMMITTEE_SECONDS = Gauge(
+    "investor_last_committee_seconds",
+    "Wall seconds of the last finished intraday_eval job",
+)
+COMMITTEE_TIMEOUT_CAP_SECONDS = Gauge(
+    "investor_committee_timeout_cap_seconds",
+    "Scheduler wait_for cap for one committee job",
+)
+COMMITTEE_HEADROOM_RATIO = Gauge(
+    "investor_committee_headroom_ratio",
+    "1 - (last eval seconds / timeout cap); 0 means the cap was hit",
+)
+WATCHLIST_SYMBOLS = Gauge(
+    "investor_watchlist_symbols",
+    "Watchlist row count (grows with managed names)",
+)
+FOCUS_SYMBOLS = Gauge(
+    "investor_focus_symbols",
+    "Current focus-set size fed into collection/eval",
 )
 
 

@@ -160,6 +160,8 @@ def test_dashboard_routes_exist() -> None:
             assert b"ackAlert" in dash.content
             assert b"overnightDetail" in dash.content
             assert b"renderLlmBudgetPanel" in dash.content
+            assert b"committeeWatch" in dash.content
+            assert b"renderCommitteeWatch" in dash.content
             assert b"overviewOpsStrip" in dash.content
             assert b"renderOverviewOpsStrip" in dash.content
             assert b"agentPerfNote" in dash.content
@@ -181,6 +183,8 @@ def test_dashboard_routes_exist() -> None:
             assert "active_alerts" in body
             assert "overnight_reviews" in body
             assert "session_jobs" in body
+            assert "committee_watch" in body
+            assert "timeout_cap_seconds" in body["committee_watch"]
             assert "workflows_by_venue" in body.get("market_status", {})
             assert "universe" in body
             metrics = client.get("/metrics")

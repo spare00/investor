@@ -28,7 +28,8 @@ Data Collection Layer
         ↓
 Normalization & Storage Layer
         ↓
-Agent Analysis Layer          (MI → Macro∥Quant → Risk → Devil → CIO)
+Agent Analysis Layer          (MI → Macro∥Quant → Risk → Devil → CIO;
+                               local: Macro then Quant, Quant/Risk skip chat)
         ↓
 Decision & Risk Layer         (Hard Veto + Execution Validator)
         ↓
@@ -41,8 +42,8 @@ Monitoring & Post-Trade Review
 
 1. Collect & normalize data  
 2. Market Intelligence Analyst  
-3. Macro Strategist **and** Quant Strategist (parallel)  
-4. Portfolio & Risk Manager (LLM + deterministic risk engine)  
+3. Macro Strategist **and** Quant Strategist (cloud: parallel; local: sequential)  
+4. Portfolio & Risk Manager (deterministic risk engine; cloud may add LLM soft review)  
 5. Devil’s Advocate  
 6. CIO / Final Decision Maker  
 7. Deterministic decision validation  
@@ -81,7 +82,7 @@ Beyond the original brief, Phase 1 adopts these additions:
 5. **Exchange calendar** (`exchange-calendars`) for NYSE holidays and early closes.
 6. **Display timezones** — storage UTC; UI/logs can render `America/New_York` and
    `Australia/Brisbane`.
-7. **Prometheus `/metrics`** planned alongside FastAPI (stub wiring in later phases).
+7. **Prometheus `/metrics`** — workflow, LLM budget, and committee wall-time gauges (see `docs/metrics_and_alerts.md`).
 8. **News provider abstraction** with a `stub` provider for offline tests.
 9. **Intraday min re-eval + cooldown** to avoid overtrading.
 10. **Configuration history** table (schema in Phase 2 models) for policy audits.
@@ -122,8 +123,9 @@ interfaces/tests. No live or paper orders are placed yet.
 ## Tech stack
 
 Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy 2 (async), PostgreSQL, Redis,
-APScheduler, IBKR Gateway paper (TWS API), OpenAI-compatible LLM, pytest,
-Docker Compose, structured logging (structlog).
+APScheduler, IBKR Gateway paper (TWS API), OpenAI-compatible LLM **or** on-box
+Ollama (`LLM_RUNTIME=cloud|local`), pytest, Docker Compose, structured logging
+(structlog).
 
 ---
 
@@ -228,6 +230,17 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 Redis is optional and unused in current phases.
+
+### LLM runtime (switchable)
+
+Keep both paths. The six-agent pipeline does not fork:
+
+| `.env` | Inference | Notes |
+|--------|-----------|--------|
+| `LLM_RUNTIME=cloud` | `LLM_BASE_URL` + `LLM_MODEL` (e.g. OpenAI `gpt-4o-mini`) | AUD/token budget applies. Macro∥Quant in parallel. |
+| `LLM_RUNTIME=local` | Ollama on loopback (`LLM_LOCAL_MODEL`, default `qwen2.5:14b-ctx`) | No spend cap. Quant + Risk skip chat. Sequential Macro→Quant. Same 8-minute job timeout. |
+
+`./scripts/ensure_local_llm.sh` installs Ollama and pulls the 14B tag. `GET /health` shows `llm_is_local` and per-agent `agent_roles`. Details: [docs/agent_architecture.md](docs/agent_architecture.md). As the watchlist grows, watch eval seconds vs the cap: Overview **committee watch** pills, `committee_watch` on `/dashboard/summary`, and `/metrics` (`investor_last_committee_seconds`, `investor_scheduler_job_timeouts_total`).
 
 Default news/market providers are **stub** so analysis can run without news API keys.
 IBKR Gateway must be running; set `BROKER_PROVIDER=ibkr` and IBKR_* in `.env` for paper order/portfolio sync.
