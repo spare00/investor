@@ -140,10 +140,15 @@ async def test_local_complete_json_skips_spend_gate(tmp_path, monkeypatch) -> No
         async def __aexit__(self, *args) -> None:
             return None
 
+        posted: dict = {}
+
         async def post(self, *args, **kwargs):
+            _Http.posted = kwargs.get("json") or {}
             return _Resp()
 
     monkeypatch.setattr("app.services.llm.httpx.AsyncClient", _Http)
     out = await client.complete_json(system_prompt="s", user_prompt="u")
     assert out.model == "qwen2.5:14b"
     assert "ok" in out.content
+    assert _Http.posted.get("num_ctx") == 32768
+    assert (_Http.posted.get("options") or {}).get("num_ctx") == 32768

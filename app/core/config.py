@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     llm_local_base_url: str = "http://127.0.0.1:11434/v1"
     llm_local_model: str = "qwen2.5:14b"
     llm_local_timeout_seconds: int = 180
+    # Ollama defaults to ~4k context; agent dumps need more. 32k fits a 14B
+    # Q4 on 36GB unified memory. Applied via request options + derived model.
+    llm_local_num_ctx: int = 32768
     llm_json_object_response: bool = True
     # Session reanalysis cap when local (cloud still uses max_intraday_reanalyses).
     max_intraday_reanalyses_local: int = 180

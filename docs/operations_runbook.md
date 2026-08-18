@@ -20,16 +20,18 @@ To drop the monthly AUD / daily token cap, run inference on this Mac:
 
 ```bash
 ./scripts/ensure_local_llm.sh          # brew install ollama, serve, pull qwen2.5:14b
+                                       # then create qwen2.5:14b-ctx with num_ctx=32768
 ```
 
 `.env`:
 
 ```
 LLM_RUNTIME=local
-LLM_LOCAL_MODEL=qwen2.5:14b
+LLM_LOCAL_MODEL=qwen2.5:14b-ctx
+LLM_LOCAL_NUM_CTX=32768
 ```
 
-`GET /health` should show `llm_is_local: true`. Cloud `gpt-*` model names are rewritten to the local model. Intraday cadence then follows horizon policy (scalp ~2m) instead of the 12-call spend floor.
+Ollama's default context is ~4k, which truncates the six-agent dumps. The derived `*-ctx` model plus `num_ctx` on each request keep the window at 32k. `GET /health` should show `llm_is_local: true`. Cloud `gpt-*` model names are rewritten to the local model. Intraday cadence then follows horizon policy (scalp ~2m) instead of the 12-call spend floor.
 
 Verify:
 

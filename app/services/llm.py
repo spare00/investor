@@ -130,6 +130,11 @@ class OpenAICompatibleClient:
         }
         if cfg.llm_json_object_response:
             payload["response_format"] = {"type": "json_object"}
+        if cfg.llm_is_local() and cfg.llm_local_num_ctx > 0:
+            # Native /api/chat uses options.num_ctx. OpenAI-compat on recent
+            # Ollama also accepts top-level num_ctx; send both.
+            payload["num_ctx"] = cfg.llm_local_num_ctx
+            payload["options"] = {"num_ctx": cfg.llm_local_num_ctx}
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
