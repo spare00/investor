@@ -79,7 +79,7 @@ def test_local_job_timeout_and_fake_llm_flag() -> None:
         llm_api_key=None,
         job_action_timeout_seconds=480,
     )
-    assert local.effective_job_action_timeout_seconds() == 1800
+    assert local.effective_job_action_timeout_seconds() == 480
     assert cloud.effective_job_action_timeout_seconds() == 480
     assert local.scheduler_uses_fake_llm() is False
     assert cloud.scheduler_uses_fake_llm() is True

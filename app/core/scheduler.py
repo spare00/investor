@@ -21,7 +21,7 @@ _job_log: list[dict[str, Any]] = []
 
 # Bound a single due-job action so a wedged IBKR/LLM call cannot pin
 # daily_workflow_dispatch forever (APScheduler max_instances=1).
-# Cloud default; local uses Settings.job_action_timeout_seconds_local.
+# Local and cloud share the 8-minute cap.
 _JOB_ACTION_TIMEOUT_SECONDS = 480
 _CATCH_UP_TIMEOUT_SECONDS = 480
 _UNIVERSE_REFRESH_TIMEOUT_SECONDS = 900
