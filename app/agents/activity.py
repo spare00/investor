@@ -30,6 +30,8 @@ AGENT_SHORT = {
     "universe_manager": "Univ",
 }
 
+_SUCCESS_OUTCOMES = frozenset({"completed", "fallback", "python"})
+
 
 def mark_agent_started(agent_name: str, *, run_id: str | None = None) -> None:
     now = datetime.now(UTC).isoformat()
@@ -55,7 +57,7 @@ def mark_agent_finished(
         prev = dict(_activity.get(agent_name) or {})
         prev.update(
             {
-                "state": "idle" if outcome in {"completed", "fallback"} else "failed",
+                "state": "idle" if outcome in _SUCCESS_OUTCOMES else "failed",
                 "finished_at": now,
                 "last_error": (error or "")[:240] or None,
                 "outcome": outcome,
@@ -128,6 +130,13 @@ def classify_agent_lamp(
                         "lamp": "ready",
                         "label": "fallback",
                         "detail": "completed via fallback",
+                        "live": False,
+                    }
+                if live.get("outcome") == "python":
+                    return {
+                        "lamp": "ready",
+                        "label": "python",
+                        "detail": "Python engine (no LLM)",
                         "live": False,
                     }
         except ValueError:

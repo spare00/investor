@@ -63,3 +63,18 @@ def test_failed_live_state() -> None:
         last_started_at=datetime.now(UTC),
     )
     assert lamp["lamp"] == "failed"
+
+
+def test_python_outcome_is_ready_not_failed() -> None:
+    mark_agent_started("quant_strategist")
+    mark_agent_finished("quant_strategist", outcome="python")
+    live = snapshot_agent_activity()["quant_strategist"]
+    assert live["state"] == "idle"
+    lamp = classify_agent_lamp(
+        live=live,
+        last_run_status="completed",
+        last_started_at=datetime.now(UTC) - timedelta(seconds=5),
+    )
+    assert lamp["lamp"] == "ready"
+    assert lamp["label"] == "python"
+    assert lamp["live"] is False
