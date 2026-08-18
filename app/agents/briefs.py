@@ -110,6 +110,11 @@ def _mi_summary(mi: MarketIntelligenceOutput | None) -> dict[str, Any]:
     )
 
 
+def mi_summary_for_downstream(mi: MarketIntelligenceOutput | None) -> dict[str, Any]:
+    """Python-owned compact MI blob for Macro/Quant — never a full model dump."""
+    return _mi_summary(mi)
+
+
 def _quant_summary(quant: QuantStrategistOutput | None) -> dict[str, Any]:
     if quant is None:
         return {}

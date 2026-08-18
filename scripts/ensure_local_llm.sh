@@ -24,7 +24,7 @@ else
   DERIVED_MODEL="${REQUESTED}-ctx"
 fi
 HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
-NUM_CTX="${OLLAMA_NUM_CTX:-32768}"
+NUM_CTX="${OLLAMA_NUM_CTX:-8192}"
 export OLLAMA_CONTEXT_LENGTH="${NUM_CTX}"
 
 wait_for_ollama() {

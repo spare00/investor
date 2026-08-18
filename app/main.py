@@ -26,6 +26,7 @@ from app.api.portfolio import router as portfolio_router
 from app.api.trading import router as trading_router
 from app.api.universe import router as universe_router
 from app.api.workflow import router as workflow_router
+from app.agents.roles import roles_snapshot
 from app.core.config import get_settings
 from app.core.database import get_session_factory
 from app.core.logging import get_logger, setup_logging
@@ -158,6 +159,10 @@ async def health() -> dict[str, Any]:
         "llm_runtime": settings.llm_runtime,
         "llm_is_local": settings.llm_is_local(),
         "llm_model": settings.llm_model,
+        "llm_local_num_ctx": settings.llm_local_num_ctx,
+        "llm_local_max_tokens": settings.llm_local_max_tokens,
+        "llm_local_fast_model": settings.llm_local_fast_model or None,
+        "agent_roles": roles_snapshot(settings),
         "phase": 7,
     }
 

@@ -50,6 +50,7 @@ class LLMClient(Protocol):
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        num_ctx: int | None = None,
     ) -> LLMResponse: ...
 
 
@@ -67,6 +68,7 @@ class OpenAICompatibleClient:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        num_ctx: int | None = None,
     ) -> LLMResponse:
         cfg = self.settings
         if not cfg.llm_is_local() and not _llm_api_key_configured(cfg):
@@ -103,6 +105,7 @@ class OpenAICompatibleClient:
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            num_ctx=num_ctx,
         )
 
     @retry(
@@ -119,6 +122,7 @@ class OpenAICompatibleClient:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        num_ctx: int | None = None,
     ) -> LLMResponse:
         cfg = self.settings
         api_key = ""
@@ -127,10 +131,17 @@ class OpenAICompatibleClient:
         if not api_key.strip():
             api_key = "local"
 
+        if max_tokens is not None:
+            tok = max_tokens
+        elif cfg.llm_is_local():
+            tok = cfg.llm_local_max_tokens
+        else:
+            tok = cfg.llm_max_tokens
+        ctx = num_ctx if num_ctx is not None else (cfg.llm_local_num_ctx if cfg.llm_is_local() else 0)
         payload: dict[str, Any] = {
             "model": model or cfg.llm_model,
             "temperature": cfg.llm_temperature if temperature is None else temperature,
-            "max_tokens": max_tokens if max_tokens is not None else cfg.llm_max_tokens,
+            "max_tokens": tok,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -138,11 +149,9 @@ class OpenAICompatibleClient:
         }
         if cfg.llm_json_object_response:
             payload["response_format"] = {"type": "json_object"}
-        if cfg.llm_is_local() and cfg.llm_local_num_ctx > 0:
-            # Native /api/chat uses options.num_ctx. OpenAI-compat on recent
-            # Ollama also accepts top-level num_ctx; send both.
-            payload["num_ctx"] = cfg.llm_local_num_ctx
-            payload["options"] = {"num_ctx": cfg.llm_local_num_ctx}
+        if cfg.llm_is_local() and ctx > 0:
+            payload["num_ctx"] = ctx
+            payload["options"] = {"num_ctx": ctx, "num_predict": tok}
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -229,8 +238,17 @@ class StubLLMClient:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        num_ctx: int | None = None,
     ) -> LLMResponse:
-        self.calls.append({"system": system_prompt[:80], "user": user_prompt[:200]})
+        self.calls.append(
+            {
+                "system": system_prompt[:80],
+                "user": user_prompt[:200],
+                "model": model or "",
+                "max_tokens": "" if max_tokens is None else str(max_tokens),
+                "num_ctx": "" if num_ctx is None else str(num_ctx),
+            }
+        )
         return LLMResponse(
             content=json.dumps(self.payload),
             model=model or "fake-llm",

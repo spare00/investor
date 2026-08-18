@@ -185,12 +185,20 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
 
         soft_warnings: list[str] = []
         # Optional LLM soft commentary — never overrides hard vetoes.
-        try:
-            llm_out = await super().run(payload)
-            soft_warnings = list(llm_out.soft_warnings)
-            # Keep engine hard fields authoritative.
-        except Exception:  # noqa: BLE001
-            soft_warnings = ["LLM soft review unavailable; engine-only decision"]
+        # Local: engine is enough; skip a 14B round that cannot change Hard Vetoes.
+        from app.agents.activity import mark_agent_finished, mark_agent_started
+        from app.agents.roles import role_for
+
+        if role_for(self.name).skip_llm(self.settings):
+            mark_agent_started(self.name.value)
+            soft_warnings = ["local: Python risk engine only; LLM skipped"]
+            mark_agent_finished(self.name.value, outcome="python")
+        else:
+            try:
+                llm_out = await super().run(payload)
+                soft_warnings = list(llm_out.soft_warnings)
+            except Exception:  # noqa: BLE001
+                soft_warnings = ["LLM soft review unavailable; engine-only decision"]
 
         notes = ["Deterministic Risk Engine is authoritative for Hard Vetoes"]
         if price_vetoes:
@@ -214,7 +222,11 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
             trace=TraceMetadata(
                 agent_version=self.agent_version,
                 prompt_version=self.prompt_version,
-                model_name="risk-engine+optional-llm",
+                model_name=(
+                    "risk-engine"
+                    if role_for(self.name).skip_llm(self.settings)
+                    else "risk-engine+optional-llm"
+                ),
                 source_data_timestamp=payload.as_of,
             ),
         )

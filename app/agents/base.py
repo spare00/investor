@@ -81,6 +81,20 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
         mark_agent_started(self.name.value, run_id=str(run_id))
         logger.info("agent_start", agent=self.name.value, run_id=str(run_id))
         try:
+            from app.agents.roles import role_for
+
+            role = role_for(self.name)
+            if role.skip_llm(self.settings):
+                fallback = self.fallback_output(payload, reason="local_python_owns")
+                if fallback is not None:
+                    logger.info(
+                        "agent_python_owns",
+                        agent=self.name.value,
+                        python_owns=role.python_owns,
+                    )
+                    mark_agent_finished(self.name.value, outcome="python")
+                    return fallback
+                logger.warning("agent_skip_llm_missing_fallback", agent=self.name.value)
             result = await self._run_validated(payload, run_id=run_id, started=started)
             mark_agent_finished(self.name.value, outcome="completed")
             return result
@@ -120,11 +134,16 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
         if book_block:
             base_user_prompt = f"{book_block}{base_user_prompt}"
         validation_feedback: list[str] = []
+        from app.agents.roles import role_for
 
-        # Phase 2 policy: one validation repair attempt, then fail (fallback may still apply).
+        role = role_for(self.name)
+        # Local 14B already spent minutes on the first call; do not burn a repair round.
+        repair_attempts = 1 if self.settings.llm_is_local() else 2
+
+        # Phase 2 policy: one validation repair attempt (cloud), then fail (fallback may still apply).
         @retry(
             reraise=True,
-            stop=stop_after_attempt(2),
+            stop=stop_after_attempt(repair_attempts),
             wait=wait_fixed(0.2),
             retry=retry_if_exception_type(
                 (ValidationError, LLMError, json.JSONDecodeError, ValueError)
@@ -137,9 +156,13 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                     f"{base_user_prompt}\n\nPrevious output failed validation. "
                     f"Fix these errors and resubmit valid JSON only:\n{validation_feedback[-1]}"
                 )
+            ctx = role.num_ctx_for(self.settings)
             response = await self.llm.complete_json(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                model=role.model_name(self.settings),
+                max_tokens=role.max_tokens_for(self.settings),
+                num_ctx=ctx if ctx > 0 else None,
             )
             data = json.loads(response.content)
             if not isinstance(data, dict):
@@ -158,7 +181,9 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                     "model_parameters",
                     {
                         "temperature": self.settings.llm_temperature,
-                        "max_tokens": self.settings.llm_max_tokens,
+                        "max_tokens": role.max_tokens_for(self.settings),
+                        "num_ctx": role.num_ctx_for(self.settings),
+                        "model_slot": role.model_slot,
                     },
                 )
                 usage = {}

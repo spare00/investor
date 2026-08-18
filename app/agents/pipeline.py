@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from app.agents.briefs import mi_summary_for_downstream
 from app.agents.cio import CIOAgent
 from app.agents.devils_advocate import DevilsAdvocateAgent
 from app.agents.macro_strategist import MacroStrategistAgent
@@ -196,7 +197,11 @@ class AnalysisBundle:
 
 
 class AgentPipeline:
-    """Runs the mandated bottom-up agent order with Macro∥Quant parallelism."""
+    """Runs the mandated bottom-up agent order.
+
+    Cloud: Macro ∥ Quant. Local: sequential so one GPU is not dual-loaded;
+    Quant and Risk skip chat and use Python engines.
+    """
 
     def __init__(
         self,
@@ -286,7 +291,7 @@ class AgentPipeline:
                 hy_credit_spread_bps=collection.macro.hy_credit_spread_bps if collection.macro else None,
                 notes=list(collection.macro.notes) if collection.macro else [],
             ),
-            market_intelligence_summary=mi_out.model_dump(mode="json"),
+            market_intelligence_summary=mi_summary_for_downstream(mi_out),
             trace=_trace(),
         )
 
@@ -327,18 +332,20 @@ class AgentPipeline:
             index_bars=index_bars,
             symbol_bars=symbol_bars,
             vix=vix,
-            market_intelligence_summary={
-                "themes": mi_out.top_market_themes,
-                "quality": mi_out.data_quality_score,
-            },
+            market_intelligence_summary=mi_summary_for_downstream(mi_out),
             watchlist=watch_ctx,
             trace=_trace(),
         )
 
-        macro_out, quant_out = await asyncio.gather(
-            self.macro.run(macro_in),
-            self.quant.run(quant_in),
-        )
+        if self.settings.llm_is_local():
+            # One on-box model: overlapping chat completions just queue and timeout.
+            macro_out = await self.macro.run(macro_in)
+            quant_out = await self.quant.run(quant_in)
+        else:
+            macro_out, quant_out = await asyncio.gather(
+                self.macro.run(macro_in),
+                self.quant.run(quant_in),
+            )
 
         live_req, feed_live, price_providers, price_notes = assess_collection_price_integrity(
             providers=[m.provider for m in collection.markets],

@@ -152,7 +152,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                     ),
                     probability_estimate=prob,
                     probability_basis=basis,
-                    notes=["fallback-rules"],
+                    notes=["python-indicators" if reason == "local_python_owns" else "fallback-rules"],
                 )
             )
 
@@ -172,6 +172,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                 breadth = BreadthState.WEAK
 
         quality = 0.8 if bars else 0.3
+        python_only = reason == "local_python_owns"
         return QuantStrategistOutput(
             timestamp=datetime.now(UTC),
             market_trend_state=market_trend,
@@ -185,7 +186,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
             trace=TraceMetadata(
                 agent_version=self.agent_version,
                 prompt_version=self.prompt_version,
-                model_name="fallback-rules",
+                model_name="python-rules" if python_only else "fallback-rules",
                 source_data_timestamp=payload.as_of,
             ),
         )

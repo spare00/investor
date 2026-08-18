@@ -20,7 +20,7 @@ To drop the monthly AUD / daily token cap, run inference on this Mac:
 
 ```bash
 ./scripts/ensure_local_llm.sh          # brew install ollama, serve, pull qwen2.5:14b
-                                       # then create qwen2.5:14b-ctx with num_ctx=32768
+                                       # derived qwen2.5:14b-ctx; request window is 8k
 ```
 
 `.env`:
@@ -28,10 +28,11 @@ To drop the monthly AUD / daily token cap, run inference on this Mac:
 ```
 LLM_RUNTIME=local
 LLM_LOCAL_MODEL=qwen2.5:14b-ctx
-LLM_LOCAL_NUM_CTX=32768
+LLM_LOCAL_NUM_CTX=8192
+LLM_LOCAL_MAX_TOKENS=800
 ```
 
-Ollama's default context is ~4k, which truncates the six-agent dumps. The derived `*-ctx` model plus `num_ctx` on each request keep the window at 32k. Scheduler job timeout stays 8 minutes for local and cloud; if the 14B committee cannot finish, shrink the briefs rather than extending the cap. `GET /health` should show `llm_is_local: true`. Cloud `gpt-*` model names are rewritten to the local model. Intraday cadence then follows horizon policy (scalp ~2m) instead of the 12-call spend floor.
+Python owns indicators and Hard Vetoes. Local LLM is reserved for MI (themes), Macro (regime), Devil (yes/no), and CIO (actions). Quant and Risk skip chat and use engines. Each agent has its own `num_ctx` / `max_tokens` / model slot (`GET /health` → `agent_roles`). Ollama still benefits from a derived `*-ctx` model so the *maximum* window is large enough; each request sends a smaller `num_ctx` (4k–8k) so 14B can finish inside the 8-minute job cap. Scheduler job timeout stays 8 minutes for local and cloud. `GET /health` should show `llm_is_local: true`. Cloud `gpt-*` model names are rewritten to the local model. Intraday cadence then follows horizon policy (scalp ~2m) instead of the 12-call spend floor.
 
 Verify:
 

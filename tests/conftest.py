@@ -25,6 +25,9 @@ def _env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setenv("LLM_RUNTIME", "cloud")
     monkeypatch.setenv("LLM_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("LLM_LOCAL_NUM_CTX", "8192")
+    monkeypatch.setenv("LLM_LOCAL_MAX_TOKENS", "800")
+    monkeypatch.setenv("LLM_LOCAL_FAST_MODEL", "")
     from app.core import database as db
     from app.core.config import clear_settings_cache
 

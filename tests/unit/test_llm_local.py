@@ -127,6 +127,8 @@ async def test_local_complete_json_skips_spend_gate(tmp_path, monkeypatch) -> No
         llm_budget_state_path=str(tmp_path / "budget.json"),
         llm_api_key=SecretStr("unused"),
         llm_json_object_response=True,
+        llm_local_num_ctx=8192,
+        llm_local_max_tokens=800,
     )
     record_llm_usage(prompt_tokens=100, completion_tokens=0, settings=settings)
     client = OpenAICompatibleClient(settings)
@@ -161,5 +163,7 @@ async def test_local_complete_json_skips_spend_gate(tmp_path, monkeypatch) -> No
     out = await client.complete_json(system_prompt="s", user_prompt="u")
     assert out.model == "qwen2.5:14b"
     assert "ok" in out.content
-    assert _Http.posted.get("num_ctx") == 32768
-    assert (_Http.posted.get("options") or {}).get("num_ctx") == 32768
+    assert _Http.posted.get("num_ctx") == 8192
+    assert (_Http.posted.get("options") or {}).get("num_ctx") == 8192
+    assert (_Http.posted.get("options") or {}).get("num_predict") == 800
+    assert _Http.posted.get("max_tokens") == 800
