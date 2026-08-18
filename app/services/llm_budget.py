@@ -372,7 +372,7 @@ def snapshot_llm_budget(settings: Settings | None = None) -> LLMBudgetSnapshot:
         month_aud_budget = max(0.0, float(cfg.llm_monthly_aud_budget))
         month_usd = estimate_usd_cost(_month_prompt_tokens, _month_completion_tokens, cfg)
         month_aud = month_usd * float(cfg.llm_aud_per_usd)
-        enforce = bool(cfg.llm_budget_enforce)
+        enforce = bool(cfg.llm_spend_budget_applies())
         blocked = False
         month_blocked = False
         if enforce:
@@ -417,7 +417,7 @@ def snapshot_llm_budget(settings: Settings | None = None) -> LLMBudgetSnapshot:
 def assert_llm_budget_allows_call(settings: Settings | None = None) -> None:
     """Raise LLMBudgetExceeded if another billable call is not allowed."""
     cfg = settings or get_settings()
-    if not cfg.llm_budget_enforce:
+    if not cfg.llm_spend_budget_applies():
         return
     snap = snapshot_llm_budget(cfg)
     if snap.month_aud_budget > 0 and snap.month_aud_estimate >= snap.month_aud_budget:

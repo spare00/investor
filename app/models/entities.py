@@ -1190,3 +1190,27 @@ class FocusSetSnapshot(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="universe_service")
     payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
 
+
+class EmbeddingChunk(Base, TimestampMixin):
+    """Persisted embedding of a news/market/macro/state chunk for RAG."""
+
+    __tablename__ = "embedding_chunks"
+    __table_args__ = (
+        UniqueConstraint("source_type", "source_id", name="uq_embedding_source"),
+        Index("ix_embedding_as_of", "as_of"),
+        Index("ix_embedding_venue_horizon", "venue", "horizon"),
+        Index("ix_embedding_content_hash", "content_hash"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    venue: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    horizon: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    symbols: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    embedding: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+

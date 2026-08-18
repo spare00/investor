@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.activity import (
+    AGENT_ORDER,
+    AGENT_SHORT,
+    classify_agent_lamp,
+    snapshot_agent_activity,
+)
 from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.core.metrics import metrics_payload
@@ -16,14 +23,7 @@ from app.core.scheduler import upcoming_jobs
 from app.core.timeutils import dual_timezone_labels, utc_now
 from app.execution.order_manager import OrderManager
 from app.execution.safety_controls import trading_controls
-from app.agents.activity import (
-    AGENT_ORDER,
-    AGENT_SHORT,
-    classify_agent_lamp,
-    snapshot_agent_activity,
-)
 from app.market.calendar import MarketCalendarService
-from app.services.llm_budget import snapshot_llm_budget
 from app.models import (
     AgentReport,
     AgentRun,
@@ -44,9 +44,10 @@ from app.models import (
     ScheduledJobRecord,
     SystemEvent,
 )
-from app.workflow.daily import DailyWorkflowService
 from app.services.briefing import BriefingService
-from fastapi.responses import Response
+from app.services.llm_budget import snapshot_llm_budget
+from app.universe.reeval import effective_max_intraday_reanalyses
+from app.workflow.daily import DailyWorkflowService
 
 router = APIRouter(tags=["dashboard"])
 
@@ -443,7 +444,9 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 "venue": venue.value,
                 "calendar_name": run.calendar_name,
                 "intraday_reanalysis_count": int(run.intraday_reanalysis_count or 0),
-                "max_intraday_reanalyses": int(settings.max_intraday_reanalyses),
+                "max_intraday_reanalyses": int(
+                    effective_max_intraday_reanalyses(settings)
+                ),
                 "last_intraday_eval_at": meta.get("last_intraday_eval_at"),
                 "last_intraday_result": meta.get("last_intraday_result"),
                 "last_force_close": meta.get("last_force_close"),

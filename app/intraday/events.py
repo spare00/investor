@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.models import IntradayEvent
-
 
 PRIORITY: dict[str, int] = {
     "EMERGENCY_STOP_TRIGGERED": 100,
@@ -80,7 +79,9 @@ class IntradayEventBus:
     def dump_reanalysis_state(self) -> dict[str, Any]:
         """Serialize cooldown state for persistence on the venue DailyWorkflowRun."""
         # Keep a bounded tail so metadata_json does not grow without limit.
-        keep = max(20, int(self.settings.max_intraday_reanalyses) * 3)
+        from app.universe.reeval import effective_max_intraday_reanalyses
+
+        keep = max(20, int(effective_max_intraday_reanalyses(self.settings)) * 3)
         return {
             "global": [t.isoformat() for t in self._reanalysis_times[-keep:]],
             "by_symbol": {
@@ -178,14 +179,18 @@ class IntradayEventBus:
     ) -> tuple[bool, str | None]:
         if bypass:
             return True, None
-        from app.universe.reeval import global_reeval_gap_minutes, symbol_reeval_gap_minutes
+        from app.universe.reeval import (
+            effective_max_intraday_reanalyses,
+            global_reeval_gap_minutes,
+            symbol_reeval_gap_minutes,
+        )
 
         now = now or datetime.now(UTC)
         horizons = horizon_by_symbol or {}
         # global max
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         day_count = sum(1 for t in self._reanalysis_times if t >= day_start)
-        if day_count >= self.settings.max_intraday_reanalyses:
+        if day_count >= effective_max_intraday_reanalyses(self.settings):
             return False, "max_intraday_reanalyses"
         if self._reanalysis_times:
             gap = (now - self._reanalysis_times[-1]).total_seconds() / 60.0

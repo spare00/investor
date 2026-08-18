@@ -14,6 +14,23 @@ Fail-closed defaults keep orders off. To run the 6-agent paper loop:
 6. **Required** force flatten: `AUTO_EXECUTE_FORCE_CLOSE=true` — without this, closing-window flatten stays pending
 7. Universe: `UNIVERSE_MODE=dynamic`, `UNIVERSE_MANAGER_ENABLED=true`
 
+### Embedded local LLM (no OpenAI spend cap)
+
+To drop the monthly AUD / daily token cap, run inference on this Mac:
+
+```bash
+./scripts/ensure_local_llm.sh          # brew install ollama, serve, pull qwen2.5:14b
+```
+
+`.env`:
+
+```
+LLM_RUNTIME=local
+LLM_LOCAL_MODEL=qwen2.5:14b
+```
+
+`GET /health` should show `llm_is_local: true`. Cloud `gpt-*` model names are rewritten to the local model. Intraday cadence then follows horizon policy (scalp ~2m) instead of the 12-call spend floor.
+
 Verify:
 
 ```bash

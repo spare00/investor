@@ -80,6 +80,15 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096
     llm_timeout_seconds: int = 60
     llm_max_retries: int = 2
+    # cloud = billable OpenAI-compatible API (AUD token budget).
+    # local = embedded runtime (Ollama / LM Studio on loopback) — no spend cap.
+    llm_runtime: str = "cloud"  # cloud | local
+    llm_local_base_url: str = "http://127.0.0.1:11434/v1"
+    llm_local_model: str = "qwen2.5:14b"
+    llm_local_timeout_seconds: int = 180
+    llm_json_object_response: bool = True
+    # Session reanalysis cap when local (cloud still uses max_intraday_reanalyses).
+    max_intraday_reanalyses_local: int = 180
     # LLM spend guard: monthly AUD is the source of truth. Daily token/call
     # budgets auto-split across trading days when set to 0.
     # OpenAI account limits remain the outer safety net.
@@ -99,6 +108,18 @@ class Settings(BaseSettings):
     llm_output_usd_per_mtok: float = 0.60
     llm_budget_soft_limit_pct: float = 0.8
     llm_budget_state_path: str = ".data/llm_budget_state.json"
+
+    # Embedding / RAG — off until wired into the agent pipeline.
+    # Hash provider is local (tests / offline). openai uses /v1/embeddings
+    # and is NOT charged against the chat LLM budget (much cheaper).
+    enable_embeddings: bool = False
+    embedding_provider: str = "hash"  # hash | openai
+    embedding_model: str = "text-embedding-3-small"
+    embedding_hash_dim: int = 64
+    embedding_top_k: int = 8
+    embedding_skip_reanalysis_cosine: float = 0.97
+    embedding_max_chunk_chars: int = 800
+    embedding_prompt_max_chars: int = 4000
 
     # Data providers
     news_provider: str = "stub"
@@ -355,7 +376,12 @@ class Settings(BaseSettings):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
 
-    @field_validator("trade_allowlist", "trade_allowlist_au", "universe_candidate_pool", mode="after")
+    @field_validator(
+        "trade_allowlist",
+        "trade_allowlist_au",
+        "universe_candidate_pool",
+        mode="after",
+    )
     @classmethod
     def _normalize_symbols(cls, value: list[str]) -> list[str]:
         return [symbol.upper() for symbol in value]
@@ -372,6 +398,31 @@ class Settings(BaseSettings):
             # Mode alone must never activate live routing.
             object.__setattr__(self, "trading_mode", TradingMode.PAPER)
         return self
+
+    @model_validator(mode="after")
+    def _apply_local_llm_runtime(self) -> Settings:
+        """Point chat completions at the embedded runtime when LLM_RUNTIME=local."""
+        if not self.llm_is_local():
+            return self
+        url = (self.llm_base_url or "").lower()
+        if (not url) or ("openai.com" in url):
+            object.__setattr__(self, "llm_base_url", self.llm_local_base_url)
+        model = (self.llm_model or "").strip().lower()
+        if model.startswith("gpt-") or model.startswith("o1") or model.startswith("o3"):
+            object.__setattr__(self, "llm_model", self.llm_local_model)
+        return self
+
+    def llm_is_local(self) -> bool:
+        """True when inference is on-box (Ollama etc.), not a billable cloud API."""
+        runtime = (self.llm_runtime or "cloud").strip().lower()
+        if runtime in {"local", "ollama", "mlx", "llamacpp", "llama.cpp", "embedded"}:
+            return True
+        url = (self.llm_base_url or "").lower()
+        return any(host in url for host in ("127.0.0.1", "localhost", "[::1]"))
+
+    def llm_spend_budget_applies(self) -> bool:
+        """AUD/token caps apply only to billable cloud chat."""
+        return bool(self.llm_budget_enforce) and not self.llm_is_local()
 
     def is_live_trading_allowed(self) -> bool:
         """Dual-gate: mode, flag, and matching confirmation token."""

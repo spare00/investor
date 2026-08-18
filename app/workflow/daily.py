@@ -18,9 +18,9 @@ from app.agents.pipeline import AgentPipeline
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.execution.safety_controls import TradingControls, trading_controls
+from app.ingestion.pipeline import DataCollectionPipeline
 from app.market.calendar import MarketCalendarService
 from app.models import DailyWorkflowRun, ScheduledJobRecord, WorkflowStateTransition
-from app.ingestion.pipeline import DataCollectionPipeline
 from app.services.collection import DataCollectionService
 from app.services.llm import FakeLLMProvider, get_llm_client
 from app.workflow.closing import ClosingPolicyEngine
@@ -691,10 +691,9 @@ class DailyWorkflowService:
 
         # Ingest high-importance news onto the bus (works even if monitoring is off).
         try:
-            from app.intraday.news_bridge import ingest_high_importance_news
-
-            from app.market.venues import holdings_for_venue
             from app.execution.position_manager import PositionManager
+            from app.intraday.news_bridge import ingest_high_importance_news
+            from app.market.venues import holdings_for_venue
 
             held_for_news: list[str] = []
             try:
@@ -728,6 +727,8 @@ class DailyWorkflowService:
         actionable: list[dict[str, Any]] = []
         if self.settings.enable_intraday_monitoring:
             try:
+                from sqlalchemy import select as sa_select
+
                 from app.intraday.monitor import (
                     ANALYSIS_REQUIRED,
                     EMERGENCY_ACTION_REQUIRED,
@@ -736,7 +737,6 @@ class DailyWorkflowService:
                 )
                 from app.intraday.service import IntradayService
                 from app.models import PositionLifecycle
-                from sqlalchemy import select as sa_select
 
                 intra = IntradayService(
                     self.session, settings=self.settings, controls=self.controls
@@ -845,10 +845,11 @@ class DailyWorkflowService:
                     ts = ts.replace(tzinfo=UTC)
                 gap = (now - ts).total_seconds() / 60.0
                 # Horizon-aware min gap for interval triggers.
+                from sqlalchemy import select as sa_select
+
                 from app.models import PositionLifecycle
                 from app.universe.reeval import global_reeval_gap_minutes
                 from app.universe.service import UniverseService
-                from sqlalchemy import select as sa_select
 
                 open_syms = [
                     p.symbol
@@ -889,10 +890,14 @@ class DailyWorkflowService:
             except ValueError:
                 pass
 
+        from app.universe.reeval import effective_max_intraday_reanalyses
+
         if status.in_force_close_window or status.in_closing_window:
             result = IntradayEvalResult.NO_CHANGE
             reason = "closing_window_limit_new_analysis"
-        elif run.intraday_reanalysis_count >= self.settings.max_intraday_reanalyses:
+        elif run.intraday_reanalysis_count >= effective_max_intraday_reanalyses(
+            self.settings
+        ):
             # Risk escalations still reanalyze even at the soft cap.
             if effective_trigger == "risk_change":
                 result = IntradayEvalResult.REANALYZE
@@ -912,9 +917,10 @@ class DailyWorkflowService:
             reason = "interval_agent_reeval"
 
         if result == IntradayEvalResult.REANALYZE and self.settings.enable_intraday_agent_reanalysis:
+            from uuid import UUID as _UUID
+
             from app.intraday.agents import IntradayAgentService
             from app.intraday.events import IntradayEventBus
-            from uuid import UUID as _UUID
 
             agent_result = await IntradayAgentService(
                 self.session, settings=self.settings, controls=self.controls
@@ -1113,9 +1119,10 @@ class DailyWorkflowService:
 
         # Settlement + light performance eval (fail-soft; never block session complete).
         try:
+            from datetime import date as date_cls
+
             from app.alerts.ops import emit_overnight_review_alert
             from app.intraday.closing import ClosingService
-            from datetime import date as date_cls
 
             session_day = date_cls.fromisoformat(run.session_date)
             holiday_gap = self.calendar.next_session_has_holiday_gap(
@@ -1153,9 +1160,10 @@ class DailyWorkflowService:
             review["settlement_error"] = str(exc)[:240]
 
         try:
+            from sqlalchemy import select as sa_select
+
             from app.intraday.posttrade import PostTradeReviewService
             from app.models import PositionLifecycle
-            from sqlalchemy import select as sa_select
 
             closed = list(
                 (
@@ -1289,8 +1297,8 @@ class DailyWorkflowService:
                 close_t + timedelta(minutes=cfg.postmarket_review_minutes_after_close),
             ),
         ]
-        # Intraday interval jobs — denser when watchlist includes scalp/day books,
-        # but floored by LLM reanalysis budget (≈ 1.5 × max_intraday_reanalyses ticks).
+        # Intraday interval jobs — denser for scalp/day; cloud floors by LLM
+        # spend cap, local/embedded follows horizon cadence.
         await self._plan_intraday_jobs(run, session)
 
         for key, planned in plans:
@@ -1333,10 +1341,11 @@ class DailyWorkflowService:
         end = close_t - timedelta(minutes=cfg.closing_window_minutes_before_close)
         session_mins = max(0.0, (end - open_t).total_seconds() / 60.0)
         try:
+            from sqlalchemy import select as sa_select
+
             from app.models import PositionLifecycle
             from app.universe.reeval import planned_intraday_interval_minutes
             from app.universe.service import UniverseService
-            from sqlalchemy import select as sa_select
 
             univ = UniverseService(self.session, settings=cfg)
             hz_map = await univ.horizon_by_symbol()

@@ -61,33 +61,34 @@ class OpenAICompatibleClient:
         max_tokens: int | None = None,
     ) -> LLMResponse:
         cfg = self.settings
-        if not _llm_api_key_configured(cfg):
+        if not cfg.llm_is_local() and not _llm_api_key_configured(cfg):
             raise LLMError("LLM_API_KEY is not configured")
-        try:
-            assert_llm_budget_allows_call(cfg)
-        except LLMBudgetExceeded as exc:
+        if cfg.llm_spend_budget_applies():
             try:
-                from app.core.metrics import LLM_BUDGET_EXCEEDED
+                assert_llm_budget_allows_call(cfg)
+            except LLMBudgetExceeded as exc:
+                try:
+                    from app.core.metrics import LLM_BUDGET_EXCEEDED
 
-                reason = "tokens" if "token" in exc.reason else "calls"
-                LLM_BUDGET_EXCEEDED.labels(reason=reason).inc()
-            except Exception:  # noqa: BLE001
-                pass
-            logger.error("llm_budget_blocked", reason=exc.reason, **(exc.snapshot or {}))
-            try:
-                from app.alerts.base import AlertSeverity
-                from app.alerts.ops import emit_llm_budget_alert
+                    reason = "tokens" if "token" in exc.reason else "calls"
+                    LLM_BUDGET_EXCEEDED.labels(reason=reason).inc()
+                except Exception:  # noqa: BLE001
+                    pass
+                logger.error("llm_budget_blocked", reason=exc.reason, **(exc.snapshot or {}))
+                try:
+                    from app.alerts.base import AlertSeverity
+                    from app.alerts.ops import emit_llm_budget_alert
 
-                await emit_llm_budget_alert(
-                    settings=cfg,
-                    code="llm.budget_exhausted",
-                    message=str(exc.reason),
-                    severity=AlertSeverity.CRITICAL,
-                    context=exc.snapshot or {},
-                )
-            except Exception:  # noqa: BLE001
-                pass
-            raise LLMError(str(exc)) from exc
+                    await emit_llm_budget_alert(
+                        settings=cfg,
+                        code="llm.budget_exhausted",
+                        message=str(exc.reason),
+                        severity=AlertSeverity.CRITICAL,
+                        context=exc.snapshot or {},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                raise LLMError(str(exc)) from exc
         return await self._complete_json_with_retries(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -112,27 +113,45 @@ class OpenAICompatibleClient:
         max_tokens: int | None = None,
     ) -> LLMResponse:
         cfg = self.settings
-        api_key = cfg.llm_api_key.get_secret_value() if cfg.llm_api_key else ""
+        api_key = ""
+        if cfg.llm_api_key is not None:
+            api_key = cfg.llm_api_key.get_secret_value()
+        if not api_key.strip():
+            api_key = "local"
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": model or cfg.llm_model,
             "temperature": cfg.llm_temperature if temperature is None else temperature,
-            "max_tokens": cfg.llm_max_tokens if max_tokens is None else max_tokens,
-            "response_format": {"type": "json_object"},
+            "max_tokens": max_tokens if max_tokens is not None else cfg.llm_max_tokens,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         }
+        if cfg.llm_json_object_response:
+            payload["response_format"] = {"type": "json_object"}
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
         url = cfg.llm_base_url.rstrip("/") + "/chat/completions"
-        timeout = httpx.Timeout(cfg.llm_timeout_seconds)
+        seconds = (
+            cfg.llm_local_timeout_seconds if cfg.llm_is_local() else cfg.llm_timeout_seconds
+        )
+        timeout = httpx.Timeout(seconds)
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, headers=headers, json=payload)
+            if (
+                response.status_code >= 400
+                and cfg.llm_is_local()
+                and "response_format" in payload
+            ):
+                # Some Ollama builds reject json_object; retry as plain chat.
+                payload = dict(payload)
+                payload.pop("response_format", None)
+                logger.warning("llm_local_retry_without_json_object", status=response.status_code)
+                response = await client.post(url, headers=headers, json=payload)
             if response.status_code >= 400:
                 logger.error(
                     "llm_http_error",
@@ -147,29 +166,35 @@ class OpenAICompatibleClient:
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError("Unexpected LLM response shape") from exc
 
-        prompt_t, completion_t = usage_from_openai_response(data if isinstance(data, dict) else None)
+        prompt_t, completion_t = usage_from_openai_response(
+            data if isinstance(data, dict) else None
+        )
         if prompt_t == 0 and completion_t == 0:
-            # Provider omitted usage — count a conservative floor so budgets still bite.
             prompt_t = max(1, (len(system_prompt) + len(user_prompt)) // 4)
             completion_t = max(1, len(content) // 4)
         record_llm_usage(prompt_tokens=prompt_t, completion_tokens=completion_t, settings=cfg)
-        snap = snapshot_llm_budget(cfg)
-        if snap.soft_warned or snap.month_soft_warned:
-            try:
-                from app.alerts.base import AlertSeverity
-                from app.alerts.ops import emit_llm_budget_alert
+        if cfg.llm_spend_budget_applies():
+            snap = snapshot_llm_budget(cfg)
+            if snap.soft_warned or snap.month_soft_warned:
+                try:
+                    from app.alerts.base import AlertSeverity
+                    from app.alerts.ops import emit_llm_budget_alert
 
-                await emit_llm_budget_alert(
-                    settings=cfg,
-                    code="llm.budget_soft_limit",
-                    message="LLM budget soft limit reached",
-                    severity=AlertSeverity.WARNING,
-                    context=snap.to_dict(),
-                )
-            except Exception:  # noqa: BLE001
-                pass
+                    await emit_llm_budget_alert(
+                        settings=cfg,
+                        code="llm.budget_soft_limit",
+                        message="LLM budget soft limit reached",
+                        severity=AlertSeverity.WARNING,
+                        context=snap.to_dict(),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
-        return LLMResponse(content=content, model=str(data.get("model") or payload["model"]), raw=data)
+        return LLMResponse(
+            content=content,
+            model=str(data.get("model") or payload["model"]),
+            raw=data,
+        )
 
 
 class StubLLMClient:
@@ -213,6 +238,13 @@ def _llm_api_key_configured(settings: Settings) -> bool:
 
 def get_llm_client(settings: Settings | None = None) -> LLMClient:
     cfg = settings or get_settings()
+    if cfg.llm_is_local():
+        logger.info(
+            "llm_client_local",
+            base_url=cfg.llm_base_url,
+            model=cfg.llm_model,
+        )
+        return OpenAICompatibleClient(cfg)
     if not _llm_api_key_configured(cfg):
         logger.warning("llm_client_fallback_stub", reason="missing_api_key")
         return StubLLMClient()

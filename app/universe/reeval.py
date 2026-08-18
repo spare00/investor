@@ -39,7 +39,10 @@ def symbol_reeval_gap_minutes(
     settings: Settings,
 ) -> float:
     """Per-symbol cooldown in minutes from watchlist horizon policy."""
-    return max(1.0, reeval_seconds_for_horizon(horizon_by_symbol.get(symbol.upper()), settings) / 60.0)
+    return max(
+        1.0,
+        reeval_seconds_for_horizon(horizon_by_symbol.get(symbol.upper()), settings) / 60.0,
+    )
 
 
 def global_reeval_gap_minutes(
@@ -64,9 +67,9 @@ def planned_intraday_interval_minutes(
     when empty. Callers should pass open/focus horizons — not the full watchlist —
     so a single scalp seed does not densify a medium-only session plan.
 
-    When ``session_minutes`` is set, spacing is also floored so we do not plan
-    more than roughly ``1.5 * max_intraday_reanalyses`` ticks (LLM budget).
-    Runtime cooldowns still skip early runs when open books are slower.
+    When ``session_minutes`` is set, cloud (billable) spacing is also floored so
+    we do not plan more than roughly ``1.5 * max_intraday_reanalyses`` ticks.
+    Local/embedded runtimes skip that spend floor — cadence follows the book.
     """
     fallback = max(1, int(settings.intraday_reevaluation_interval_minutes))
     cleaned = [h for h in (horizons or []) if h]
@@ -76,8 +79,15 @@ def planned_intraday_interval_minutes(
     else:
         horizon_mins = fallback
 
-    if session_minutes is not None and session_minutes > 0:
-        max_jobs = max(4, int(math.ceil(int(settings.max_intraday_reanalyses) * 1.5)))
+    if session_minutes is not None and session_minutes > 0 and not settings.llm_is_local():
+        max_jobs = max(4, int(math.ceil(int(effective_max_intraday_reanalyses(settings)) * 1.5)))
         budget_mins = max(1, int(math.ceil(float(session_minutes) / max_jobs)))
         return max(horizon_mins, budget_mins)
     return horizon_mins
+
+
+def effective_max_intraday_reanalyses(settings: Settings) -> int:
+    """Cloud spend cap vs local loop cap."""
+    if settings.llm_is_local():
+        return max(1, int(settings.max_intraday_reanalyses_local))
+    return max(1, int(settings.max_intraday_reanalyses))

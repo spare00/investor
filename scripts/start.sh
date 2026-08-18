@@ -14,6 +14,14 @@ cd "${REPO_ROOT}"
 [[ -f "${REPO_ROOT}/.env" ]] || die "missing .env — copy .env.example and configure before starting"
 assert_not_live_unless_allowed
 
+runtime="$(env_get LLM_RUNTIME | tr '[:upper:]' '[:lower:]')"
+if [[ "${runtime}" == "local" || "${runtime}" == "ollama" || "${runtime}" == "embedded" ]]; then
+  if ! curl -fsS -m 1 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    echo "warning: LLM_RUNTIME=${runtime} but Ollama is not reachable on :11434" >&2
+    echo "  ./scripts/ensure_local_llm.sh" >&2
+  fi
+fi
+
 # Only bind loopback by default so the ops API is not exposed on all interfaces.
 if [[ "${INVESTOR_HOST}" != "127.0.0.1" && "${INVESTOR_HOST}" != "localhost" && "${INVESTOR_HOST}" != "::1" ]]; then
   if [[ "${INVESTOR_ALLOW_PUBLIC_BIND:-0}" != "1" ]]; then

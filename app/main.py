@@ -155,6 +155,9 @@ async def health() -> dict[str, Any]:
         "require_manual_order_approval": settings.require_manual_order_approval,
         "intraday_operation_mode": settings.intraday_operation_mode,
         "enable_external_data": settings.enable_external_data,
+        "llm_runtime": settings.llm_runtime,
+        "llm_is_local": settings.llm_is_local(),
+        "llm_model": settings.llm_model,
         "phase": 7,
     }
 
