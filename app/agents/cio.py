@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from app.agents.base import BaseAgent, dump_for_prompt
+from app.agents.base import BaseAgent
+from app.agents.briefs import cio_brief
 from app.schemas.cio import CIODecision, CIOInput, SymbolActionPlan
 from app.schemas.common import (
     AgentName,
@@ -23,34 +24,13 @@ from app.schemas.common import (
 class CIOAgent(BaseAgent[CIOInput, CIODecision]):
     name = AgentName.CIO
     prompt_file = "system_v1.md"
-    prompt_version = "1.0.0"
+    prompt_version = "2.0.0"
 
     def output_model(self) -> type[CIODecision]:
         return CIODecision
 
     def build_user_prompt(self, payload: CIOInput) -> str:
-        held = ", ".join(f"{p.symbol}:{p.quantity}" for p in payload.positions) or "none"
-        return (
-            "Produce final CIODecision JSON. Honor Hard Vetoes. "
-            "If risk_approval is false, do not emit risk-increasing actions. "
-            "Honor Risk Hard Vetoes including non_live_market_prices — "
-            "never SCALE_IN/BUY off stub or fixture quotes. "
-            "Review EVERY open position and emit HOLD/REDUCE/PARTIAL_SELL/SELL as needed "
-            "(including symbols not on watchlist). New entries only from allowlist/watchlist. "
-            "Match time_horizon to watchlist horizon when present "
-            "(scalp/day→intraday, short→swing, medium→position). "
-            "Respect per-horizon book capacity — prefer highest-conviction names.\n"
-            "If the book is flat, risk is approved, and macro is RISK_ON/STRONG_RISK_ON, "
-            "do NOT choose NO_TRADE solely because Devil prefer_no_trade is soft/advisory — "
-            "prefer SCALE_IN/BUY on the best Quant allowlist names with entry_zone+stop. "
-            "Every BUY/STRONG_BUY/SCALE_IN MUST include a numeric stop_loss "
-            "(copy Quant stop_or_invalidation, or use watchlist stop_atr_mult / "
-            "stop_pct_fallback — scalp ~1%, day ~1.5%, short ~3%, medium ~5%; "
-            "never a flat 1–2% for swing/position books). "
-            "Hard risk vetoes still win.\n"
-            f"Open positions: {held}\n\n"
-            f"{dump_for_prompt(payload)}"
-        )
+        return cio_brief(payload)
 
     def _close_plans(self, payload: CIOInput, *, thesis: str) -> list[SymbolActionPlan]:
         plans: list[SymbolActionPlan] = []

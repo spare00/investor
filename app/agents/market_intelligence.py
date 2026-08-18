@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.agents.base import BaseAgent, dump_for_prompt
+from app.agents.base import BaseAgent
+from app.agents.briefs import market_intelligence_brief
 from app.schemas.common import AgentName, NewsCategory, Sentiment, TraceMetadata
 from app.schemas.market_intelligence import (
     MarketEvent,
@@ -16,16 +17,13 @@ from app.schemas.market_intelligence import (
 class MarketIntelligenceAgent(BaseAgent[MarketIntelligenceInput, MarketIntelligenceOutput]):
     name = AgentName.MARKET_INTELLIGENCE
     prompt_file = "system_v1.md"
-    prompt_version = "1.0.0"
+    prompt_version = "2.0.0"
 
     def output_model(self) -> type[MarketIntelligenceOutput]:
         return MarketIntelligenceOutput
 
     def build_user_prompt(self, payload: MarketIntelligenceInput) -> str:
-        return (
-            "Analyze the following premarket inputs and produce MarketIntelligenceOutput JSON.\n\n"
-            f"{dump_for_prompt(payload)}"
-        )
+        return market_intelligence_brief(payload)
 
     def fallback_output(
         self, payload: MarketIntelligenceInput, *, reason: str

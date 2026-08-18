@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.agents.base import BaseAgent, dump_for_prompt
+from app.agents.base import BaseAgent
+from app.agents.briefs import macro_brief
 from app.schemas.common import AgentName, MarketRegime, TraceMetadata
 from app.schemas.macro_strategist import MacroStrategistInput, MacroStrategistOutput
 
@@ -12,16 +13,13 @@ from app.schemas.macro_strategist import MacroStrategistInput, MacroStrategistOu
 class MacroStrategistAgent(BaseAgent[MacroStrategistInput, MacroStrategistOutput]):
     name = AgentName.MACRO_STRATEGIST
     prompt_file = "system_v1.md"
-    prompt_version = "1.0.0"
+    prompt_version = "2.0.0"
 
     def output_model(self) -> type[MacroStrategistOutput]:
         return MacroStrategistOutput
 
     def build_user_prompt(self, payload: MacroStrategistInput) -> str:
-        return (
-            "Classify the macro regime from this data. Return MacroStrategistOutput JSON.\n\n"
-            f"{dump_for_prompt(payload)}"
-        )
+        return macro_brief(payload)
 
     def fallback_output(
         self, payload: MacroStrategistInput, *, reason: str

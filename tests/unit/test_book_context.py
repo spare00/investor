@@ -20,8 +20,8 @@ def test_au_book_context(monkeypatch) -> None:
     assert "VAS" in book.index_symbols
     assert "BHP" in book.allowlist
     block = book.prompt_block()
-    assert "venue: AU" in block
-    assert "currency: AUD" in block
+    assert "BOOK AU" in block
+    assert "AUD" in block
 
 
 def test_us_index_symbols_default() -> None:

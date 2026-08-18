@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.agents.base import BaseAgent, dump_for_prompt
+from app.agents.base import BaseAgent
+from app.agents.briefs import universe_brief
 from app.schemas.common import AgentName, TraceMetadata
 from app.schemas.universe_manager import (
     UniverseManagerInput,
@@ -17,22 +18,13 @@ from app.universe.horizons import UniverseHorizon
 class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput]):
     name = AgentName.UNIVERSE_MANAGER
     prompt_file = "system_v1.md"
-    prompt_version = "1.1.0"
+    prompt_version = "2.0.0"
 
     def output_model(self) -> type[UniverseManagerOutput]:
         return UniverseManagerOutput
 
     def build_user_prompt(self, payload: UniverseManagerInput) -> str:
-        return (
-            "Maintain the horizon-grouped watchlist and focus set across enabled venues "
-            "(US and/or AU). Prefer seed_pool / seed_pool_by_venue, then candidate_pool, "
-            "then current watchlist. Cover both books when dual-venue is enabled. "
-            "You may add liquid names from candidate_pool that fit a horizon book. "
-            "Do not invent obscure tickers. Use market_regime, themes, and recent_outcomes "
-            "to rotate toward fit names and pause chronic losers. Optimize for max return / "
-            "min loss via selection quality — do not scan the whole market.\n\n"
-            f"{dump_for_prompt(payload)}"
-        )
+        return universe_brief(payload)
 
     def fallback_output(self, payload: UniverseManagerInput, *, reason: str) -> UniverseManagerOutput:
         """Deterministic seed: keep allowlist/seed as short+day mix, focus = holdings ∪ top seed."""

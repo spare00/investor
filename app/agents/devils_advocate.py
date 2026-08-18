@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.agents.base import BaseAgent, dump_for_prompt
+from app.agents.base import BaseAgent
+from app.agents.briefs import devil_brief
 from app.schemas.common import AgentName, TraceMetadata
 from app.schemas.devils_advocate import DevilsAdvocateInput, DevilsAdvocateOutput
 
@@ -12,16 +13,13 @@ from app.schemas.devils_advocate import DevilsAdvocateInput, DevilsAdvocateOutpu
 class DevilsAdvocateAgent(BaseAgent[DevilsAdvocateInput, DevilsAdvocateOutput]):
     name = AgentName.DEVILS_ADVOCATE
     prompt_file = "system_v1.md"
-    prompt_version = "1.0.0"
+    prompt_version = "2.0.0"
 
     def output_model(self) -> type[DevilsAdvocateOutput]:
         return DevilsAdvocateOutput
 
     def build_user_prompt(self, payload: DevilsAdvocateInput) -> str:
-        return (
-            "Challenge the proposed theses. Answer the five mandatory questions.\n\n"
-            f"{dump_for_prompt(payload)}"
-        )
+        return devil_brief(payload)
 
     def fallback_output(
         self, payload: DevilsAdvocateInput, *, reason: str

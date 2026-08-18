@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.agents.base import BaseAgent, dump_for_prompt
+from app.agents.base import BaseAgent
+from app.agents.briefs import risk_brief
 from app.core.config import Settings
 from app.market.venues import combined_entry_allowlist
 from app.risk import (
@@ -27,7 +28,7 @@ from app.services.llm import LLMClient
 class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
     name = AgentName.RISK_MANAGER
     prompt_file = "system_v1.md"
-    prompt_version = "1.1.0"
+    prompt_version = "2.0.0"
 
     def __init__(
         self,
@@ -44,13 +45,7 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
 
     def build_user_prompt(self, payload: RiskManagerInput) -> str:
         engine_preview = self._run_engine(payload)
-        return (
-            "Review portfolio risk. Hard Vetoes from the deterministic engine are authoritative.\n"
-            "You own present-market price integrity: if live_prices_required and price_feed_live "
-            "is false (stub/fixture quotes), that is a Hard Veto — never soft-approve new risk.\n"
-            f"ENGINE_RESULT:\n{dump_for_prompt(engine_preview)}\n\n"
-            f"INPUT:\n{dump_for_prompt(payload)}"
-        )
+        return risk_brief(payload, engine_preview)
 
     def _price_integrity_vetoes(self, payload: RiskManagerInput) -> list[str]:
         """Risk Officer hard gate: orders require present-market prices, never stubs."""

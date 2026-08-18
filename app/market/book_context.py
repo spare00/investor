@@ -37,20 +37,9 @@ class VenueBookContext:
         allow = ", ".join(self.allowlist[:24]) or "(empty)"
         indexes = ", ".join(self.index_symbols) or "(none)"
         return (
-            "BOOK CONTEXT (active venue for this run — do not assume the other book):\n"
-            f"- venue: {self.venue}\n"
-            f"- mic: {self.mic}\n"
-            f"- currency: {self.currency}\n"
-            f"- market_timezone: {self.market_timezone}\n"
-            f"- operator_timezone: {self.operator_timezone}\n"
-            f"- session_date: {self.session_date or 'n/a'}\n"
-            f"- phase: {self.phase or 'n/a'}\n"
-            f"- benchmark: {self.benchmark}\n"
-            f"- ib_exchange: {self.ib_exchange}\n"
-            f"- entry_allowlist: {allow}\n"
-            f"- index_symbols: {indexes}\n"
-            "Analyze and propose only for this book. The firm may hold the other "
-            "venue, but new entries and symbol focus must stay on this book."
+            f"BOOK {self.venue} {self.currency} {self.phase or 'n/a'} "
+            f"bench={self.benchmark} allow={allow} idx={indexes}. "
+            "This book only for new entries."
         )
 
 

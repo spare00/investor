@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.agents.base import BaseAgent, dump_for_prompt
+from app.agents.base import BaseAgent
+from app.agents.briefs import quant_brief
 from app.schemas.common import (
     AgentName,
     BreadthState,
@@ -98,20 +99,13 @@ def _probability(trend: TrendState, momentum: MomentumState) -> tuple[float, str
 class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput]):
     name = AgentName.QUANT_STRATEGIST
     prompt_file = "system_v1.md"
-    prompt_version = "1.0.0"
+    prompt_version = "2.0.0"
 
     def output_model(self) -> type[QuantStrategistOutput]:
         return QuantStrategistOutput
 
     def build_user_prompt(self, payload: QuantStrategistInput) -> str:
-        return (
-            "Produce QuantStrategistOutput JSON from these bars. "
-            "Probabilities must be rule-based. "
-            "When watchlist horizon/stop_notes are present, size "
-            "stop_or_invalidation to that book's ATR/pct policy "
-            "(scalp tight, medium wide) — do not use a flat 1–2% for all names.\n\n"
-            f"{dump_for_prompt(payload)}"
-        )
+        return quant_brief(payload)
 
     def fallback_output(
         self, payload: QuantStrategistInput, *, reason: str
