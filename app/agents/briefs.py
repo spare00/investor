@@ -50,6 +50,20 @@ def _drop_empty(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _watch_by_book(rows: list[dict] | None, *, limit: int = 16) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {"scalp": [], "day": [], "short": []}
+    for raw in (rows or [])[:limit]:
+        if not isinstance(raw, dict):
+            continue
+        sym = str(raw.get("symbol") or "").upper()
+        if not sym:
+            continue
+        hz = str(raw.get("horizon") or "").strip().lower()
+        if hz in grouped and len(grouped[hz]) < 8:
+            grouped[hz].append(sym)
+    return {k: v for k, v in grouped.items() if v}
+
+
 def _watch_rows(rows: list[dict] | None, *, limit: int = 16) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for raw in (rows or [])[:limit]:
@@ -233,10 +247,16 @@ def quant_brief(payload: QuantStrategistInput) -> str:
         "index": [_bar_row(b) for b in payload.index_bars[:6]],
         "symbols": [_bar_row(b) for b in (payload.symbol_bars or payload.index_bars)[:16]],
         "watch": _watch_rows(payload.watchlist),
+        "books": _watch_by_book(payload.watchlist),
+        "playbooks": [
+            {"h": "scalp", "ko": "초단타", "rule": "continuation only, tight stop, no overnight"},
+            {"h": "day", "ko": "단타", "rule": "session structure, flatten before close"},
+            {"h": "short", "ko": "단기", "rule": "swing trend, wider stop, overnight ok"},
+        ],
         "themes": _clip_obj(payload.market_intelligence_summary),
     }
     return _ask(
-        "From these bars only: market trend and per-symbol trend/momentum/stop. No invented indicators.",
+        "From these bars only: market trend and per-symbol trend/momentum/stop. Apply the matching book playbook (scalp/day/short). Ignore medium. No invented indicators.",
         data,
         "QuantStrategistOutput. Stop from ATR/horizon policy. p from the numbers. <=12 symbol_views.",
     )
@@ -345,6 +365,12 @@ def cio_brief(payload: CIOInput) -> str:
         "positions": positions or ["FLAT"],
         "allow": [s.upper() for s in payload.allowlist[:16]],
         "watch": _watch_rows(payload.watchlist),
+        "books": _watch_by_book(payload.watchlist),
+        "playbooks": [
+            {"h": "scalp", "ko": "초단타", "rule": "tape follow, no overnight, cut on exhaustion"},
+            {"h": "day", "ko": "단타", "rule": "session trade, flatten into close"},
+            {"h": "short", "ko": "단기", "rule": "swing hold, reduce on exhaustion, sell on trend break"},
+        ],
         "mi": _mi_summary(payload.market_intelligence),
         "macro": _drop_empty(
             {
@@ -367,7 +393,7 @@ def cio_brief(payload: CIOInput) -> str:
         ),
     }
     return _ask(
-        "One portfolio_action. Review every open position. New buys only from allowlist if risk_approval.",
+        "Decide per book. 초단타/단타/단기 each follow their playbook — never one strategy for all. Ignore medium. One portfolio_action. Review every open position in THIS book's allowlist. New buys only from allowlist if risk_approval.",
         data,
         "CIODecision. HONOR hard vetoes. Entries need numeric stop_loss. thesis/invalidation <=80 chars.",
     )

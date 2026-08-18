@@ -32,7 +32,7 @@ Local 14B must finish inside the scheduler **8-minute** `job_action_timeout` (`J
 
 ## Python vs LLM (local vs cloud)
 
-Python always owns indicators, Hard Vetoes, and broker HTTP. Chat is only for judgments a human would still have to make.
+Python always owns indicators, Hard Vetoes, and broker HTTP. Chat is only for judgments a human would still have to make. **Trading style is per book** (`app/universe/book_strategy.py`): 초단타 / 단타 / 단기 each have their own entry, exit, and size rules. 중기 is skipped for new risk.
 
 | Agent | Python owns | Cloud LLM | Local LLM (`LLM_RUNTIME=local`) |
 |-------|-------------|-----------|----------------------------------|

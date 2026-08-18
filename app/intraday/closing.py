@@ -127,6 +127,25 @@ class ClosingService:
                 if qty > 0 and self._should_auto_submit_force_close(caps):
                     retry_force_submit = True
                 continue
+            from app.brokers.models import IntentStatus as _IntentStatus
+            from app.models import OrderIntent as _OrderIntent
+
+            prior = (
+                await self.session.execute(
+                    select(_OrderIntent).where(
+                        _OrderIntent.symbol == lc.symbol,
+                        _OrderIntent.status == _IntentStatus.CREATED.value,
+                    )
+                )
+            ).scalars().first()
+            if prior is not None and str(prior.thesis or "").startswith("closing:"):
+                draft["skipped"] = "already_created"
+                draft["intent_id"] = str(prior.id)
+                intent_ids.append(str(prior.id))
+                notes.append(f"skip_duplicate_intent:{plan.symbol}")
+                if qty > 0 and self._should_auto_submit_force_close(caps):
+                    retry_force_submit = True
+                continue
             if caps.intents_are_draft_only:
                 meta = dict(lc.metadata_json or {})
                 meta["exit_draft"] = {
@@ -157,6 +176,18 @@ class ClosingService:
         if (intent_ids or retry_force_submit) and self._should_auto_submit_force_close(caps):
             submitted = await self._submit_close_intents(lifecycles, decision.plans)
             notes.append(f"force_close_orders_submitted={submitted}")
+            if submitted:
+                from app.brokers.models import IntentStatus as _IntentStatus
+                from app.models import OrderIntent as _OrderIntent
+                from uuid import UUID as _UUID
+
+                for raw_id in intent_ids:
+                    try:
+                        row = await self.session.get(_OrderIntent, _UUID(str(raw_id)))
+                    except (ValueError, TypeError):
+                        row = None
+                    if row is not None:
+                        row.status = _IntentStatus.SUBMITTED.value
             if retry_force_submit and not intent_ids:
                 notes.append("force_close_retry_pending_close")
         elif intent_ids:

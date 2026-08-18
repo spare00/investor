@@ -60,13 +60,16 @@ def theses_from_quant(
     *,
     entry_universe: list[str] | None,
     regime: str | None,
+    watchlist: list[dict] | None = None,
     limit: int = 5,
 ) -> list[ProposedThesis]:
-    """Build Devil/CIO challenge targets from actionable Quant views.
+    """Build Devil/CIO challenge targets from book-aware Quant views.
 
     Premarket/intraday often pass no explicit ProposedTrade; without theses Devil
     only sees "No explicit trade proposal" and soft-blocks a flat RISK_ON book.
     """
+    from app.universe.book_strategy import horizon_for_symbol, should_propose_entry
+
     allow = {s.upper() for s in (entry_universe or []) if s} or None
     ranked: list[tuple[float, ProposedThesis]] = []
     for view in quant.symbol_views or []:
@@ -77,26 +80,36 @@ def theses_from_quant(
             continue
         if view.entry_zone is None:
             continue
-        prob = float(view.probability_estimate or 0.0)
-        if prob < 0.45:
+        hz = horizon_for_symbol(sym, watchlist)
+        if not should_propose_entry(
+            horizon=hz,
+            probability=float(view.probability_estimate or 0.0),
+            trend=view.trend_state,
+            momentum=view.momentum_state,
+            liquidity=view.liquidity_state,
+            volatility=view.volatility_state,
+            rsi=None,
+            regime=regime,
+        ):
             continue
         trend = getattr(view.trend_state, "value", str(view.trend_state or ""))
         direction = "short" if trend == "down" else "long"
         ez = view.entry_zone
         ranked.append(
             (
-                prob,
+                float(view.probability_estimate or 0.0),
                 ProposedThesis(
                     symbol=sym,
                     direction=direction,
                     summary=(
-                        f"Quant {direction} {sym} p={prob:.2f} trend={trend} "
-                        f"entry={ez.min}-{ez.max}"
+                        f"Quant {hz} {direction} {sym} p={float(view.probability_estimate):.2f} "
+                        f"trend={trend} entry={ez.min}-{ez.max}"
                     ),
                     supporting_points=[
                         p
                         for p in [
                             regime or "",
+                            hz,
                             view.probability_basis or "",
                             f"stop={view.stop_or_invalidation}"
                             if view.stop_or_invalidation is not None
@@ -386,6 +399,7 @@ class AgentPipeline:
                 quant_out,
                 entry_universe=entry_list,
                 regime=macro_out.market_regime.value,
+                watchlist=watch_ctx,
             )
         if not theses:
             theses = [

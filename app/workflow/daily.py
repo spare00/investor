@@ -865,12 +865,31 @@ class DailyWorkflowService:
                     .all()
                 ]
                 try:
-                    horizons = await UniverseService(
+                    univ = UniverseService(
                         self.session, settings=self.settings
-                    ).horizon_by_symbol()
+                    )
+                    horizons = await univ.horizon_by_symbol()
+                    if not open_syms:
+                        open_syms = await univ.collection_universe(
+                            holdings=[], venue=self.venue.value
+                        )
                 except Exception:  # noqa: BLE001
                     horizons = {}
-                need_gap = global_reeval_gap_minutes(open_syms, horizons, self.settings)
+                from app.universe.book_strategy import is_active_strategy_horizon
+
+                cadence_map = {
+                    str(s).upper(): h
+                    for s, h in (horizons or {}).items()
+                    if is_active_strategy_horizon(h)
+                }
+                cadence_syms = [
+                    str(s).upper()
+                    for s in open_syms
+                    if str(s).upper() in cadence_map
+                ]
+                need_gap = global_reeval_gap_minutes(
+                    cadence_syms, cadence_map, self.settings
+                )
                 if (
                     gap < need_gap
                     and effective_trigger == "interval"
@@ -1373,8 +1392,11 @@ class DailyWorkflowService:
                     holdings=[], venue=self.venue.value
                 )
                 plan_horizons = [hz_map[s] for s in focus_syms if s in hz_map]
+            from app.universe.book_strategy import filter_strategy_horizons
+
+            plan_horizons = filter_strategy_horizons(plan_horizons)
             if not plan_horizons:
-                plan_horizons = list(hz_map.values())
+                plan_horizons = filter_strategy_horizons(list(hz_map.values())) or ["day"]
             interval_min = planned_intraday_interval_minutes(
                 plan_horizons, cfg, session_minutes=session_mins
             )

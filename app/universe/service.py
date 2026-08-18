@@ -51,7 +51,7 @@ class UniverseService:
                     return UniverseHorizon.DAY.value if index < 3 else UniverseHorizon.SHORT.value
                 if sym in {"BHP", "CBA"}:
                     return UniverseHorizon.SHORT.value
-                return UniverseHorizon.MEDIUM.value
+                return UniverseHorizon.SHORT.value
             indexes = {"SPY", "QQQ", "IWM", "DIA"}
             if sym in indexes:
                 return UniverseHorizon.SCALP.value if index < 2 else UniverseHorizon.DAY.value
@@ -59,7 +59,7 @@ class UniverseService:
                 return UniverseHorizon.DAY.value
             if sym in {"MSFT", "AMZN", "GOOGL", "AVGO"}:
                 return UniverseHorizon.SHORT.value
-            return UniverseHorizon.MEDIUM.value
+            return UniverseHorizon.SHORT.value
 
         seed_books: list[tuple[Venue, list[str]]] = [(Venue.US, list(self.settings.trade_allowlist))]
         if Venue.AU in enabled_venues(self.settings) or self.settings.trade_allowlist_au:
@@ -119,7 +119,13 @@ class UniverseService:
         active = await self.list_active()
         if not active:
             return set(allow)
-        active_syms = {row.symbol.upper() for row in active}
+        from app.universe.book_strategy import is_active_strategy_horizon
+
+        active_syms = {
+            row.symbol.upper()
+            for row in active
+            if is_active_strategy_horizon(row.horizon)
+        }
         return active_syms & set(allow)
 
     async def horizon_by_symbol(self) -> dict[str, str]:
@@ -165,14 +171,42 @@ class UniverseService:
             # Drop sold / paused names that lingered in an older focus snapshot.
             focus = [str(s).upper() for s in latest.symbols if str(s).upper() in allowed]
             if focus or held_scoped:
-                return sorted({*focus, *held_scoped, bench})
+                return await self._filter_collection_symbols(
+                    sorted({*focus, *held_scoped, bench}),
+                    held=set(held_scoped),
+                    bench=bench,
+                )
 
         active = await self.list_active()
         if allow is not None:
             active = [r for r in active if r.symbol.upper() in allow]
         ranked = sorted(active, key=lambda r: (-r.priority, r.symbol))
         focus = [r.symbol.upper() for r in ranked[: self.settings.universe_focus_limit]]
-        return sorted({*focus, *held_scoped, bench})
+        return await self._filter_collection_symbols(
+            sorted({*focus, *held_scoped, bench}),
+            held=set(held_scoped),
+            bench=bench,
+        )
+
+    async def _filter_collection_symbols(
+        self,
+        symbols: list[str],
+        *,
+        held: set[str],
+        bench: str,
+    ) -> list[str]:
+        """Keep holdings/benchmark always; drop medium from research/entry sets."""
+        from app.universe.book_strategy import is_active_strategy_horizon
+
+        hz = await self.horizon_by_symbol()
+        out: list[str] = []
+        for sym in symbols:
+            if sym in held or sym == bench:
+                out.append(sym)
+                continue
+            if is_active_strategy_horizon(hz.get(sym)):
+                out.append(sym)
+        return out
 
     async def snapshot(self) -> dict[str, Any]:
         await self.ensure_seeded()
@@ -548,12 +582,17 @@ class UniverseService:
         active = await self.list_active()
         ranked = sorted(active, key=lambda r: (-r.priority, r.symbol))
         held = [h.upper() for h in holdings]
+        held_set = set(held)
         focus: list[str] = []
         for h in held:
             if h not in focus:
                 focus.append(h)
+        from app.universe.book_strategy import is_active_strategy_horizon
+
         for r in ranked:
             if r.symbol.upper() not in focus:
+                if not is_active_strategy_horizon(r.horizon) and r.symbol.upper() not in held_set:
+                    continue
                 focus.append(r.symbol.upper())
             if len(focus) >= self.settings.universe_focus_limit:
                 break

@@ -99,7 +99,7 @@ def _probability(trend: TrendState, momentum: MomentumState) -> tuple[float, str
 class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput]):
     name = AgentName.QUANT_STRATEGIST
     prompt_file = "system_v1.md"
-    prompt_version = "2.0.0"
+    prompt_version = "2.1.0"
 
     def output_model(self) -> type[QuantStrategistOutput]:
         return QuantStrategistOutput
@@ -110,6 +110,12 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
     def fallback_output(
         self, payload: QuantStrategistInput, *, reason: str
     ) -> QuantStrategistOutput:
+        from app.universe.book_strategy import (
+            adjust_probability,
+            horizon_for_symbol,
+            playbook_for,
+            structure_allows_entry,
+        )
         from app.universe.horizons import policy_by_symbol, suggested_long_stop
 
         by_pol = policy_by_symbol(payload.watchlist)
@@ -120,13 +126,40 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
             mom = _momentum(bar)
             vol = _volatility(bar, payload.vix)
             liq = _liquidity(bar)
-            prob, basis = _probability(trend, mom)
+            base_prob, basis = _probability(trend, mom)
+            horizon = horizon_for_symbol(bar.symbol, payload.watchlist)
+            prob, book_notes = adjust_probability(
+                base=base_prob,
+                horizon=horizon,
+                liquidity=liq,
+                volatility=vol,
+            )
+            book = playbook_for(horizon)
             pol = by_pol.get(bar.symbol.upper())
             stop = suggested_long_stop(
                 reference=float(bar.last),
                 atr=float(bar.atr_14) if bar.atr_14 else None,
                 policy=pol,
             )
+            zone_pct = book.entry_zone_pct if book else 0.01
+            target_pct = book.target_pct if book else 0.02
+            ok, why = structure_allows_entry(
+                horizon=horizon,
+                trend=trend,
+                momentum=mom,
+                liquidity=liq,
+                volatility=vol,
+                rsi=bar.rsi_14,
+            )
+            entry_zone = None
+            if book is not None and ok:
+                entry_zone = PriceZone(
+                    min=round(bar.last * (1 - zone_pct), 4),
+                    max=round(bar.last * (1 + zone_pct), 4),
+                )
+            notes = ["python-indicators" if reason == "local_python_owns" else "fallback-rules"]
+            notes.extend(book_notes)
+            notes.append(f"structure={why}")
             views.append(
                 SymbolQuantView(
                     symbol=bar.symbol.upper(),
@@ -136,23 +169,23 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                     liquidity_state=liq,
                     support=bar.low,
                     resistance=bar.high,
-                    entry_zone=PriceZone(min=round(bar.last * 0.995, 4), max=round(bar.last * 1.005, 4)),
+                    entry_zone=entry_zone,
                     stop_or_invalidation=stop,
                     upside_scenario=Scenario(
                         name="continuation",
-                        description="Trend holds above short MA",
+                        description=(book.summary[:80] if book else "Trend holds above short MA"),
                         probability=prob,
-                        target_price=round(bar.last * 1.02, 4),
+                        target_price=round(bar.last * (1 + target_pct), 4),
                     ),
                     downside_scenario=Scenario(
-                        name="mean_reversion",
-                        description="Fail at resistance / gap fill",
+                        name="invalidation",
+                        description="Book stop / thesis break",
                         probability=round(1 - prob, 2),
-                        target_price=round(bar.last * 0.98, 4),
+                        target_price=round(bar.last * (1 - target_pct), 4),
                     ),
                     probability_estimate=prob,
-                    probability_basis=basis,
-                    notes=["python-indicators" if reason == "local_python_owns" else "fallback-rules"],
+                    probability_basis=basis + " | " + ",".join(book_notes),
+                    notes=notes,
                 )
             )
 

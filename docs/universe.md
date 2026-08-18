@@ -13,7 +13,7 @@ Stop treating `TRADE_ALLOWLIST` as the only tradable set. The firm maintains a *
 | `short` | 단기 | multi-day swing | ~15m |
 | `medium` | 중기 | weeks–months | ~60m |
 
-Policies live in `app/universe/horizons.py` (capacity, re-eval cadence, liquidity bars, stop ATR/pct widths, overnight defaults, CIO `time_horizon` mapping). Agents (MI / Quant / Risk / Devil / CIO) receive enriched watchlist rows with those fields. Missing CIO stops are filled with book-aware ATR/pct widths (scalp tight → medium wide), not a flat 1–2%. Intraday cooldowns use the **tightest** open book’s `reeval_seconds` (see `app/universe/reeval.py`). Session job plans (`intraday_eval_*`) use the tightest **active watchlist** horizon, floored by LLM budget (`≈ 1.5 × MAX_INTRADAY_REANALYSES` ticks per session); `INTRADAY_REEVALUATION_INTERVAL_MINUTES` is the fallback when no horizons are known. Universe refresh (scheduler, `POST /universe/refresh`, premarket) replans pending ticks. News collection lookback uses the longest book among symbols under review.
+Policies live in `app/universe/horizons.py`. **Entry/exit rules** live in `app/universe/book_strategy.py` so 초단타 / 단타 / 단기 are not one 2% continuation model. 중기 is ignored for new entries and research focus (existing medium holdings are still held). Quant Python and CIO fallback (and LLM briefs) apply the matching playbook per symbol. Intraday job cadence uses the tightest **active strategy** book in open names or focus (scalp ~2m, day ~5m, short ~15m); medium is not used to slow or densify the plan. Cloud still floors spacing by the token budget. News lookback uses the longest book among symbols under review.
 
 ## Modes
 
