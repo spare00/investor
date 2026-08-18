@@ -301,13 +301,54 @@ def _as_text(value: Any) -> Any:
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
-        for key in ("description", "rationale", "reason", "summary", "text", "name"):
+        for key in (
+            "factor",
+            "condition",
+            "fact",
+            "headline",
+            "description",
+            "rationale",
+            "reason",
+            "summary",
+            "text",
+            "name",
+            "value",
+            "label",
+        ):
             if isinstance(value.get(key), str) and value[key].strip():
                 return value[key]
         return json_dumps_safe(value)
     if isinstance(value, list):
         return "; ".join(str(x) for x in value)
     return value
+
+
+def _as_string_list(value: Any) -> list[str]:
+    """Coerce LLM list[str] lookalikes: a string, {factor:…}, or mixed list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, dict):
+        text = str(_as_text(value)).strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            if isinstance(item, str):
+                if item.strip():
+                    out.append(item)
+            elif isinstance(item, dict):
+                text = str(_as_text(item)).strip()
+                if text:
+                    out.append(text)
+            else:
+                out.append(str(item))
+        return out
+    return [str(value)]
 
 
 def json_dumps_safe(value: Any) -> str:
@@ -417,27 +458,11 @@ def _normalize_market_event(ev: dict[str, Any]) -> dict[str, Any]:
                 ev["interpretation"] = _as_text(interps[0])
             else:
                 ev["interpretation"] = _as_text(interps)
-    # facts may be list[str] or list[dict]
-    if isinstance(ev.get("facts"), list):
-        cleaned_facts: list[str] = []
-        for item in ev["facts"]:
-            if isinstance(item, str):
-                cleaned_facts.append(item)
-            elif isinstance(item, dict):
-                cleaned_facts.append(
-                    str(
-                        item.get("headline")
-                        or item.get("text")
-                        or item.get("fact")
-                        or _as_text(item)
-                    )
-                )
-            elif item is not None:
-                cleaned_facts.append(str(item))
-        ev["facts"] = cleaned_facts
-        if "headline" not in ev or not str(ev.get("headline") or "").strip():
-            if cleaned_facts:
-                ev["headline"] = cleaned_facts[0]
+    # facts/uncertainties: list[str], a single string, or {fact/factor: …}
+    ev["facts"] = _as_string_list(ev.get("facts"))
+    if "headline" not in ev or not str(ev.get("headline") or "").strip():
+        if ev["facts"]:
+            ev["headline"] = ev["facts"][0]
     if "headline" not in ev or not str(ev.get("headline") or "").strip():
         ev["headline"] = "Untitled market event"
     for junk in ("themes", "conflicts", "missing_information", "data_quality_score", "as_of", "title", "summary", "text"):
@@ -448,9 +473,11 @@ def _normalize_market_event(ev: dict[str, Any]) -> dict[str, Any]:
         ev["importance"] = _clamp_importance(ev["importance"])
     else:
         ev["importance"] = 3
-    if isinstance(ev.get("uncertainties"), str):
-        ev["uncertainties"] = [ev["uncertainties"]]
+    if isinstance(ev.get("uncertainties"), (str, dict, list)):
+        ev["uncertainties"] = _as_string_list(ev.get("uncertainties"))
     ev.setdefault("source", "unknown")
+    if isinstance(ev.get("symbols"), (str, dict)):
+        ev["symbols"] = _as_string_list(ev.get("symbols"))
     ev.setdefault("symbols", [])
     ev.setdefault("facts", [])
     ev.setdefault("uncertainties", [])
@@ -506,6 +533,32 @@ def _normalize_sector_impact(value: Any) -> Any:
     return value
 
 
+def _regime_from(value: Any) -> Any:
+    if value is None or value == "":
+        return None
+    if isinstance(value, dict):
+        for key in ("market_regime", "regime", "value", "label"):
+            found = value.get(key)
+            if found:
+                return found
+        return None
+    return value
+
+
+def _first_explicit_regime(out: dict[str, Any]) -> Any:
+    buckets: list[Any] = [out.get("market_regime"), out.get("regime")]
+    nested = out.get("macro")
+    if isinstance(nested, dict):
+        buckets.extend([nested.get("market_regime"), nested.get("regime")])
+    elif isinstance(nested, str) and nested.strip():
+        buckets.append(nested)
+    for raw in buckets:
+        found = _regime_from(raw)
+        if found:
+            return found
+    return None
+
+
 def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
     """Coerce common LLM shape mistakes that StrictModel would reject."""
     # MI often emits as_of/events instead of timestamp/market_events.
@@ -537,8 +590,9 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
                 _normalize_market_event(ev) if isinstance(ev, dict) else ev
                 for ev in out["market_events"]
             ]
-        if isinstance(out.get("top_market_themes"), str):
-            out["top_market_themes"] = [out["top_market_themes"]]
+        for key in ("top_market_themes", "conflicts", "missing_information"):
+            if key in out:
+                out[key] = _as_string_list(out.get(key))
         _none_to_empty_list(
             out, "market_events", "top_market_themes", "conflicts", "missing_information"
         )
@@ -574,8 +628,7 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
                 view.setdefault("probability_estimate", 0.5)
                 view.setdefault("probability_basis", "llm")
                 view.setdefault("notes", [])
-                if isinstance(view.get("notes"), str):
-                    view["notes"] = [view["notes"]]
+                view["notes"] = _as_string_list(view.get("notes"))
                 for state_key, default in market_defaults.items():
                     if view.get(state_key) is None:
                         view[state_key] = default
@@ -589,8 +642,7 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
         out.setdefault("cash_pct", 50.0)
         out.setdefault("gross_exposure_pct", 0.0)
         out.setdefault("notes", [])
-        if isinstance(out.get("notes"), str):
-            out["notes"] = [out["notes"]]
+        out["notes"] = _as_string_list(out.get("notes"))
 
     if looks_devil and not looks_cio:
         if "prefer_no_trade" not in out:
@@ -616,10 +668,10 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
             out["opposing_market_scenario"] = "Unspecified opposing scenario"
         else:
             out["opposing_market_scenario"] = _as_text(out["opposing_market_scenario"])
-        if isinstance(out.get("immediate_withdrawal_conditions"), str):
-            out["immediate_withdrawal_conditions"] = [out["immediate_withdrawal_conditions"]]
-        if isinstance(out.get("missing_information"), str):
-            out["missing_information"] = [out["missing_information"]]
+        out["immediate_withdrawal_conditions"] = _as_string_list(
+            out.get("immediate_withdrawal_conditions")
+        )
+        out["missing_information"] = _as_string_list(out.get("missing_information"))
         if "strongest_reason_thesis_is_wrong" not in out:
             out["strongest_reason_thesis_is_wrong"] = "Unspecified challenge"
 
@@ -627,12 +679,13 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
         out.setdefault("data_quality_score", 0.5)
     if looks_macro and not looks_cio:
         out.pop("sector_impacts", None)  # aliased earlier; drop leftovers
+        for key in ("bullish_factors", "bearish_factors", "invalidation_conditions", "conflicts"):
+            if key in out:
+                out[key] = _as_string_list(out.get(key))
 
     if looks_cio:
-        if "market_regime" not in out:
-            nested = out.get("macro")
-            if isinstance(nested, dict) and nested.get("market_regime") is not None:
-                out["market_regime"] = nested.get("market_regime")
+        explicit_regime = _first_explicit_regime(out)
+        out["market_regime"] = explicit_regime or MarketRegime.NEUTRAL.value
         ra = out.get("risk_approval")
         if isinstance(ra, dict):
             verdict = str(ra.get("overall_verdict") or ra.get("verdict") or "").lower()
@@ -659,6 +712,11 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
             out.pop(junk, None)
         out.setdefault("hedge_required", False)
         out.setdefault("risk_conditions", [])
+        out["risk_conditions"] = _as_string_list(out.get("risk_conditions"))
+        if explicit_regime is None:
+            out["risk_conditions"].append(
+                "market_regime omitted by model; defaulted to NEUTRAL"
+            )
         out.setdefault("symbol_actions", [])
         if "cash_target_pct" not in out:
             out["cash_target_pct"] = 50.0
@@ -699,7 +757,9 @@ def prune_to_model(data: dict[str, Any], model: type[Any]) -> dict[str, Any]:
         if origin is list:
             inner = get_args(ann)[0] if get_args(ann) else None
             inner = _unwrap_annotation(inner) if inner is not None else None
-            if (
+            if inner is str:
+                out[name] = _as_string_list(val)
+            elif (
                 isinstance(val, list)
                 and isinstance(inner, type)
                 and issubclass(inner, BaseModel)
@@ -868,6 +928,7 @@ def schema_enum_hint() -> str:
         "entry_zone must be {min,max}; use upside_scenario/downside_scenario objects "
         "(name/description/probability) — never a bare scenarios key.",
         "macro: expected_sector_impact is [{sector, bias, rationale}, ...] not sector_impacts.",
+        "list[str] fields (facts, bullish_factors, …): JSON arrays of strings, not a single string or {factor:…}.",
         "risk output: overall_verdict, cash_pct, gross_exposure_pct — do NOT echo data_quality_score.",
         "devil: prefer_no_trade (bool) + prefer_no_trade_rationale required.",
         "symbol_actions items need: symbol, action, confidence(0-100), target_position_pct, thesis, invalidation.",

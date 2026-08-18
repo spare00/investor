@@ -2005,8 +2005,8 @@
           ? actions.map((a) => {
               const sym = a.symbol || a.ticker || "—";
               const act = a.action || a.side || a.recommendation || "—";
-              const qty = a.quantity ?? a.qty ?? a.target_weight ?? "—";
-              const note = a.rationale || a.reason || a.notes || "";
+              const qty = a.quantity ?? a.qty ?? a.target_weight ?? a.target_position_pct ?? "—";
+              const note = a.thesis || a.rationale || a.reason || a.notes || a.invalidation || "";
               return `<tr><td>${esc(sym)}</td><td>${esc(act)}</td><td>${esc(qty)}</td><td class="muted">${esc(note)}</td></tr>`;
             }).join("")
           : "";

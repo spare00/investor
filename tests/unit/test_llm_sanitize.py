@@ -409,3 +409,92 @@ def test_sanitize_quant_defaults_missing_states() -> None:
     )
     assert quant.data_quality_score == 0.6
     assert quant.symbol_views[0].trend_state.value == "up"
+
+
+def test_sanitize_local_14b_list_and_missing_regime_types() -> None:
+    """Aug-18 local 14B: content was fine, field types were not.
+
+    MI facts arrived as a string; Macro factors as {factor:…} objects;
+    CIO omitted market_regime while echoing allowlist.
+    """
+    from app.agents.llm_sanitize import sanitize_for_model
+    from app.schemas.cio import CIODecision
+    from app.schemas.macro_strategist import MacroStrategistOutput
+
+    mi = MarketIntelligenceOutput.model_validate(
+        sanitize_for_model(
+            {
+                "timestamp": "2026-08-18T15:31:00Z",
+                "top_market_themes": "rates, megacap tech",
+                "data_quality_score": 0.7,
+                "market_events": [
+                    {
+                        "headline": "Fed officials indicate a data-dependent approach",
+                        "source": "Reuters",
+                        "published_at": "2026-08-18T14:00:00Z",
+                        "category": "fed",
+                        "sentiment": "neutral",
+                        "importance": 4,
+                        "facts": "Fed officials indicate a data-dependent approach to rate cuts.",
+                    },
+                    {
+                        "headline": "Large-cap technology stocks driving premarket gains",
+                        "source": "WSJ",
+                        "published_at": "2026-08-18T14:05:00Z",
+                        "category": "corporate",
+                        "sentiment": "positive",
+                        "importance": 3,
+                        "facts": "Large-cap technology stocks driving premarket gains.",
+                    },
+                ],
+            },
+            MarketIntelligenceOutput,
+        )
+    )
+    assert mi.market_events[0].facts == [
+        "Fed officials indicate a data-dependent approach to rate cuts."
+    ]
+    assert mi.top_market_themes == ["rates, megacap tech"]
+
+    macro = MacroStrategistOutput.model_validate(
+        sanitize_for_model(
+            {
+                "timestamp": "2026-08-18T15:31:00Z",
+                "market_regime": "RISK_ON",
+                "confidence": 0.7,
+                "data_quality_score": 0.8,
+                "bullish_factors": [
+                    {"factor": "Fed officials supporting risk assets."},
+                    {"factor": "Megacap tech is investor confidence."},
+                ],
+                "bearish_factors": [
+                    {"factor": "CPI above target and economic growth."},
+                ],
+                "invalidation_conditions": [
+                    {"condition": "Fed signals pressure risk assets."},
+                ],
+            },
+            MacroStrategistOutput,
+        )
+    )
+    assert macro.bullish_factors[0] == "Fed officials supporting risk assets."
+    assert macro.bearish_factors[0].startswith("CPI above")
+    assert macro.invalidation_conditions[0].startswith("Fed signals")
+
+    cio = CIODecision.model_validate(
+        sanitize_for_model(
+            {
+                "timestamp": "2026-08-18T15:32:00Z",
+                "portfolio_action": "HOLD",
+                "cash_target_pct": 70,
+                "symbol_actions": [],
+                "risk_approval": True,
+                "allowlist": ["QQQ", "IWM", "DIA"],
+                "watchlist": ["SPY"],
+            },
+            CIODecision,
+        )
+    )
+    assert cio.market_regime.value == "NEUTRAL"
+    assert cio.portfolio_action.value == "HOLD"
+    assert any("market_regime omitted" in c for c in cio.risk_conditions)
