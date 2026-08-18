@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
@@ -20,6 +20,14 @@ from app.services.llm_budget import (
 )
 
 logger = get_logger(__name__)
+
+
+def _retry_llm_call(exc: BaseException) -> bool:
+    """Retry transport/HTTP failures. Do not retry full timeouts — they already
+    burned llm_*_timeout_seconds and a local 14B call can be ~3 minutes."""
+    if isinstance(exc, httpx.TimeoutException):
+        return False
+    return isinstance(exc, (httpx.TransportError, LLMError))
 
 
 class LLMError(Exception):
@@ -101,7 +109,7 @@ class OpenAICompatibleClient:
         reraise=True,
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError, LLMError)),
+        retry=retry_if_exception(_retry_llm_call),
     )
     async def _complete_json_with_retries(
         self,

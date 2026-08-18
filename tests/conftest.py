@@ -23,6 +23,8 @@ def _env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "DATABASE_URL", "sqlite+aiosqlite:///:memory:?cache=shared"
     )
+    monkeypatch.setenv("LLM_RUNTIME", "cloud")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.openai.com/v1")
     from app.core import database as db
     from app.core.config import clear_settings_cache
 

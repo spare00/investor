@@ -71,7 +71,18 @@ def test_local_does_not_block_when_cloud_budget_exhausted(tmp_path) -> None:
     assert snap.enforce is False
 
 
-def test_get_llm_client_local_without_api_key() -> None:
+def test_local_job_timeout_and_fake_llm_flag() -> None:
+    local = Settings(llm_runtime="local", llm_api_key=None)
+    cloud = Settings(
+        llm_runtime="cloud",
+        llm_base_url="https://api.openai.com/v1",
+        llm_api_key=None,
+        job_action_timeout_seconds=480,
+    )
+    assert local.effective_job_action_timeout_seconds() == 1800
+    assert cloud.effective_job_action_timeout_seconds() == 480
+    assert local.scheduler_uses_fake_llm() is False
+    assert cloud.scheduler_uses_fake_llm() is True
     settings = Settings(llm_runtime="local", llm_api_key=None)
     client = get_llm_client(settings)
     assert isinstance(client, OpenAICompatibleClient)

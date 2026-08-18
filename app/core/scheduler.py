@@ -21,6 +21,7 @@ _job_log: list[dict[str, Any]] = []
 
 # Bound a single due-job action so a wedged IBKR/LLM call cannot pin
 # daily_workflow_dispatch forever (APScheduler max_instances=1).
+# Cloud default; local uses Settings.job_action_timeout_seconds_local.
 _JOB_ACTION_TIMEOUT_SECONDS = 480
 _CATCH_UP_TIMEOUT_SECONDS = 480
 _UNIVERSE_REFRESH_TIMEOUT_SECONDS = 900
@@ -258,21 +259,22 @@ async def _dispatch_due_jobs() -> None:
                             session, settings=settings, owner="scheduler", venue=venue
                         )
                     try:
+                        timeout_s = float(settings.effective_job_action_timeout_seconds())
                         await asyncio.wait_for(
                             _run_job_action(
                                 services[venue.value], job.job_key, job.session_date
                             ),
-                            timeout=float(_JOB_ACTION_TIMEOUT_SECONDS),
+                            timeout=timeout_s,
                         )
                     except TimeoutError:
                         job.status = "failed"
-                        job.error = f"job_action_timeout:{_JOB_ACTION_TIMEOUT_SECONDS}s"
+                        job.error = f"job_action_timeout:{int(timeout_s)}s"
                         job.completed_at = datetime.now(UTC)
                         logger.error(
                             "scheduler_job_timeout",
                             job=job.job_key,
                             session_date=job.session_date,
-                            timeout_s=_JOB_ACTION_TIMEOUT_SECONDS,
+                            timeout_s=timeout_s,
                         )
                         await session.commit()
                         continue
@@ -325,21 +327,22 @@ async def _dispatch_due_jobs() -> None:
             logger.info("scheduler_catch_up_lease_held")
             return
         try:
-            fake = not bool(settings.llm_api_key)
+            fake = settings.scheduler_uses_fake_llm()
             for venue in enabled_venues(settings):
                 svc = DailyWorkflowService(
                     session, settings=settings, owner="scheduler", venue=venue
                 )
+                catch_timeout = float(settings.effective_job_action_timeout_seconds())
                 try:
                     catch = await asyncio.wait_for(
                         svc.catch_up_to_intraday(fake_llm=fake, now=now),
-                        timeout=float(_CATCH_UP_TIMEOUT_SECONDS),
+                        timeout=catch_timeout,
                     )
                 except TimeoutError:
                     logger.error(
                         "scheduler_catch_up_timeout",
                         venue=venue.value,
-                        timeout_s=_CATCH_UP_TIMEOUT_SECONDS,
+                        timeout_s=catch_timeout,
                     )
                     await session.rollback()
                     continue
@@ -368,7 +371,7 @@ async def _run_job_action(svc: Any, job_key: str, session_date: str) -> None:
     from app.market.venues import job_key_base
 
     settings = get_settings()
-    fake = not bool(settings.llm_api_key)
+    fake = settings.scheduler_uses_fake_llm()
     action = job_key_base(job_key)
     if action == "premarket_preparation":
         await svc.prepare(session_date=session_date)

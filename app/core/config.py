@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     llm_json_object_response: bool = True
     # Session reanalysis cap when local (cloud still uses max_intraday_reanalyses).
     max_intraday_reanalyses_local: int = 180
+    # Scheduler wait_for around one due job (analysis + 6 sequential agents).
+    job_action_timeout_seconds: int = 480
+    # Local 14B + 32k ctx is ~90s/agent; 480s kills the first US eval.
+    job_action_timeout_seconds_local: int = 1800
     # LLM spend guard: monthly AUD is the source of truth. Daily token/call
     # budgets auto-split across trading days when set to 0.
     # OpenAI account limits remain the outer safety net.
@@ -426,6 +430,20 @@ class Settings(BaseSettings):
     def llm_spend_budget_applies(self) -> bool:
         """AUD/token caps apply only to billable cloud chat."""
         return bool(self.llm_budget_enforce) and not self.llm_is_local()
+
+    def effective_job_action_timeout_seconds(self) -> int:
+        """Seconds the scheduler will wait for one due workflow job."""
+        if self.llm_is_local():
+            return max(1, int(self.job_action_timeout_seconds_local))
+        return max(1, int(self.job_action_timeout_seconds))
+
+    def scheduler_uses_fake_llm(self) -> bool:
+        """Scheduled jobs use the stub only when cloud is configured without a key."""
+        if self.llm_is_local():
+            return False
+        if self.llm_api_key is None:
+            return True
+        return not bool(self.llm_api_key.get_secret_value().strip())
 
     def is_live_trading_allowed(self) -> bool:
         """Dual-gate: mode, flag, and matching confirmation token."""

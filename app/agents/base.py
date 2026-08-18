@@ -187,11 +187,19 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
 
 
 def dump_for_prompt(model: BaseModel | dict[str, Any] | list[Any] | None) -> str:
+    indent: int | None = 2
+    try:
+        from app.core.config import get_settings
+
+        if get_settings().llm_is_local():
+            indent = None
+    except Exception:  # noqa: BLE001
+        indent = 2
     if model is None:
         return "null"
     if isinstance(model, BaseModel):
-        return model.model_dump_json(indent=2)
-    return json.dumps(model, indent=2, default=str)
+        return model.model_dump_json(indent=indent)
+    return json.dumps(model, indent=indent, default=str)
 
 
 def ensure_trace(existing: TraceMetadata | None = None) -> TraceMetadata:

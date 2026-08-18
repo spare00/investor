@@ -107,6 +107,8 @@ async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSess
 
     settings = Settings(
         app_env="test",
+        llm_runtime="cloud",
+        llm_base_url="https://api.openai.com/v1",
         max_intraday_reanalyses=12,
         intraday_reevaluation_interval_minutes=30,
         enable_scheduler=False,
