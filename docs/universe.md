@@ -13,7 +13,7 @@ Stop treating `TRADE_ALLOWLIST` as the only tradable set. The firm maintains a *
 | `short` | 단기 | multi-day swing | ~15m |
 | `medium` | 중기 | weeks–months | ~60m |
 
-Policies live in `app/universe/horizons.py`. **Entry/exit rules** live in `app/universe/book_strategy.py` so 초단타 / 단타 / 단기 are not one 2% continuation model. 중기 is ignored for new entries and research focus (existing medium holdings are still held). Quant Python and CIO fallback (and LLM briefs) apply the matching playbook per symbol. Intraday job cadence uses the tightest **active strategy** book in open names or focus (scalp ~2m, day ~5m, short ~15m); medium is not used to slow or densify the plan. Cloud still floors spacing by the token budget. News lookback uses the longest book among symbols under review.
+Policies live in `app/universe/horizons.py`. **Entry/exit rules** live in `app/universe/book_strategy.py` so 초단타 / 단타 / 단기 are not one 2% continuation model. Scalp is tape (price + volume acceleration, last above sma20); day is session structure (last vs typical/open); short is SMA swing. RSI is a haircut, not a hard entry gate. New size is **risk-budget first** (`risk_budget_pct` / ATR stop), with `target_size_pct` only a notional cap. 중기 is ignored for new entries and research focus (existing medium holdings are still held). Quant Python and CIO fallback (and LLM briefs) apply the matching playbook per symbol. Intraday job cadence uses the tightest **active strategy** book in open names or focus (scalp ~2m, day ~5m, short ~15m); medium is not used to slow or densify the plan. Cloud still floors spacing by the token budget. News lookback uses the longest book among symbols under review.
 
 ## Modes
 

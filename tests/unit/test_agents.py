@@ -357,6 +357,7 @@ async def test_cio_fallback_flat_risk_on_ignores_soft_prefer_no(stub_llm: StubLL
                     high=452.0,
                     low=447.0,
                     volume=1e7,
+                    avg_volume_20d=8e6,
                     atr_14=5.0,
                     rsi_14=55.0,
                     sma_20=445.0,

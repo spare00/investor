@@ -62,12 +62,21 @@ class BookPlaybook:
     min_probability: float
     entry_zone_pct: float
     target_pct: float
+    # Concentration cap (notional % of equity). Actual size = risk_budget / stop.
     target_size_pct: float
+    # Capital-at-risk target, % of equity. Shares = budget / stop_distance.
+    risk_budget_pct: float
     require_uptrend: bool
     allow_sideways_momentum: bool
     require_accelerating: bool
-    max_rsi: float
-    min_rsi: float
+    require_volume_accel: bool
+    volume_accel_mult: float
+    require_short_ma: bool
+    require_session_structure: bool
+    prefer_rsi_min: float
+    prefer_rsi_max: float
+    rsi_hard_min: float | None
+    rsi_hard_max: float | None
     reject_liquidity: frozenset[LiquidityState]
     sell_if_exhausted: bool
     sell_if_liquidity_stressed: bool
@@ -83,19 +92,25 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         horizon="scalp",
         label_ko="초단타",
         summary=(
-            "Tape follow: ultra-liquid names only, tight stop, no overnight. "
-            "Enter continuation (up + accelerating), skip RSI exhaustion and wide spreads. "
-            "Cut on noise break — do not average down."
+            "Tape: price + volume acceleration, tight spread, last above sma20. "
+            "RSI is a haircut not a gate. Tight stop, no overnight. Cut on noise — no average-down."
         ),
         min_probability=0.58,
         entry_zone_pct=0.0015,
         target_pct=0.008,
-        target_size_pct=5.0,
+        target_size_pct=8.0,
+        risk_budget_pct=0.15,
         require_uptrend=False,
         allow_sideways_momentum=True,
         require_accelerating=True,
-        max_rsi=68.0,
-        min_rsi=52.0,
+        require_volume_accel=True,
+        volume_accel_mult=1.15,
+        require_short_ma=True,
+        require_session_structure=False,
+        prefer_rsi_min=52.0,
+        prefer_rsi_max=68.0,
+        rsi_hard_min=None,
+        rsi_hard_max=85.0,
         reject_liquidity=frozenset({LiquidityState.TIGHT, LiquidityState.STRESSED}),
         sell_if_exhausted=True,
         sell_if_liquidity_stressed=True,
@@ -109,19 +124,25 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         horizon="day",
         label_ko="단타",
         summary=(
-            "Session structure: trade the day, flatten before close. "
-            "Enter aligned trend without exhaustion; 1.5× ATR invalidation. "
-            "Do not hold through the close or overnight."
+            "Session structure: last holds above typical price and the open. "
+            "Not a tape-acceleration trade. Flatten before close. 1.5× ATR invalidation."
         ),
         min_probability=0.58,
         entry_zone_pct=0.003,
         target_pct=0.015,
-        target_size_pct=8.0,
+        target_size_pct=10.0,
+        risk_budget_pct=0.15,
         require_uptrend=True,
-        allow_sideways_momentum=True,
+        allow_sideways_momentum=False,
         require_accelerating=False,
-        max_rsi=70.0,
-        min_rsi=48.0,
+        require_volume_accel=False,
+        volume_accel_mult=1.0,
+        require_short_ma=False,
+        require_session_structure=True,
+        prefer_rsi_min=45.0,
+        prefer_rsi_max=70.0,
+        rsi_hard_min=None,
+        rsi_hard_max=85.0,
         reject_liquidity=frozenset({LiquidityState.STRESSED}),
         sell_if_exhausted=True,
         sell_if_liquidity_stressed=True,
@@ -135,19 +156,25 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         horizon="short",
         label_ko="단기",
         summary=(
-            "Swing: multi-session trend with wider stops, overnight allowed. "
-            "Enter SMA-aligned uptrends; tolerate noise. Reduce on exhaustion, "
-            "exit only if the swing trend actually breaks."
+            "Swing: SMA50/200 aligned uptrend; tolerate noise. Reduce on exhaustion, "
+            "sell only if the swing trend actually breaks. Overnight ok. Size from risk budget."
         ),
         min_probability=0.55,
         entry_zone_pct=0.008,
         target_pct=0.03,
         target_size_pct=10.0,
+        risk_budget_pct=0.15,
         require_uptrend=True,
         allow_sideways_momentum=True,
         require_accelerating=False,
-        max_rsi=75.0,
-        min_rsi=45.0,
+        require_volume_accel=False,
+        volume_accel_mult=1.0,
+        require_short_ma=False,
+        require_session_structure=False,
+        prefer_rsi_min=45.0,
+        prefer_rsi_max=75.0,
+        rsi_hard_min=None,
+        rsi_hard_max=None,
         reject_liquidity=frozenset({LiquidityState.STRESSED}),
         sell_if_exhausted=False,
         sell_if_liquidity_stressed=False,
@@ -202,12 +229,50 @@ def playbook_cards() -> list[dict[str, str]]:
     ]
 
 
+def risk_mult_for_horizon(horizon: str | None, *, firm_risk_pct: float) -> float:
+    """Map playbook capital-at-risk onto Settings.risk_per_trade_pct."""
+    book = playbook_for(horizon)
+    if firm_risk_pct <= 0:
+        return 1.0
+    if book is not None:
+        return float(book.risk_budget_pct) / float(firm_risk_pct)
+    try:
+        return float(policy_for(horizon or "short").risk_per_trade_mult)
+    except ValueError:
+        return 1.0
+
+
+def notional_pct_for_risk(
+    *,
+    horizon: str | None,
+    entry: float,
+    stop: float,
+    max_position_pct: float,
+) -> float:
+    """Invert stop distance into a notional weight, then apply book/firm caps."""
+    book = playbook_for(horizon)
+    budget = float(book.risk_budget_pct) if book else 0.15
+    cap = float(max_position_pct)
+    if book is not None:
+        cap = min(cap, float(book.target_size_pct))
+    if entry <= 0:
+        return cap
+    stop_frac = abs(float(entry) - float(stop)) / float(entry)
+    if stop_frac <= 1e-9:
+        return cap
+    raw = (budget / 100.0) / stop_frac * 100.0
+    return round(min(cap, max(0.0, raw)), 2)
+
+
 def adjust_probability(
     *,
     base: float,
     horizon: str,
     liquidity: LiquidityState,
     volatility: VolatilityState,
+    rsi: float | None = None,
+    volume: float | None = None,
+    avg_volume: float | None = None,
 ) -> tuple[float, list[str]]:
     score = float(base)
     notes = [f"book={horizon}"]
@@ -225,6 +290,22 @@ def adjust_probability(
     elif volatility == VolatilityState.ELEVATED and horizon == "scalp":
         score -= 0.08
         notes.append("vol_elev_scalp=-0.08")
+    if rsi is not None:
+        if rsi > book.prefer_rsi_max:
+            score -= 0.05
+            notes.append("rsi_hot=-0.05")
+        elif rsi < book.prefer_rsi_min:
+            score -= 0.05
+            notes.append("rsi_cool=-0.05")
+    if (
+        book.require_volume_accel
+        and volume is not None
+        and avg_volume is not None
+        and avg_volume > 0
+        and volume >= book.volume_accel_mult * avg_volume
+    ):
+        score += 0.05
+        notes.append("vol_accel=+0.05")
     return max(0.05, min(0.95, round(score, 2))), notes
 
 
@@ -236,6 +317,13 @@ def structure_allows_entry(
     liquidity: LiquidityState,
     volatility: VolatilityState,
     rsi: float | None,
+    volume: float | None = None,
+    avg_volume: float | None = None,
+    last: float | None = None,
+    open_: float | None = None,
+    high: float | None = None,
+    low: float | None = None,
+    sma_20: float | None = None,
 ) -> tuple[bool, str]:
     book = playbook_for(horizon)
     if book is None:
@@ -259,11 +347,28 @@ def structure_allows_entry(
         return False, f"mom_{momentum.value}"
     if momentum == MomentumState.EXHAUSTED and book.sell_if_exhausted:
         return False, "exhausted"
+    if (
+        book.require_volume_accel
+        and volume is not None
+        and avg_volume is not None
+        and avg_volume > 0
+        and volume < book.volume_accel_mult * avg_volume
+    ):
+        return False, "volume_flat"
+    if book.require_short_ma and sma_20 is not None and last is not None and last <= sma_20:
+        return False, "below_sma20"
+    if book.require_session_structure and last is not None:
+        if open_ is not None and last < open_:
+            return False, "below_open"
+        if high is not None and low is not None and high > low:
+            typical = (float(high) + float(low) + float(last)) / 3.0
+            if last < typical:
+                return False, "below_session_vwap"
     if rsi is not None:
-        if rsi > book.max_rsi:
-            return False, f"rsi_high_{rsi:.0f}"
-        if rsi < book.min_rsi:
-            return False, f"rsi_low_{rsi:.0f}"
+        if book.rsi_hard_max is not None and rsi > book.rsi_hard_max:
+            return False, f"rsi_extreme_{rsi:.0f}"
+        if book.rsi_hard_min is not None and rsi < book.rsi_hard_min:
+            return False, f"rsi_extreme_{rsi:.0f}"
     return True, "ok"
 
 
@@ -277,6 +382,13 @@ def should_propose_entry(
     volatility: VolatilityState,
     rsi: float | None,
     regime: str | MarketRegime | None = None,
+    volume: float | None = None,
+    avg_volume: float | None = None,
+    last: float | None = None,
+    open_: float | None = None,
+    high: float | None = None,
+    low: float | None = None,
+    sma_20: float | None = None,
 ) -> bool:
     book = playbook_for(horizon)
     if book is None:
@@ -290,6 +402,13 @@ def should_propose_entry(
         liquidity=liquidity,
         volatility=volatility,
         rsi=rsi,
+        volume=volume,
+        avg_volume=avg_volume,
+        last=last,
+        open_=open_,
+        high=high,
+        low=low,
+        sma_20=sma_20,
     )
     if not ok:
         return False

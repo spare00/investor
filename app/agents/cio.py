@@ -24,7 +24,7 @@ from app.schemas.common import (
 class CIOAgent(BaseAgent[CIOInput, CIODecision]):
     name = AgentName.CIO
     prompt_file = "system_v1.md"
-    prompt_version = "2.1.0"
+    prompt_version = "2.2.0"
 
     def output_model(self) -> type[CIODecision]:
         return CIODecision
@@ -227,7 +227,16 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
                     )
                     if cap:
                         continue
-                    size = min(book.target_size_pct, float(self.settings.max_position_pct))
+                    from app.universe.book_strategy import notional_pct_for_risk
+
+                    size = notional_pct_for_risk(
+                        horizon=hz,
+                        entry=float(view.entry_zone.max + view.entry_zone.min) / 2.0
+                        if view.entry_zone
+                        else float(view.stop_or_invalidation or 0) * 1.02,
+                        stop=float(view.stop_or_invalidation),
+                        max_position_pct=float(self.settings.max_position_pct),
+                    )
                     symbol_actions.append(
                         SymbolActionPlan(
                             symbol=sym,

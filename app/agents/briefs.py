@@ -19,6 +19,7 @@ from app.schemas.market_intelligence import MarketIntelligenceInput, MarketIntel
 from app.schemas.quant_strategist import BarSnapshot, QuantStrategistInput, QuantStrategistOutput
 from app.schemas.risk_manager import RiskManagerInput, RiskManagerOutput
 from app.schemas.universe_manager import UniverseManagerInput
+from app.universe.book_strategy import playbook_cards
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -87,11 +88,16 @@ def _bar_row(bar: BarSnapshot) -> dict[str, Any]:
         {
             "s": bar.symbol.upper(),
             "last": bar.last,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
             "rsi": bar.rsi_14,
             "atr": bar.atr_14,
+            "sma20": bar.sma_20,
             "sma50": bar.sma_50,
             "sma200": bar.sma_200,
             "vol": bar.volume,
+            "avgvol": bar.avg_volume_20d,
             "gap": bar.gap_pct if bar.gap_pct is not None else bar.premarket_change_pct,
             "bid": bar.bid,
             "ask": bar.ask,
@@ -248,11 +254,7 @@ def quant_brief(payload: QuantStrategistInput) -> str:
         "symbols": [_bar_row(b) for b in (payload.symbol_bars or payload.index_bars)[:16]],
         "watch": _watch_rows(payload.watchlist),
         "books": _watch_by_book(payload.watchlist),
-        "playbooks": [
-            {"h": "scalp", "ko": "초단타", "rule": "continuation only, tight stop, no overnight"},
-            {"h": "day", "ko": "단타", "rule": "session structure, flatten before close"},
-            {"h": "short", "ko": "단기", "rule": "swing trend, wider stop, overnight ok"},
-        ],
+        "playbooks": playbook_cards(),
         "themes": _clip_obj(payload.market_intelligence_summary),
     }
     return _ask(
@@ -366,11 +368,7 @@ def cio_brief(payload: CIOInput) -> str:
         "allow": [s.upper() for s in payload.allowlist[:16]],
         "watch": _watch_rows(payload.watchlist),
         "books": _watch_by_book(payload.watchlist),
-        "playbooks": [
-            {"h": "scalp", "ko": "초단타", "rule": "tape follow, no overnight, cut on exhaustion"},
-            {"h": "day", "ko": "단타", "rule": "session trade, flatten into close"},
-            {"h": "short", "ko": "단기", "rule": "swing hold, reduce on exhaustion, sell on trend break"},
-        ],
+        "playbooks": playbook_cards(),
         "mi": _mi_summary(payload.market_intelligence),
         "macro": _drop_empty(
             {

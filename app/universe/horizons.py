@@ -29,7 +29,7 @@ class HorizonPolicy:
     typical_hold: str
     max_holding_minutes: int | None
     reeval_seconds: int
-    risk_per_trade_mult: float
+    risk_per_trade_mult: float  # book risk_budget / Settings.risk_per_trade_pct
     max_positions: int
     min_avg_daily_volume: float
     max_spread_bps: float
@@ -56,7 +56,7 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         typical_hold="minutes–hours",
         max_holding_minutes=240,
         reeval_seconds=120,
-        risk_per_trade_mult=0.5,
+        risk_per_trade_mult=0.3,
         max_positions=2,
         min_avg_daily_volume=5_000_000,
         max_spread_bps=15,
@@ -82,7 +82,7 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         typical_hold="same session (flatten near close preferred)",
         max_holding_minutes=390,
         reeval_seconds=300,
-        risk_per_trade_mult=0.75,
+        risk_per_trade_mult=0.3,
         max_positions=3,
         min_avg_daily_volume=2_000_000,
         max_spread_bps=25,
@@ -108,7 +108,7 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         typical_hold="2–10 sessions",
         max_holding_minutes=10 * 24 * 60,
         reeval_seconds=900,
-        risk_per_trade_mult=1.0,
+        risk_per_trade_mult=0.3,
         max_positions=4,
         min_avg_daily_volume=1_000_000,
         max_spread_bps=40,

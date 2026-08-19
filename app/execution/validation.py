@@ -207,7 +207,6 @@ class ExecutionValidator:
         venue: str | None = None,
     ) -> ValidatedOrderIntent | str | None:
         from app.universe.caps import horizon_cap_violation
-        from app.universe.horizons import policy_for
 
         symbol = plan.symbol.upper()
         if plan.action in ENTRY_ACTIONS and symbol not in allowlist:
@@ -263,10 +262,11 @@ class ExecutionValidator:
             risk_mult = 1.0
             hz = horizons.get(symbol)
             if hz:
-                try:
-                    risk_mult = float(policy_for(hz).risk_per_trade_mult)
-                except ValueError:
-                    risk_mult = 1.0
+                from app.universe.book_strategy import risk_mult_for_horizon
+
+                risk_mult = risk_mult_for_horizon(
+                    hz, firm_risk_pct=float(self.settings.risk_per_trade_pct)
+                )
             sizing = self.engine.position_size(
                 equity=portfolio.equity,
                 entry_price=price,

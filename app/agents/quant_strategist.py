@@ -25,7 +25,35 @@ from app.schemas.quant_strategist import (
 )
 
 
-def _trend(bar: BarSnapshot) -> TrendState:
+def _trend(bar: BarSnapshot, horizon: str = "short") -> TrendState:
+    hz = str(horizon or "short").lower()
+    if hz == "scalp":
+        if bar.sma_20 and bar.last:
+            if bar.last > bar.sma_20:
+                return TrendState.UP
+            if bar.last < bar.sma_20:
+                return TrendState.DOWN
+        if bar.open and bar.last:
+            if bar.last > bar.open:
+                return TrendState.UP
+            if bar.last < bar.open:
+                return TrendState.DOWN
+        return TrendState.SIDEWAYS
+    if hz == "day":
+        if bar.high and bar.low and bar.last:
+            typical = (bar.high + bar.low + bar.last) / 3.0
+            above = bar.last >= typical
+            from_open = bar.open is None or bar.last >= bar.open
+            if above and from_open:
+                return TrendState.UP
+            if (not above) and bar.open is not None and bar.last < bar.open:
+                return TrendState.DOWN
+        if bar.sma_20 and bar.last:
+            if bar.last > bar.sma_20:
+                return TrendState.UP
+            if bar.last < bar.sma_20:
+                return TrendState.DOWN
+        return TrendState.SIDEWAYS
     if bar.sma_50 and bar.sma_200 and bar.last:
         if bar.last > bar.sma_50 > bar.sma_200:
             return TrendState.UP
@@ -34,7 +62,35 @@ def _trend(bar: BarSnapshot) -> TrendState:
     return TrendState.SIDEWAYS
 
 
-def _momentum(bar: BarSnapshot) -> MomentumState:
+def _volume_accelerating(bar: BarSnapshot, *, mult: float = 1.15) -> bool:
+    if bar.volume is None or bar.avg_volume_20d is None or bar.avg_volume_20d <= 0:
+        return False
+    return bar.volume >= mult * bar.avg_volume_20d
+
+
+def _momentum(bar: BarSnapshot, horizon: str = "short") -> MomentumState:
+    hz = str(horizon or "short").lower()
+    if hz == "scalp":
+        if bar.rsi_14 is not None and bar.rsi_14 >= 80:
+            return MomentumState.EXHAUSTED
+        if _volume_accelerating(bar) and (
+            (bar.open is not None and bar.last > bar.open)
+            or (bar.sma_20 is not None and bar.last > bar.sma_20)
+        ):
+            return MomentumState.ACCELERATING
+        if bar.rsi_14 is not None and bar.rsi_14 <= 35:
+            return MomentumState.DECELERATING
+        return MomentumState.STEADY
+    if hz == "day":
+        if bar.rsi_14 is not None and bar.rsi_14 >= 80:
+            return MomentumState.EXHAUSTED
+        if bar.high and bar.low and bar.high > bar.low:
+            loc = (bar.last - bar.low) / (bar.high - bar.low)
+            if loc >= 0.55 and (bar.open is None or bar.last >= bar.open):
+                return MomentumState.ACCELERATING
+            if loc <= 0.35:
+                return MomentumState.DECELERATING
+        return MomentumState.STEADY
     if bar.rsi_14 is None:
         return MomentumState.STEADY
     if bar.rsi_14 >= 70:
@@ -99,7 +155,7 @@ def _probability(trend: TrendState, momentum: MomentumState) -> tuple[float, str
 class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput]):
     name = AgentName.QUANT_STRATEGIST
     prompt_file = "system_v1.md"
-    prompt_version = "2.1.0"
+    prompt_version = "2.2.0"
 
     def output_model(self) -> type[QuantStrategistOutput]:
         return QuantStrategistOutput
@@ -122,17 +178,20 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
         bars = payload.symbol_bars or payload.index_bars
         views: list[SymbolQuantView] = []
         for bar in bars:
-            trend = _trend(bar)
-            mom = _momentum(bar)
+            horizon = horizon_for_symbol(bar.symbol, payload.watchlist)
+            trend = _trend(bar, horizon)
+            mom = _momentum(bar, horizon)
             vol = _volatility(bar, payload.vix)
             liq = _liquidity(bar)
             base_prob, basis = _probability(trend, mom)
-            horizon = horizon_for_symbol(bar.symbol, payload.watchlist)
             prob, book_notes = adjust_probability(
                 base=base_prob,
                 horizon=horizon,
                 liquidity=liq,
                 volatility=vol,
+                rsi=bar.rsi_14,
+                volume=bar.volume,
+                avg_volume=bar.avg_volume_20d,
             )
             book = playbook_for(horizon)
             pol = by_pol.get(bar.symbol.upper())
@@ -150,6 +209,13 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                 liquidity=liq,
                 volatility=vol,
                 rsi=bar.rsi_14,
+                volume=bar.volume,
+                avg_volume=bar.avg_volume_20d,
+                last=bar.last,
+                open_=bar.open,
+                high=bar.high,
+                low=bar.low,
+                sma_20=bar.sma_20,
             )
             entry_zone = None
             if book is not None and ok:
@@ -190,8 +256,8 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
             )
 
         spy = next((b for b in payload.index_bars if b.symbol.upper() == "SPY"), None)
-        market_trend = _trend(spy) if spy else TrendState.SIDEWAYS
-        market_mom = _momentum(spy) if spy else MomentumState.STEADY
+        market_trend = _trend(spy, "short") if spy else TrendState.SIDEWAYS
+        market_mom = _momentum(spy, "short") if spy else MomentumState.STEADY
         market_vol = _volatility(spy, payload.vix) if spy else VolatilityState.NORMAL
         breadth = BreadthState.MIXED
         if payload.advance_decline is not None:
