@@ -20,6 +20,12 @@ ENTRY_ACTIONS = {
     SymbolAction.HEDGE,
 }
 
+EXIT_ACTIONS = {
+    SymbolAction.SELL,
+    SymbolAction.PARTIAL_SELL,
+    SymbolAction.REDUCE,
+}
+
 ANALYSIS_ONLY_PORTFOLIO = {
     PortfolioAction.NO_TRADE,
     PortfolioAction.HOLD,
@@ -92,8 +98,6 @@ class ExecutionValidator:
         horizon_by_symbol: dict[str, str] | None = None,
         block_new_entries: bool = False,
     ) -> ExecutionValidationResult:
-        rejections: list[str] = []
-
         if not self.controls.is_new_order_allowed():
             snap = self.controls.snapshot()
             return ExecutionValidationResult(
@@ -117,6 +121,8 @@ class ExecutionValidator:
             return ExecutionValidationResult(approved=True, intents=[], rejections=[])
 
         intents: list[ValidatedOrderIntent] = []
+        entry_rejections: list[str] = []
+        exit_rejections: list[str] = []
         horizons = horizon_by_symbol or {}
         seen = seen_idempotency_keys or set()
 
@@ -156,15 +162,31 @@ class ExecutionValidator:
             if result is None:
                 continue  # skipped (e.g. new entry in closing window)
             if isinstance(result, str):
-                rejections.append(result)
+                if plan.action in EXIT_ACTIONS:
+                    exit_rejections.append(result)
+                else:
+                    entry_rejections.append(result)
             else:
                 intents.append(result)
                 seen.add(result.idempotency_key)
 
-        # Fail closed: any rejection blocks the whole batch.
-        if rejections:
-            return ExecutionValidationResult(approved=False, intents=[], rejections=rejections)
-        return ExecutionValidationResult(approved=True, intents=intents, rejections=[])
+        # New risk stays fail-closed. Flatten/reduce proceeds for every symbol
+        # that passed so one bad exit cannot freeze the rest of the book.
+        if entry_rejections:
+            return ExecutionValidationResult(
+                approved=False,
+                intents=[],
+                rejections=entry_rejections + exit_rejections,
+            )
+        if intents:
+            return ExecutionValidationResult(
+                approved=True, intents=intents, rejections=exit_rejections
+            )
+        if exit_rejections:
+            return ExecutionValidationResult(
+                approved=False, intents=[], rejections=exit_rejections
+            )
+        return ExecutionValidationResult(approved=True, intents=[], rejections=[])
 
     def _validate_plan(
         self,

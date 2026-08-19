@@ -300,6 +300,58 @@ def test_validator_hold_submits_partial_sell() -> None:
     assert result.intents[0].order_type == "market"
 
 
+def test_validator_exit_rejection_does_not_block_other_exits() -> None:
+    """One unpriceable flatten must not cancel the rest of the sell batch."""
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.HOLD,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="VAS",
+                action=SymbolAction.PARTIAL_SELL,
+                confidence=70,
+                target_position_pct=2,
+                thesis="flatten day book",
+                invalidation="n/a",
+            ),
+            SymbolActionPlan(
+                symbol="BHP",
+                action=SymbolAction.SELL,
+                confidence=60,
+                target_position_pct=0,
+                thesis="flatten",
+                invalidation="n/a",
+            ),
+        ],
+        cash_target_pct=70,
+        risk_approval=True,
+    )
+    result = ExecutionValidator(controls=TradingControls()).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=25_000,
+            cash=18_000,
+            cash_pct=72,
+            gross_exposure_pct=28,
+            positions=[
+                PositionRiskView(
+                    symbol="VAS", quantity=876, market_value=800, sector="ETF", weight_pct=4, venue="AU"
+                ),
+                PositionRiskView(
+                    symbol="BHP", quantity=1575, market_value=4000, sector="Materials", weight_pct=16, venue="AU"
+                ),
+            ],
+        ),
+        latest_prices={"VAS": 90},
+        data_quality_score=0.9,
+    )
+    assert result.approved is True
+    assert [i.symbol for i in result.intents] == ["VAS"]
+    assert any("BHP:missing_latest_price" in r for r in result.rejections)
+
+
 def test_validator_hold_skips_new_entries() -> None:
     decision = CIODecision(
         decision_id=uuid4(),
