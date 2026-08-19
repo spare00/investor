@@ -461,6 +461,28 @@ async def _dispatch_due_jobs() -> None:
                 svc = DailyWorkflowService(
                     session, settings=settings, owner="scheduler", venue=venue
                 )
+                try:
+                    missed = await asyncio.wait_for(
+                        svc.retry_missed_session_exits(now=now),
+                        timeout=90,
+                    )
+                    if not missed.get("skipped", True):
+                        logger.info(
+                            "scheduler_missed_exits",
+                            venue=venue.value,
+                            orders_submitted=missed.get("orders_submitted"),
+                            intent_ids=missed.get("intent_ids"),
+                        )
+                except TimeoutError:
+                    logger.error(
+                        "scheduler_missed_exits_timeout",
+                        venue=venue.value,
+                    )
+                await session.commit()
+            for venue in enabled_venues(settings):
+                svc = DailyWorkflowService(
+                    session, settings=settings, owner="scheduler", venue=venue
+                )
                 catch_timeout = float(settings.effective_job_action_timeout_seconds())
                 try:
                     catch = await asyncio.wait_for(
@@ -486,23 +508,6 @@ async def _dispatch_due_jobs() -> None:
                         "scheduler_session_catch_up",
                         venue=venue.value,
                         **(catch.get("catch_up") or {}),
-                    )
-                try:
-                    missed = await asyncio.wait_for(
-                        svc.retry_missed_session_exits(now=now),
-                        timeout=90,
-                    )
-                    if not missed.get("skipped", True):
-                        logger.info(
-                            "scheduler_missed_exits",
-                            venue=venue.value,
-                            orders_submitted=missed.get("orders_submitted"),
-                            intent_ids=missed.get("intent_ids"),
-                        )
-                except TimeoutError:
-                    logger.error(
-                        "scheduler_missed_exits_timeout",
-                        venue=venue.value,
                     )
                 await session.commit()
         except DailyWorkflowError as exc:
