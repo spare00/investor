@@ -716,6 +716,7 @@ class DailyWorkflowService:
         reason = "ok"
         agent_result: dict[str, Any] | None = None
         force_close_result: dict[str, Any] | None = None
+        leftover_flatten_result: dict[str, Any] | None = None
         monitor_summary: dict[str, Any] | None = None
         news_summary: dict[str, Any] | None = None
         trigger_event_ids: list[str] = []
@@ -856,6 +857,29 @@ class DailyWorkflowService:
                 trigger_event_ids = [str(e.id) for e in pending]
             except Exception as exc:  # noqa: BLE001
                 meta["last_event_drain_error"] = str(exc)[:200]
+
+        # First regular-session tick: flatten leftover scalp/day that rode overnight.
+        if (
+            status.phase == "REGULAR"
+            and not status.in_force_close_window
+            and not meta.get("leftover_intraday_flatten_at")
+        ):
+            try:
+                from app.intraday.closing import ClosingService
+
+                leftover_flatten_result = await ClosingService(
+                    self.session, settings=self.settings, venue=self.venue.value
+                ).run_closing(in_closing_window=False)
+                meta["leftover_intraday_flatten_at"] = now.isoformat()
+                meta["leftover_intraday_flatten"] = {
+                    "orders_submitted": int(
+                        leftover_flatten_result.get("orders_submitted") or 0
+                    ),
+                    "intent_ids": list(leftover_flatten_result.get("intent_ids") or []),
+                    "notes": list(leftover_flatten_result.get("notes") or [])[:12],
+                }
+            except Exception as exc:  # noqa: BLE001
+                meta["leftover_intraday_flatten_error"] = str(exc)[:240]
 
         if actionable:
             effective_trigger = "risk_change"
@@ -1041,9 +1065,11 @@ class DailyWorkflowService:
                 "broker_orders": bool(
                     (agent_result or {}).get("broker_orders_submitted")
                     or (force_close_result or {}).get("broker_orders_submitted")
+                    or (leftover_flatten_result or {}).get("broker_orders_submitted")
                 ),
                 "agent": agent_result,
                 "force_close": force_close_result,
+                "leftover_flatten": leftover_flatten_result,
                 "monitor": monitor_summary,
                 "news": news_summary,
             },

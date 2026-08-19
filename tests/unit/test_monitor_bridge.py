@@ -76,6 +76,65 @@ async def test_evaluate_intraday_escalates_stop_to_risk_change(session: AsyncSes
 
 
 @pytest.mark.asyncio
+async def test_evaluate_intraday_flattens_leftover_overnight_once(
+    session: AsyncSession,
+) -> None:
+    from app.core.config import Settings, TradingMode
+
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        broker_environment="paper",
+        enable_broker_orders=True,
+        enable_automated_execution=False,
+        require_manual_order_approval=False,
+        auto_execute_force_close=False,
+        intraday_operation_mode="PAPER_AUTOMATED",
+        enable_intraday_monitoring=False,
+        enable_intraday_agent_reanalysis=False,
+        enable_scheduler=False,
+        default_closing_policy="CLOSE_INTRADAY_ONLY",
+    )
+    svc = DailyWorkflowService(session, settings=settings)
+    await svc.prepare(session_date="2026-08-03")
+    run = await svc.get_current("2026-08-03")
+    assert run is not None
+    run.current_state = DailyWorkflowState.INTRADAY.value
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="QQQ",
+            status="OPEN",
+            quantity=8,
+            average_entry_price=400,
+            current_price=405,
+            overnight_allowed=False,
+            venue="US",
+            exit_policy={},
+        )
+    )
+    await session.flush()
+    now = datetime(2026, 8, 3, 17, 0, tzinfo=UTC)
+    first = await svc.evaluate_intraday(
+        session_date="2026-08-03", trigger="interval", now=now, fake_llm=True
+    )
+    meta = dict(first.get("metadata") or {})
+    stamped = meta.get("leftover_intraday_flatten_at")
+    leftover = meta.get("leftover_intraday_flatten")
+    assert stamped
+    assert leftover is not None
+    assert leftover.get("intent_ids")
+    second = await svc.evaluate_intraday(
+        session_date="2026-08-03",
+        trigger="interval",
+        now=now + timedelta(minutes=20),
+        fake_llm=True,
+    )
+    assert (second.get("metadata") or {}).get("leftover_intraday_flatten_at") == stamped
+    assert second["intraday"].get("leftover_flatten") is None
+
+
+@pytest.mark.asyncio
 async def test_postmarket_runs_settlement(session: AsyncSession) -> None:
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-08-03")
