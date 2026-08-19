@@ -41,6 +41,10 @@ _REMOTE_STATUS_TO_LOCAL = {
     "expired": "EXPIRED",
 }
 
+# Empty Gateway snapshots are usually clientId/reconnect, not a flat book.
+# After this many consecutive empties with local opens, drop the local zombies.
+EMPTY_REMOTE_STREAK_CLOSE_LOCAL = 3
+
 
 @dataclass(slots=True)
 class BrokerBook:
@@ -135,6 +139,46 @@ class ReconciliationService:
             logger.warning("recon_adopted_remote_orders", count=adopted)
         return adopted
 
+    async def _prior_empty_remote_streak(self) -> int:
+        rows = list(
+            (
+                await self.session.execute(
+                    select(BrokerReconciliationRun)
+                    .order_by(BrokerReconciliationRun.created_at.desc())
+                    .limit(8)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        streak = 0
+        for run in rows:
+            kinds = {
+                str(item.get("type") or "")
+                for item in (run.issues or [])
+                if isinstance(item, dict)
+            }
+            if "stale_local_open_cleared" in kinds:
+                break
+            if "empty_remote_open_orders" in kinds:
+                streak += 1
+                continue
+            break
+        return streak
+
+    def _close_stale_local_opens(self, rows: list[Order]) -> int:
+        from app.brokers.models import InternalOrderState
+
+        closed = 0
+        for row in rows:
+            row.status = InternalOrderState.CANCELLED.value
+            row.raw_payload = {
+                **(row.raw_payload or {}),
+                "recon": {"empty_remote_streak": True},
+            }
+            closed += 1
+        return closed
+
     async def run(
         self,
         sync_type: str = "ON_DEMAND",
@@ -197,13 +241,32 @@ class ReconciliationService:
                 issues.append({"type": "local_order_missing_remote", "broker_order_id": oid})
         elif local_open_ids:
             # Incomplete IBKR open-order snapshot (reconnect / clientId scope)
-            # must not freeze the book as MATERIAL_DRIFT.
-            issues.append(
-                {
-                    "type": "empty_remote_open_orders",
-                    "local_open": len(local_open_ids),
-                }
-            )
+            # must not freeze the book as MATERIAL_DRIFT. After a short streak,
+            # treat local opens as stale and close them locally only.
+            streak = await self._prior_empty_remote_streak() + 1
+            if streak >= EMPTY_REMOTE_STREAK_CLOSE_LOCAL:
+                closed = self._close_stale_local_opens(local_open)
+                await self.session.flush()
+                issues.append(
+                    {
+                        "type": "stale_local_open_cleared",
+                        "closed": closed,
+                        "streak": streak,
+                    }
+                )
+                logger.warning(
+                    "recon_closed_stale_local_opens",
+                    closed=closed,
+                    streak=streak,
+                )
+            else:
+                issues.append(
+                    {
+                        "type": "empty_remote_open_orders",
+                        "local_open": len(local_open_ids),
+                        "streak": streak,
+                    }
+                )
         for oid in remote_ids - known_ids:
             issues.append({"type": "remote_order_missing_local", "broker_order_id": oid})
 

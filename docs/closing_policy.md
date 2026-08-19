@@ -11,10 +11,10 @@ Intraday interval jobs inside the force-close window also call `ClosingService` 
 
 - Scalp/day watchlist horizons force flatten near close (intraday-only), even if `overnight_allowed` was mis-set.
 - Creates `OrderIntent` exit rows when the intraday mode allows intents (`MANUAL_APPROVAL` / `PAPER_AUTOMATED`).
-- Auto paper submit only when **all** of these hold:
-  - `AUTO_EXECUTE_FORCE_CLOSE=true`
+- Auto paper submit when paper automation is allowed **and** either `INTRADAY_OPERATION_MODE=PAPER_AUTOMATED` or `AUTO_EXECUTE_FORCE_CLOSE=true` (the flag arms MANUAL_APPROVAL).
   - `ENABLE_BROKER_ORDERS=true`
   - `ENABLE_AUTOMATED_EXECUTION=true`
   - `REQUIRE_MANUAL_ORDER_APPROVAL=false`
   - Mode can submit (not observe-only)
-- Default remains fail-closed: intents pending, no broker orders.
+- Default remains fail-closed outside PAPER_AUTOMATED: intents pending, no broker orders.
+- First regular-session `intraday_eval` also retries leftover scalp/day that rode overnight.

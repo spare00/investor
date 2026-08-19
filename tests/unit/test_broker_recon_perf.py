@@ -140,6 +140,38 @@ async def test_recon_empty_remote_book_is_not_material(session: AsyncSession) ->
 
 
 @pytest.mark.asyncio
+async def test_recon_clears_local_opens_after_empty_remote_streak(
+    session: AsyncSession,
+) -> None:
+    settings = Settings(app_env="test", broker_provider="mock", enable_broker_connection=True)
+    session.add(
+        Order(
+            id=uuid4(),
+            symbol="VAS",
+            side="sell",
+            qty=400,
+            order_type="market",
+            status="ACCEPTED",
+            broker_order_id="42",
+            idempotency_key=f"local-{uuid4()}",
+        )
+    )
+    await session.flush()
+    svc = ReconciliationService(session, settings=settings)
+    empty = BrokerBook(orders=[], positions=[], account={"cash": 1})
+    first = await svc.run("ON_DEMAND", book=empty)
+    second = await svc.run("ON_DEMAND", book=empty)
+    assert first["result"] == "MINOR_DRIFT"
+    assert second["result"] == "MINOR_DRIFT"
+    third = await svc.run("ON_DEMAND", book=empty)
+    assert third["issues"][0]["type"] == "stale_local_open_cleared"
+    assert third["issues"][0]["closed"] == 1
+    assert third["result"] == "MINOR_DRIFT"
+    row = (await session.execute(select(Order).where(Order.broker_order_id == "42"))).scalar_one()
+    assert row.status == "CANCELLED"
+
+
+@pytest.mark.asyncio
 async def test_reap_stale_running_jobs(session: AsyncSession) -> None:
     from datetime import UTC, datetime, timedelta
 
