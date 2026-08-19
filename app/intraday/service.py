@@ -92,6 +92,7 @@ class IntradayService:
         book = str(venue).upper() if venue else None
         out: list[dict[str, Any]] = []
         for lc in await self.monitor.list_lifecycles(venue=book):
+            stamped = await self.monitor.stamp_horizon_stop_if_missing(lc)
             result = await self.monitor.evaluate(
                 lc,
                 current_price=prices.get(lc.symbol),
@@ -116,13 +117,37 @@ class IntradayService:
                 "risk": {"status": risk.status, "reasons": risk.reasons},
                 "stop": {"triggered": stop.triggered, "status": stop.status},
             }
-            # Hard stop → exit intent (optional paper submit when armed).
-            if stop.triggered:
+            if stamped is not None and lc.stop_price == stamped:
+                entry["horizon_stop"] = stamped
+            # Hard stop / max-holding / take-profit → exit intent (optional paper submit).
+            protective_exit = stop.triggered or (
+                result.verdict == "EXIT_INTENT_REQUIRED"
+                and any(
+                    r in {"stop_triggered", "max_holding_time", "take_profit_triggered"}
+                    for r in (result.reasons or [])
+                )
+            )
+            if protective_exit:
                 if lc.status == "PENDING_CLOSE":
                     entry["exit_skipped"] = "already_pending_close"
                 else:
+                    reason = "hard_stop" if stop.triggered else str(
+                        next(
+                            (
+                                r
+                                for r in (result.reasons or [])
+                                if r
+                                in {
+                                    "max_holding_time",
+                                    "take_profit_triggered",
+                                    "stop_triggered",
+                                }
+                            ),
+                            "monitor_exit",
+                        )
+                    )
                     intent = await self._exit_intent(
-                        lc, reason="hard_stop", qty=float(lc.quantity or 0)
+                        lc, reason=reason, qty=float(lc.quantity or 0)
                     )
                     if intent is not None:
                         entry["exit_intent_id"] = str(intent.id)
@@ -131,23 +156,35 @@ class IntradayService:
                             submitted = await self._submit_hard_stop(lc)
                             entry["orders_submitted"] = submitted
                             if submitted:
-                                entry["notes"] = ["hard_stop_orders_submitted"]
+                                entry["notes"] = [
+                                    "hard_stop_orders_submitted"
+                                    if stop.triggered
+                                    else "protective_exit_orders_submitted"
+                                ]
                         else:
-                            entry["notes"] = ["hard_stop_intent_pending_submit"]
-                        try:
-                            from app.alerts.ops import emit_hard_stop_alert
+                            entry["notes"] = [
+                                "hard_stop_intent_pending_submit"
+                                if stop.triggered
+                                else "protective_exit_intent_pending_submit"
+                            ]
+                        if stop.triggered:
+                            try:
+                                from app.alerts.ops import emit_hard_stop_alert
 
-                            await emit_hard_stop_alert(
-                                self.session,
-                                self.settings,
-                                symbol=lc.symbol,
-                                price=float(prices.get(lc.symbol) or lc.current_price or 0) or None,
-                                stop_price=float(lc.stop_price) if lc.stop_price is not None else None,
-                                submitted=bool(submitted),
-                                intent_id=str(intent.id),
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass
+                                await emit_hard_stop_alert(
+                                    self.session,
+                                    self.settings,
+                                    symbol=lc.symbol,
+                                    price=float(prices.get(lc.symbol) or lc.current_price or 0)
+                                    or None,
+                                    stop_price=float(lc.stop_price)
+                                    if lc.stop_price is not None
+                                    else None,
+                                    submitted=bool(submitted),
+                                    intent_id=str(intent.id),
+                                )
+                            except Exception:  # noqa: BLE001
+                                pass
             if result.verdict == "EMERGENCY_ACTION_REQUIRED":
                 try:
                     from app.alerts.ops import emit_monitor_emergency_alert

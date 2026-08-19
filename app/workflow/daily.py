@@ -858,12 +858,16 @@ class DailyWorkflowService:
             except Exception as exc:  # noqa: BLE001
                 meta["last_event_drain_error"] = str(exc)[:200]
 
-        # First regular-session tick: flatten leftover scalp/day that rode overnight.
-        if (
-            status.phase == "REGULAR"
-            and not status.in_force_close_window
-            and not meta.get("leftover_intraday_flatten_at")
-        ):
+        # Flatten leftover scalp/day: first regular tick after an overnight hold,
+        # and again after the close if the force-close window was never ticked.
+        missed_close = status.phase in {
+            "POSTMARKET",
+            "AFTER_HOURS",
+            "FORCE_CLOSE_WINDOW",
+            "CLOSING_WINDOW",
+        }
+        first_regular = status.phase == "REGULAR" and not status.in_force_close_window
+        if (first_regular or missed_close) and not meta.get("leftover_intraday_flatten_at"):
             try:
                 from app.intraday.closing import ClosingService
 
@@ -1075,6 +1079,104 @@ class DailyWorkflowService:
             },
         }
 
+    async def retry_missed_session_exits(
+        self, *, now: datetime | None = None, session_date: str | None = None
+    ) -> dict[str, Any]:
+        """After the close, stamp missing stops and submit day/scalp flatten.
+
+        ``evaluate_intraday`` is not allowed from CLOSING_WINDOW, and intraday
+        jobs used to stop 30m before the close — so force-close never ran.
+        Scheduler calls this on each venue after catch-up.
+        """
+        now = now or datetime.now(UTC)
+        if session_date is None:
+            session_date = now.astimezone(self.calendar.market_tz).date().isoformat()
+        run = await self.get_current(session_date)
+        if run is None:
+            return {"skipped": True, "reason": "no_run"}
+        if run.current_state not in {
+            DailyWorkflowState.CLOSING_WINDOW.value,
+            DailyWorkflowState.MARKET_CLOSED.value,
+            DailyWorkflowState.INTRADAY.value,
+            DailyWorkflowState.MARKET_OPEN.value,
+        }:
+            return {"skipped": True, "reason": f"state:{run.current_state}"}
+        status = self.calendar.get_market_status(now)
+        if status.phase not in {
+            "POSTMARKET",
+            "AFTER_HOURS",
+            "FORCE_CLOSE_WINDOW",
+            "CLOSING_WINDOW",
+        }:
+            return {"skipped": True, "reason": f"phase:{status.phase}"}
+        meta = dict(run.metadata_json or {})
+        last = meta.get("after_hours_flatten_at")
+        if last:
+            try:
+                ts = datetime.fromisoformat(str(last))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                if (now - ts).total_seconds() < 15 * 60:
+                    return {"skipped": True, "reason": "cooldown"}
+            except ValueError:
+                pass
+        from sqlalchemy import select as sa_select
+
+        from app.intraday.closing import ClosingService
+        from app.intraday.service import IntradayService
+        from app.models import PositionLifecycle
+
+        open_rows = list(
+            (
+                await self.session.execute(
+                    sa_select(PositionLifecycle).where(
+                        PositionLifecycle.status.in_(
+                            ["OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"]
+                        ),
+                        PositionLifecycle.venue == self.venue.value,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not open_rows:
+            return {"skipped": True, "reason": "flat"}
+        intra = IntradayService(
+            self.session, settings=self.settings, controls=self.controls
+        )
+        monitor_rows = await intra.monitor_all(venue=self.venue.value)
+        closing = await ClosingService(
+            self.session, settings=self.settings, venue=self.venue.value
+        ).run_closing(in_closing_window=False)
+        submitted = int(closing.get("orders_submitted") or 0) + sum(
+            int(r.get("orders_submitted") or 0) for r in monitor_rows if isinstance(r, dict)
+        )
+        meta["after_hours_flatten_at"] = now.isoformat()
+        meta["last_force_close"] = {
+            "intent_ids": list(closing.get("intent_ids") or []),
+            "orders_submitted": submitted,
+            "notes": list(closing.get("notes") or [])[:12],
+            "source": "retry_missed_session_exits",
+        }
+        run.metadata_json = meta
+        await self.session.flush()
+        return {
+            "skipped": False,
+            "orders_submitted": submitted,
+            "intent_ids": list(closing.get("intent_ids") or []),
+            "monitor": [
+                {
+                    "symbol": r.get("symbol"),
+                    "verdict": (r.get("monitor") or {}).get("verdict"),
+                    "orders_submitted": r.get("orders_submitted") or 0,
+                }
+                for r in monitor_rows
+                if isinstance(r, dict) and not r.get("skipped")
+            ],
+            "notes": list(closing.get("notes") or [])[:12],
+        }
+
     async def start_closing(
         self,
         *,
@@ -1147,6 +1249,11 @@ class DailyWorkflowService:
         }
         meta = dict(run.metadata_json or {})
         meta["closing_decision"] = closing_payload
+        meta["last_force_close"] = {
+            "intent_ids": closing_payload.get("intent_ids") or [],
+            "orders_submitted": int(closing_payload.get("orders_submitted") or 0),
+            "notes": list(closing_payload.get("notes") or [])[:12],
+        }
         run.metadata_json = meta
         await self.session.flush()
         return {**self._run_dict(run), "closing": closing_payload}
@@ -1629,7 +1736,9 @@ class DailyWorkflowService:
         open_t = session.regular_open
         close_t = session.regular_close
         cfg = self.settings
-        end = close_t - timedelta(minutes=cfg.closing_window_minutes_before_close)
+        # Include the force-close window. CIO analysis is already skipped there;
+        # previously jobs stopped 30m before close so last_force_close never ran.
+        end = close_t
         session_mins = max(0.0, (end - open_t).total_seconds() / 60.0)
         try:
             from sqlalchemy import select as sa_select
@@ -1724,6 +1833,45 @@ class DailyWorkflowService:
                 created += 1
             idx += 1
             cursor += timedelta(minutes=interval_min)
+        force_mins = max(1, int(cfg.force_close_before_market_close_minutes or 15))
+        force_at = close_t - timedelta(minutes=min(5, force_mins))
+        if open_t < force_at < close_t:
+            covered = any(
+                (
+                    (
+                        r.planned_at.replace(tzinfo=UTC)
+                        if r.planned_at.tzinfo is None
+                        else r.planned_at
+                    )
+                    >= force_at.astimezone(UTC)
+                    and (
+                        r.planned_at.replace(tzinfo=UTC)
+                        if r.planned_at.tzinfo is None
+                        else r.planned_at
+                    )
+                    < close_t.astimezone(UTC)
+                )
+                for r in existing
+            )
+            if not covered:
+                key = self._jk(f"intraday_eval_{idx}")
+                if next((r for r in existing if r.job_key == key), None) is None:
+                    self.session.add(
+                        ScheduledJobRecord(
+                            id=uuid4(),
+                            job_key=key,
+                            session_date=run.session_date,
+                            planned_at=force_at.astimezone(UTC),
+                            status="planned",
+                            workflow_run_id=run.id,
+                            metadata_json={
+                                "interval_minutes": interval_min,
+                                "force_close_tick": True,
+                                "venue": self.venue.value,
+                            },
+                        )
+                    )
+                    created += 1
         await self.session.flush()
         return created
 

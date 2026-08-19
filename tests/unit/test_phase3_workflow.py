@@ -129,6 +129,17 @@ async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSess
     assert gap < timedelta(minutes=30)
     assert gap >= timedelta(minutes=10)
     assert 8 <= len(intra) <= 25
+    from app.market.calendar import MarketCalendarService
+
+    close = MarketCalendarService(settings).get_session(
+        datetime(2026, 8, 3, tzinfo=UTC).date()
+    ).regular_close
+    assert close is not None
+    last = max(datetime.fromisoformat(j["planned_at"]) for j in intra)
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    # Force-close window is the last 15 minutes; at least one tick must land in it.
+    assert last >= close.astimezone(UTC) - timedelta(minutes=15)
 
 
 @pytest.mark.asyncio

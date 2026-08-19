@@ -135,6 +135,118 @@ async def test_evaluate_intraday_flattens_leftover_overnight_once(
 
 
 @pytest.mark.asyncio
+async def test_evaluate_intraday_flattens_leftover_after_hours(
+    session: AsyncSession,
+) -> None:
+    from app.core.config import Settings, TradingMode
+
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        broker_environment="paper",
+        enable_broker_orders=True,
+        enable_automated_execution=False,
+        require_manual_order_approval=False,
+        auto_execute_force_close=False,
+        intraday_operation_mode="PAPER_AUTOMATED",
+        enable_intraday_monitoring=False,
+        enable_intraday_agent_reanalysis=False,
+        enable_scheduler=False,
+        default_closing_policy="CLOSE_INTRADAY_ONLY",
+    )
+    svc = DailyWorkflowService(session, settings=settings)
+    await svc.prepare(session_date="2026-08-03")
+    run = await svc.get_current("2026-08-03")
+    assert run is not None
+    run.current_state = DailyWorkflowState.INTRADAY.value
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="QQQ",
+            status="OPEN",
+            quantity=8,
+            average_entry_price=400,
+            current_price=405,
+            overnight_allowed=False,
+            venue="US",
+            exit_policy={"horizon": "day"},
+        )
+    )
+    await session.flush()
+    now = datetime(2026, 8, 4, 1, 0, tzinfo=UTC)
+    out = await svc.evaluate_intraday(
+        session_date="2026-08-03", trigger="interval", now=now, fake_llm=True
+    )
+    leftover = (out.get("metadata") or {}).get("leftover_intraday_flatten") or (
+        out.get("intraday") or {}
+    ).get("leftover_flatten")
+    assert leftover is not None
+    assert leftover.get("intent_ids")
+
+
+@pytest.mark.asyncio
+async def test_retry_missed_session_exits_after_hours(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.brokers.mock import MockBroker
+    from app.core.config import Settings, TradingMode
+
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        broker_environment="paper",
+        broker_provider="mock",
+        enable_live_trading=False,
+        enable_broker_orders=True,
+        enable_automated_execution=True,
+        require_manual_order_approval=False,
+        auto_execute_force_close=True,
+        auto_execute_hard_stops=True,
+        enable_intraday_monitoring=True,
+        enable_intraday_agent_reanalysis=False,
+        enable_scheduler=False,
+        intraday_operation_mode="PAPER_AUTOMATED",
+        default_closing_policy="CLOSE_INTRADAY_ONLY",
+        starting_cash=50_000.0,
+    )
+    broker = MockBroker(seed=11, starting_cash=50_000, allow_short=False)
+    broker.prices["QQQ"] = 400.0
+    broker.positions["QQQ"] = {
+        "symbol": "QQQ",
+        "qty": "8",
+        "avg_entry_price": "390",
+        "market_value": "3200",
+        "unrealized_pl": "80",
+        "side": "long",
+    }
+    monkeypatch.setattr("app.brokers.factory.get_broker", lambda _s=None: broker)
+    monkeypatch.setattr("app.execution.order_manager.get_broker", lambda _s=None: broker)
+    svc = DailyWorkflowService(session, settings=settings)
+    await svc.prepare(session_date="2026-08-03")
+    run = await svc.get_current("2026-08-03")
+    assert run is not None
+    run.current_state = DailyWorkflowState.CLOSING_WINDOW.value
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="QQQ",
+            status="OPEN",
+            quantity=8,
+            average_entry_price=400,
+            current_price=400,
+            overnight_allowed=False,
+            venue="US",
+            exit_policy={"horizon": "day"},
+        )
+    )
+    await session.flush()
+    now = datetime(2026, 8, 4, 1, 0, tzinfo=UTC)
+    out = await svc.retry_missed_session_exits(now=now, session_date="2026-08-03")
+    assert out.get("skipped") is False
+    assert int(out.get("orders_submitted") or 0) >= 1
+
+
+@pytest.mark.asyncio
 async def test_postmarket_runs_settlement(session: AsyncSession) -> None:
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-08-03")

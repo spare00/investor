@@ -359,3 +359,38 @@ async def test_monitor_all_scopes_to_venue(session: AsyncSession) -> None:
         prices={"SPY": 94.0, "BHP": 34.0}, venue="AU"
     )
     assert [r["symbol"] for r in au_rows if not r.get("skipped")] == ["BHP"]
+
+
+@pytest.mark.asyncio
+async def test_max_holding_submits_when_armed(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    settings = _armed()
+    broker = MockBroker(seed=7, starting_cash=50_000, allow_short=False)
+    broker.prices["QQQ"] = 400.0
+    monkeypatch.setattr("app.brokers.factory.get_broker", lambda _s=None: broker)
+    monkeypatch.setattr("app.execution.order_manager.get_broker", lambda _s=None: broker)
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="QQQ",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=400,
+            current_price=400,
+            stop_price=None,
+            overnight_allowed=False,
+            max_holding_minutes=60,
+            opened_at=datetime.now(UTC) - timedelta(hours=8),
+            venue="US",
+            exit_policy={"horizon": "day"},
+        )
+    )
+    await session.flush()
+    rows = await IntradayService(session, settings=settings).monitor_all(prices={"QQQ": 400.0})
+    hit = next(r for r in rows if r["symbol"] == "QQQ")
+    assert "max_holding_time" in (hit["monitor"]["reasons"] or [])
+    assert hit.get("exit_intent_id")
+    assert hit.get("orders_submitted", 0) >= 1

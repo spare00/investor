@@ -89,5 +89,9 @@ async def test_lifecycle_inherits_horizon_hold_policy(session: AsyncSession) -> 
     medium = await mon.ensure_lifecycle_from_broker(symbol="MSFT", quantity=1, avg_entry=100)
     assert scalp.overnight_allowed is False
     assert scalp.max_holding_minutes == policy_for("scalp").max_holding_minutes
+    assert scalp.stop_price is not None
+    assert scalp.stop_price < 100
     assert medium.overnight_allowed is True
     assert medium.max_holding_minutes == policy_for("medium").max_holding_minutes
+    assert medium.stop_price is not None
+    assert medium.stop_price < scalp.stop_price

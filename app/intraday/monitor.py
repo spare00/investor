@@ -316,6 +316,8 @@ class PositionMonitor:
                 policy["closing_policy"] = closing_policy_for_horizon(hz)
                 existing.closing_policy = str(policy["closing_policy"])
             existing.exit_policy = policy
+            if existing.stop_price is None:
+                await self.stamp_horizon_stop_if_missing(existing)
             await self.session.flush()
             return existing
         holding = await self._default_max_holding(symbol)
@@ -352,6 +354,8 @@ class PositionMonitor:
         )
         self.session.add(row)
         await self.session.flush()
+        if row.stop_price is None:
+            await self.stamp_horizon_stop_if_missing(row)
         return row
 
     async def sync_from_broker_positions(
@@ -419,6 +423,58 @@ class PositionMonitor:
             "closed": closed,
             "held": [f"{s}:{v}" for s, v in sorted(held.keys())],
         }
+
+    async def stamp_horizon_stop_if_missing(
+        self, lifecycle: PositionLifecycle
+    ) -> float | None:
+        """Attach the watchlist book's ATR/pct stop when the row has none.
+
+        Broker sync never carries IBKR stop_price, so hard-stops were a no-op
+        on every open name. Idempotent: leaves an existing stop untouched.
+        """
+        if lifecycle.stop_price is not None:
+            return float(lifecycle.stop_price)
+        ref = float(lifecycle.average_entry_price or lifecycle.current_price or 0)
+        if ref <= 0:
+            return None
+        from app.universe.book_strategy import horizon_for_symbol
+        from app.universe.horizons import policy_for, suggested_long_stop
+
+        hz = await self._watchlist_horizon(lifecycle.symbol) or horizon_for_symbol(
+            lifecycle.symbol
+        )
+        try:
+            pol = policy_for(hz)
+        except ValueError:
+            return None
+        atr = await self._latest_atr(lifecycle.symbol)
+        stop = suggested_long_stop(reference=ref, atr=atr, policy=pol)
+        if stop is None:
+            return None
+        lifecycle.stop_price = stop
+        policy = dict(lifecycle.exit_policy or {})
+        policy["stop_loss"] = stop
+        policy["stop_source"] = "horizon_policy"
+        policy["horizon"] = hz
+        lifecycle.exit_policy = policy
+        await self.session.flush()
+        return float(stop)
+
+    async def _latest_atr(self, symbol: str) -> float | None:
+        from app.models import MarketSnapshot
+
+        row = (
+            await self.session.execute(
+                select(MarketSnapshot)
+                .where(MarketSnapshot.symbol == symbol.upper())
+                .order_by(MarketSnapshot.as_of.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if row is None or row.atr_14 is None:
+            return None
+        atr = float(row.atr_14)
+        return atr if atr > 0 else None
 
     async def _watchlist_horizon(self, symbol: str) -> str | None:
         from app.models import WatchlistSymbol
