@@ -47,7 +47,7 @@ class DailyWorkflowError(Exception):
 # Postmarket is settlement + bookkeeping, not a committee call. Bound each
 # step so a wedged IBKR/perf scan cannot eat the 8-minute job cap and leave
 # the session stuck in POSTMARKET_REVIEW. Decision eval is split across
-# follow-up postmarket_eval_* jobs — no practical count cap, just time slices.
+# follow-up postmarket_eval jobs — no practical count cap, just time slices.
 POSTMARKET_STEP_TIMEOUTS_SECONDS: dict[str, float] = {
     "overnight_review": 20.0,
     "settlement": 60.0,
@@ -55,7 +55,15 @@ POSTMARKET_STEP_TIMEOUTS_SECONDS: dict[str, float] = {
     "performance": 60.0,
 }
 POSTMARKET_EVAL_CHUNK = 12
-POSTMARKET_EVAL_MAX_SEQ = 200
+# After hours, chew several chunks per dispatch without hitting the 8-minute job cap.
+POSTMARKET_EVAL_BUDGET_SECONDS = 240.0
+POSTMARKET_EVAL_MAX_CHUNKS_PER_JOB = 40
+POSTMARKET_EVAL_PHASES = {
+    "POSTMARKET",
+    "AFTER_HOURS",
+    "NON_TRADING_DAY",
+    "BEFORE_PREMARKET",
+}
 
 
 async def _await_postmarket_step(name: str, coro: Any) -> Any:
@@ -1276,7 +1284,7 @@ class DailyWorkflowService:
         )
         run.status = WorkflowRunStatus.COMPLETED.value
         run.completed_at = now
-        queued = await self._enqueue_postmarket_eval(run, 0, planned_at=now)
+        queued = await self._enqueue_postmarket_eval(run, planned_at=now)
         review["decision_eval"] = {
             "queued": queued,
             "chunk": POSTMARKET_EVAL_CHUNK,
@@ -1294,7 +1302,12 @@ class DailyWorkflowService:
         seq: int = 0,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        """Score the next unevaluated CIO slice; enqueue another job if any remain."""
+        """Score this venue's leftover CIO rows until the time budget is gone.
+
+        ``seq`` is ignored (legacy ``postmarket_eval_N`` keys still call this).
+        Remaining work is signaled via ``eval.reschedule`` so the same job row
+        is flipped back to ``planned``.
+        """
         now = now or datetime.now(UTC)
         run = await self._require_run(session_date)
         self._assert_not_blocked(run)
@@ -1303,32 +1316,60 @@ class DailyWorkflowService:
         eval_start = eval_end - timedelta(days=lookback)
         chunk = POSTMARKET_EVAL_CHUNK
         payload: dict[str, Any] = {
-            "seq": seq,
             "chunk": chunk,
             "decision_eval_lookback_days": lookback,
+            "reschedule": False,
+            "delay_s": 0,
         }
+        phase = str(self.calendar.get_market_status(now).phase or "")
+        payload["phase"] = phase
+        if phase not in POSTMARKET_EVAL_PHASES:
+            payload["skipped"] = f"session_phase:{phase}"
+            payload["reschedule"] = True
+            payload["delay_s"] = 60
+            meta = dict(run.metadata_json or {})
+            meta["postmarket_eval"] = payload
+            run.metadata_json = meta
+            await self.session.flush()
+            return {**self._run_dict(run), "eval": payload}
+
+        from datetime import date as date_cls
+
+        from app.performance.service import PerformanceService
+
+        day = date_cls.fromisoformat(run.session_date)
+        start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        end = start + timedelta(days=1)
+        book = self.venue.value
+        prior = dict((run.metadata_json or {}).get("postmarket_eval") or {})
+        pending_refreshed = bool(prior.get("pending_refreshed"))
+        recalc_id = prior.get("run_id")
+        perf = PerformanceService(self.session, settings=self.settings)
+        loop = asyncio.get_running_loop()
+        budget = float(POSTMARKET_EVAL_BUDGET_SECONDS)
+        deadline = loop.time() + max(5.0, budget)
+        max_chunks = max(1, int(POSTMARKET_EVAL_MAX_CHUNKS_PER_JOB))
+        total_processed = 0
+        remaining = 0
+        chunks_run = 0
         timed_out = False
-        try:
-            from datetime import date as date_cls
 
-            from app.performance.service import PerformanceService
-
-            day = date_cls.fromisoformat(run.session_date)
-            start = datetime(day.year, day.month, day.day, tzinfo=UTC)
-            end = start + timedelta(days=1)
+        while chunks_run < max_chunks and loop.time() < deadline:
+            slice_timeout = max(1.0, min(60.0, deadline - loop.time()))
 
             async def _chunk() -> dict[str, Any]:
-                perf = PerformanceService(self.session, settings=self.settings)
+                nonlocal pending_refreshed, recalc_id
                 out: dict[str, Any] = {}
-                book = self.venue.value
-                if int(seq) == 0:
-                    # One PENDING refresh per venue so completed horizons
-                    # get another look; do not wipe the other book's queue.
+                if not pending_refreshed:
                     await perf.refresh_pending_evaluations(
                         eval_start, eval_end, venue=book
                     )
+                    pending_refreshed = True
+                    out["pending_refreshed"] = True
+                if not recalc_id:
                     perf_run = await perf.recalculate(start, end)
-                    out["run_id"] = perf_run.get("run_id")
+                    recalc_id = perf_run.get("run_id")
+                out["run_id"] = recalc_id
                 decisions = await perf.evaluate_decisions_batch(
                     eval_start,
                     eval_end,
@@ -1342,28 +1383,43 @@ class DailyWorkflowService:
                 out["remaining_decisions"] = int(decisions.get("remaining_decisions") or 0)
                 return out
 
-            payload.update(await _await_postmarket_step("performance", _chunk()))
-        except TimeoutError as exc:
-            timed_out = True
-            payload["error"] = str(exc)[:240]
-        except Exception as exc:  # noqa: BLE001
-            payload["error"] = str(exc)[:240]
-
-        processed = int(payload.get("decisions_processed") or 0)
-        remaining = int(payload.get("remaining_decisions") or 0)
-        if remaining > 0 and (processed > 0 or timed_out):
-            payload["next_job"] = await self._enqueue_postmarket_eval(
-                run, int(seq) + 1, planned_at=now
-            )
-        else:
-            payload["next_job"] = None
-            if remaining > 0 and processed == 0:
-                logger.warning(
-                    "postmarket_eval_stalled",
-                    seq=seq,
-                    remaining=remaining,
-                    error=payload.get("error"),
+            try:
+                piece = await asyncio.wait_for(_chunk(), timeout=slice_timeout)
+            except TimeoutError as exc:
+                timed_out = True
+                payload["error"] = (
+                    str(exc)[:240]
+                    if str(exc)
+                    else f"timeout:performance:{int(slice_timeout)}s"
                 )
+                remaining = max(remaining, 1)
+                break
+            except Exception as exc:  # noqa: BLE001
+                payload["error"] = str(exc)[:240]
+                break
+            chunks_run += 1
+            processed = int(piece.get("decisions_processed") or 0)
+            remaining = int(piece.get("remaining_decisions") or 0)
+            total_processed += processed
+            payload["run_id"] = piece.get("run_id")
+            payload["pending_refreshed"] = True
+            if remaining <= 0 or processed <= 0:
+                if remaining > 0 and processed <= 0:
+                    logger.warning(
+                        "postmarket_eval_stalled",
+                        remaining=remaining,
+                        error=payload.get("error"),
+                        venue=book,
+                    )
+                break
+
+        payload["decisions_processed"] = total_processed
+        payload["remaining_decisions"] = remaining
+        payload["chunks"] = chunks_run
+        if remaining > 0 and (total_processed > 0 or timed_out):
+            payload["reschedule"] = True
+            payload["delay_s"] = 0
+        payload["next_job"] = self._jk("postmarket_eval") if payload["reschedule"] else None
 
         meta = dict(run.metadata_json or {})
         history = list(meta.get("postmarket_evals") or [])
@@ -1377,19 +1433,14 @@ class DailyWorkflowService:
     async def _enqueue_postmarket_eval(
         self,
         run: DailyWorkflowRun,
-        seq: int,
         *,
         planned_at: datetime | None = None,
     ) -> str | None:
-        if seq > POSTMARKET_EVAL_MAX_SEQ:
-            logger.warning(
-                "postmarket_eval_seq_cap",
-                seq=seq,
-                cap=POSTMARKET_EVAL_MAX_SEQ,
-                session_date=run.session_date,
-            )
-            return None
-        key = self._jk(f"postmarket_eval_{seq}")
+        key = self._jk("postmarket_eval")
+        when = planned_at or datetime.now(UTC)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        when = when.astimezone(UTC)
         existing = (
             await self.session.execute(
                 select(ScheduledJobRecord).where(
@@ -1399,19 +1450,23 @@ class DailyWorkflowService:
             )
         ).scalar_one_or_none()
         if existing:
+            if existing.status in {"completed", "failed", "skipped"}:
+                existing.status = "planned"
+                existing.planned_at = when
+                existing.started_at = None
+                existing.completed_at = None
+                existing.error = None
+                await self.session.flush()
             return key
-        when = planned_at or datetime.now(UTC)
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=UTC)
         self.session.add(
             ScheduledJobRecord(
                 id=uuid4(),
                 job_key=key,
                 session_date=run.session_date,
-                planned_at=when.astimezone(UTC),
+                planned_at=when,
                 status="planned",
                 workflow_run_id=run.id,
-                metadata_json={"kind": "postmarket_eval", "seq": seq},
+                metadata_json={"kind": "postmarket_eval"},
             )
         )
         await self.session.flush()

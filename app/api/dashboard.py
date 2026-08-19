@@ -69,11 +69,13 @@ def _parse_session_job_key(job_key: str) -> dict[str, Any]:
         except ValueError:
             plan_index = None
         return {"venue": venue, "job_type": "intraday_eval", "plan_index": plan_index}
-    if rest.startswith("postmarket_eval_"):
-        try:
-            plan_index = int(rest.rsplit("_", 1)[-1])
-        except ValueError:
-            plan_index = None
+    if rest == "postmarket_eval" or rest.startswith("postmarket_eval_"):
+        plan_index = None
+        if rest.startswith("postmarket_eval_"):
+            try:
+                plan_index = int(rest.rsplit("_", 1)[-1])
+            except ValueError:
+                plan_index = None
         return {"venue": venue, "job_type": "postmarket_eval", "plan_index": plan_index}
     return {"venue": venue, "job_type": rest, "plan_index": None}
 

@@ -349,7 +349,7 @@ async def _dispatch_due_jobs() -> None:
                         )
                     try:
                         timeout_s = float(settings.effective_job_action_timeout_seconds())
-                        await asyncio.wait_for(
+                        outcome = await asyncio.wait_for(
                             _run_job_action(
                                 services[venue.value], job.job_key, job.session_date
                             ),
@@ -358,13 +358,18 @@ async def _dispatch_due_jobs() -> None:
                     except TimeoutError:
                         from sqlalchemy import update
 
+                        from app.market.venues import job_key_base
+
+                        resume = job_key_base(job.job_key).startswith("postmarket_eval")
                         await session.execute(
                             update(ScheduledJobRecord)
                             .where(ScheduledJobRecord.id == job.id)
                             .values(
-                                status="failed",
+                                status="planned" if resume else "failed",
                                 error=f"job_action_timeout:{int(timeout_s)}s",
-                                completed_at=datetime.now(UTC),
+                                planned_at=datetime.now(UTC) + timedelta(seconds=30),
+                                started_at=None,
+                                completed_at=None if resume else datetime.now(UTC),
                             )
                         )
                         _observe_scheduler_job(job, timeout_s=timeout_s, timed_out=True)
@@ -373,6 +378,23 @@ async def _dispatch_due_jobs() -> None:
                             job=job.job_key,
                             session_date=job.session_date,
                             timeout_s=timeout_s,
+                            rescheduled=resume,
+                        )
+                        await session.commit()
+                        continue
+                    if isinstance(outcome, dict) and outcome.get("reschedule"):
+                        delay = float(outcome.get("delay_s") or 0)
+                        job.status = "planned"
+                        job.planned_at = datetime.now(UTC) + timedelta(seconds=max(0.0, delay))
+                        job.started_at = None
+                        job.completed_at = None
+                        job.error = None
+                        logger.info(
+                            "scheduler_job_rescheduled",
+                            job=job.job_key,
+                            session_date=job.session_date,
+                            delay_s=delay,
+                            remaining=outcome.get("remaining_decisions"),
                         )
                         await session.commit()
                         continue
@@ -480,7 +502,7 @@ async def _dispatch_due_jobs() -> None:
                 await session.commit()
 
 
-async def _run_job_action(svc: Any, job_key: str, session_date: str) -> None:
+async def _run_job_action(svc: Any, job_key: str, session_date: str) -> dict[str, Any] | None:
     from app.market.venues import job_key_base
 
     settings = get_settings()
@@ -498,15 +520,13 @@ async def _run_job_action(svc: Any, job_key: str, session_date: str) -> None:
         await svc.start_closing(session_date=session_date)
     elif action == "postmarket_review":
         await svc.run_postmarket(session_date=session_date)
-    elif action.startswith("postmarket_eval"):
-        seq = 0
-        try:
-            seq = int(action.rsplit("_", 1)[-1])
-        except ValueError:
-            seq = 0
-        await svc.run_postmarket_eval(session_date=session_date, seq=seq)
+    elif action == "postmarket_eval" or action.startswith("postmarket_eval"):
+        result = await svc.run_postmarket_eval(session_date=session_date)
+        eval_payload = result.get("eval") if isinstance(result, dict) else None
+        return eval_payload if isinstance(eval_payload, dict) else None
     else:
         logger.warning("unknown_scheduled_job", job_key=job_key)
+    return None
 
 
 async def _refresh_universe() -> None:

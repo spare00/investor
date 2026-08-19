@@ -45,5 +45,5 @@ Audit persist stamps `decision_price` / `universe_horizon` onto symbol plans whe
 
 - Sparse historical `market_snapshots` still leave long horizons UNAVAILABLE until enough session ticks accumulate
 - Live broker historical bars are not used for backfill (intraday/premarket collect now persists market prints)
-- Postmarket re-eval uses `decision_eval_lookback_days` (default 90) across follow-up `postmarket_eval_*` jobs so leftover slices continue instead of being dropped on timeout
+- Postmarket re-eval uses `decision_eval_lookback_days` (default 90) on a self-rescheduling `postmarket_eval` job per venue so leftover slices continue instead of being dropped on timeout
 - Does not auto-close positions or change future agent prompts

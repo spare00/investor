@@ -92,3 +92,19 @@ def test_enrich_session_jobs_postmarket_eval_label() -> None:
     assert by_key["AU:postmarket_eval_1"]["display_name"] == "Postmarket eval #2"
     assert by_key["AU:postmarket_eval_1"]["plan_index"] == 1
     assert by_key["AU:postmarket_eval_1"]["job_type"] == "postmarket_eval"
+
+
+def test_enrich_session_jobs_stable_postmarket_eval_label() -> None:
+    rows = enrich_session_jobs(
+        [
+            {
+                "job_key": "AU:postmarket_eval",
+                "venue": "AU",
+                "planned_at": "2026-08-19T06:31:00+00:00",
+                "status": "planned",
+            }
+        ]
+    )
+    assert rows[0]["display_name"] == "Postmarket eval"
+    assert rows[0]["job_type"] == "postmarket_eval"
+    assert rows[0]["plan_index"] is None

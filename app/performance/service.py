@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -645,7 +645,10 @@ class PerformanceService:
         )
         wl = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
         watchlist_hz = {r.symbol.upper(): str(r.horizon) for r in wl if r.symbol}
-        resolver = DecisionPriceResolver(self.session)
+        resolver = DecisionPriceResolver(
+            self.session,
+            history_start=period_start - timedelta(days=5),
+        )
 
         evaluations: list[dict[str, Any]] = []
         filled = 0

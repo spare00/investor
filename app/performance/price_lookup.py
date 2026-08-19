@@ -126,20 +126,31 @@ class ResolvedPrice:
 class DecisionPriceResolver:
     """Batch-scoped snapshot resolver with per-symbol cache."""
 
-    def __init__(self, session: AsyncSession, *, now: datetime | None = None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        now: datetime | None = None,
+        history_start: datetime | None = None,
+    ) -> None:
         self.session = session
         self.now = now or datetime.now(UTC)
+        self.history_start = history_start
         self._points: dict[str, list[tuple[datetime, float]]] = {}
 
     async def _load_points(self, symbol: str) -> list[tuple[datetime, float]]:
         sym = symbol.upper()
         if sym in self._points:
             return self._points[sym]
-        result = await self.session.execute(
+        q = (
             select(MarketSnapshot.as_of, MarketSnapshot.last)
             .where(MarketSnapshot.symbol == sym)
             .order_by(MarketSnapshot.as_of.asc())
         )
+        if self.history_start is not None:
+            q = q.where(MarketSnapshot.as_of >= self.history_start)
+        q = q.where(MarketSnapshot.as_of <= self.now)
+        result = await self.session.execute(q)
         points = [(row[0], float(row[1])) for row in result.all() if row[1] is not None]
         self._points[sym] = points
         return points

@@ -89,9 +89,9 @@ async def test_postmarket_runs_settlement(session: AsyncSession) -> None:
     # Settlement may soft-fail without broker; either settlement or settlement_error is set.
     assert "settlement" in review or "settlement_error" in review
     queued = (review.get("decision_eval") or {}).get("queued")
-    assert queued and queued.endswith("postmarket_eval_0")
+    assert queued and queued.endswith(":postmarket_eval")
     jobs = await svc.planned_jobs("2026-08-03")
-    assert any(j["job_key"].endswith("postmarket_eval_0") for j in jobs)
+    assert any(j["job_key"].endswith(":postmarket_eval") for j in jobs)
 
 
 @pytest.mark.asyncio
@@ -181,15 +181,16 @@ async def test_evaluate_decisions_batch_skips_already_scored(session: AsyncSessi
 
 
 @pytest.mark.asyncio
-async def test_postmarket_eval_enqueues_next_chunk(
+async def test_postmarket_eval_drains_then_reschedules(
     session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.workflow import daily as daily_mod
 
     monkeypatch.setattr(daily_mod, "POSTMARKET_EVAL_CHUNK", 1)
-    now = datetime.now(UTC)
+    monkeypatch.setattr(daily_mod, "POSTMARKET_EVAL_MAX_CHUNKS_PER_JOB", 1)
+    eval_now = datetime(2026, 8, 4, 2, 0, tzinfo=UTC)
     for i in range(2):
-        _did, row = _cio_row(now - timedelta(minutes=i))
+        _did, row = _cio_row(eval_now - timedelta(minutes=i), venue="US")
         session.add(row)
     await session.flush()
 
@@ -201,19 +202,36 @@ async def test_postmarket_eval_enqueues_next_chunk(
     await session.flush()
     post = await svc.run_postmarket(session_date="2026-08-03")
     assert (post["review"].get("decision_eval") or {}).get("queued", "").endswith(
-        "postmarket_eval_0"
+        ":postmarket_eval"
     )
-    first = await svc.run_postmarket_eval(session_date="2026-08-03", seq=0)
+    first = await svc.run_postmarket_eval(session_date="2026-08-03", now=eval_now)
     ev = first["eval"]
     assert ev["decisions_processed"] == 1
     assert ev["remaining_decisions"] == 1
-    assert str(ev.get("next_job") or "").endswith("postmarket_eval_1")
-    jobs = await svc.planned_jobs("2026-08-03")
-    assert any(j["job_key"].endswith("postmarket_eval_1") for j in jobs)
-    second = await svc.run_postmarket_eval(session_date="2026-08-03", seq=1)
+    assert ev["reschedule"] is True
+    monkeypatch.setattr(daily_mod, "POSTMARKET_EVAL_MAX_CHUNKS_PER_JOB", 40)
+    second = await svc.run_postmarket_eval(session_date="2026-08-03", now=eval_now)
     assert second["eval"]["decisions_processed"] == 1
     assert second["eval"]["remaining_decisions"] == 0
-    assert second["eval"]["next_job"] is None
+    assert second["eval"]["reschedule"] is False
+
+
+@pytest.mark.asyncio
+async def test_postmarket_eval_yields_during_regular_session(
+    session: AsyncSession,
+) -> None:
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-03")
+    run = await svc.get_current("2026-08-03")
+    assert run is not None
+    run.current_state = DailyWorkflowState.COMPLETED.value
+    await session.flush()
+    regular = datetime(2026, 8, 3, 17, 0, tzinfo=UTC)
+    out = await svc.run_postmarket_eval(session_date="2026-08-03", now=regular)
+    ev = out["eval"]
+    assert ev["reschedule"] is True
+    assert "REGULAR" in str(ev.get("skipped") or ev.get("phase") or "")
+    assert ev.get("decisions_processed") in (None, 0)
 
 
 @pytest.mark.asyncio
