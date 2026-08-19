@@ -567,16 +567,20 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
 
     force_close_ops = {
         "auto_execute_force_close": bool(settings.auto_execute_force_close),
+        "effective_auto_execute_force_close": bool(settings.effective_auto_execute_force_close()),
         "paper_auto_submit_allowed": paper_auto_submit_allowed(settings),
-        "armed": bool(settings.auto_execute_force_close) and paper_auto_submit_allowed(settings),
+        "armed": bool(settings.effective_auto_execute_force_close())
+        and paper_auto_submit_allowed(settings),
         "intraday_mode": settings.intraday_operation_mode,
     }
 
     hard_stop_ops = {
         "auto_execute_hard_stops": bool(settings.auto_execute_hard_stops),
+        "effective_auto_execute_hard_stops": bool(settings.effective_auto_execute_hard_stops()),
         "enable_intraday_monitoring": bool(settings.enable_intraday_monitoring),
         "paper_auto_submit_allowed": paper_auto_submit_allowed(settings),
-        "armed": bool(settings.auto_execute_hard_stops) and paper_auto_submit_allowed(settings),
+        "armed": bool(settings.effective_auto_execute_hard_stops())
+        and paper_auto_submit_allowed(settings),
         "intraday_mode": settings.intraday_operation_mode,
     }
 

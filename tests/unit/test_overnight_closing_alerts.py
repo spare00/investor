@@ -72,7 +72,7 @@ async def test_start_closing_runs_overnight_review(session: AsyncSession) -> Non
         alert_provider="fake",
         critical_alert_cooldown_seconds=0,
         warning_alert_cooldown_seconds=0,
-        intraday_operation_mode="PAPER_AUTOMATED",
+        intraday_operation_mode="MANUAL_APPROVAL",
         default_closing_policy="CLOSE_INTRADAY_ONLY",
         enable_scheduler=False,
     )

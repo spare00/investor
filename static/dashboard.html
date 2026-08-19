@@ -1742,7 +1742,7 @@
       meta.innerHTML = [
         pill(hs.enable_intraday_monitoring ? "monitoring on" : "monitoring off", hs.enable_intraday_monitoring ? "good" : "warn"),
         pill(hs.armed ? "hard-stop auto ARMED" : "hard-stop safe", hs.armed ? "warn" : "good"),
-        pill(`AUTO_EXECUTE_HARD_STOPS=${hs.auto_execute_hard_stops ? "on" : "off"}`, hs.auto_execute_hard_stops ? "warn" : ""),
+        pill(`AUTO_EXECUTE_HARD_STOPS=${(hs.effective_auto_execute_hard_stops ?? hs.auto_execute_hard_stops) ? "on" : "off"}`, (hs.effective_auto_execute_hard_stops ?? hs.auto_execute_hard_stops) ? "warn" : ""),
         lastMon.actionable != null ? pill(`last actionable ${lastMon.actionable}`, lastMon.actionable ? "warn" : "good") : "",
         lastMon.pending_events != null ? pill(`pending ev ${lastMon.pending_events}`, lastMon.pending_events ? "warn" : "") : "",
         lastMon.error ? pill(`monitor err`, "bad") : "",
@@ -1805,7 +1805,7 @@
       const fc = data.force_close || {};
       meta.innerHTML = [
         pill(fc.armed ? "paper auto-close ARMED" : "paper auto-close safe", fc.armed ? "warn" : "good"),
-        pill(`AUTO_EXECUTE_FORCE_CLOSE=${fc.auto_execute_force_close ? "on" : "off"}`, fc.auto_execute_force_close ? "warn" : ""),
+        pill(`AUTO_EXECUTE_FORCE_CLOSE=${(fc.effective_auto_execute_force_close ?? fc.auto_execute_force_close) ? "on" : "off"}`, (fc.effective_auto_execute_force_close ?? fc.auto_execute_force_close) ? "warn" : ""),
         pill(`paper submit ${fc.paper_auto_submit_allowed ? "allowed" : "blocked"}`, fc.paper_auto_submit_allowed ? "good" : "warn"),
         pill(`mode ${fc.intraday_mode || "—"}`, ""),
       ].join(" ");

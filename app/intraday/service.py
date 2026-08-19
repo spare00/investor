@@ -67,7 +67,7 @@ class IntradayService:
             "enable_automated_execution": self.settings.enable_automated_execution,
             "broker_streaming_enabled": self.settings.broker_streaming_enabled,
             "broker_polling_fallback_enabled": self.settings.broker_polling_fallback_enabled,
-            "auto_execute_hard_stops": self.settings.auto_execute_hard_stops,
+            "auto_execute_hard_stops": self.settings.effective_auto_execute_hard_stops(),
         }
 
     async def monitor_all(
@@ -167,7 +167,7 @@ class IntradayService:
     def _should_auto_submit_hard_stops(self, caps: ModeCapabilities) -> bool:
         from app.execution.firm_execution import paper_auto_submit_allowed
 
-        if not self.settings.auto_execute_hard_stops:
+        if not self.settings.effective_auto_execute_hard_stops():
             return False
         if not caps.can_submit:
             return False

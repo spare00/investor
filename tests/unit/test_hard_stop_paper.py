@@ -89,6 +89,35 @@ async def test_hard_stop_submits_when_armed(
 
 
 @pytest.mark.asyncio
+async def test_hard_stop_submits_when_paper_automated_flag_off(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _armed()
+    settings = settings.model_copy(update={"auto_execute_hard_stops": False})
+    broker = MockBroker(seed=7, starting_cash=50_000, allow_short=False)
+    broker.prices["SPY"] = 95.0
+    monkeypatch.setattr("app.brokers.factory.get_broker", lambda _s=None: broker)
+    monkeypatch.setattr("app.execution.order_manager.get_broker", lambda _s=None: broker)
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="SPY",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=100,
+            current_price=95,
+            stop_price=98,
+            overnight_allowed=False,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+    rows = await IntradayService(session, settings=settings).monitor_all(prices={"SPY": 95.0})
+    hit = next(r for r in rows if r["symbol"] == "SPY")
+    assert hit.get("orders_submitted", 0) >= 1
+
+
+@pytest.mark.asyncio
 async def test_hard_stop_pending_when_not_armed(session: AsyncSession) -> None:
     settings = Settings(
         app_env="test",
@@ -99,7 +128,7 @@ async def test_hard_stop_pending_when_not_armed(session: AsyncSession) -> None:
         require_manual_order_approval=False,
         auto_execute_hard_stops=False,
         enable_intraday_monitoring=True,
-        intraday_operation_mode="PAPER_AUTOMATED",
+        intraday_operation_mode="MANUAL_APPROVAL",
         starting_cash=50_000.0,
     )
     session.add(
@@ -144,7 +173,7 @@ async def test_hard_stop_emits_ops_alert(
         enable_alerts=True,
         alert_provider="fake",
         critical_alert_cooldown_seconds=0,
-        intraday_operation_mode="PAPER_AUTOMATED",
+        intraday_operation_mode="MANUAL_APPROVAL",
         starting_cash=50_000.0,
     )
     provider = FakeAlertProvider()

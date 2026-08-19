@@ -293,7 +293,7 @@ class Settings(BaseSettings):
     broker_polling_fallback_enabled: bool = True
     broker_polling_interval_seconds: int = 30
     auto_execute_hard_stops: bool = False
-    # When true and paper automation flags allow, closing window submits market exits.
+    # When true (or mode is PAPER_AUTOMATED) and paper automation flags allow, closing window submits market exits.
     auto_execute_force_close: bool = False
     allow_stop_widening: bool = False
     allow_stop_tightening: bool = True
@@ -438,6 +438,21 @@ class Settings(BaseSettings):
         if self.llm_is_local():
             return max(1, int(self.job_action_timeout_seconds_local))
         return max(1, int(self.job_action_timeout_seconds))
+
+    def paper_unattended(self) -> bool:
+        return (self.intraday_operation_mode or "").upper() == "PAPER_AUTOMATED"
+
+    def effective_auto_execute_force_close(self) -> bool:
+        """PAPER_AUTOMATED always flattens; the flag arms MANUAL_APPROVAL / other modes."""
+        if self.paper_unattended():
+            return True
+        return bool(self.auto_execute_force_close)
+
+    def effective_auto_execute_hard_stops(self) -> bool:
+        """PAPER_AUTOMATED always fires hard stops; the flag arms other modes."""
+        if self.paper_unattended():
+            return True
+        return bool(self.auto_execute_hard_stops)
 
     def scheduler_uses_fake_llm(self) -> bool:
         """Scheduled jobs use the stub only when cloud is configured without a key."""

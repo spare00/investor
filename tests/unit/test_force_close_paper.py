@@ -107,6 +107,45 @@ async def test_force_close_submits_paper_when_armed(
 
 
 @pytest.mark.asyncio
+async def test_force_close_submits_when_paper_automated_flag_off(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _armed_settings()
+    settings = settings.model_copy(update={"auto_execute_force_close": False})
+    broker = MockBroker(seed=11, starting_cash=50_000, allow_short=False)
+    broker.prices["QQQ"] = 400.0
+    broker.positions["QQQ"] = {
+        "symbol": "QQQ",
+        "qty": "10",
+        "avg_entry_price": "390",
+        "market_value": "4000",
+        "unrealized_pl": "100",
+        "side": "long",
+    }
+    session.add(
+        WatchlistSymbol(symbol="QQQ", horizon="day", status="active", priority=80, thesis="flatten")
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="QQQ",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=390,
+            current_price=400,
+            overnight_allowed=False,
+            exit_policy={},
+        )
+    )
+    await session.flush()
+    monkeypatch.setattr("app.brokers.factory.get_broker", lambda _s=None: broker)
+    monkeypatch.setattr("app.execution.order_manager.get_broker", lambda _s=None: broker)
+    closing = await ClosingService(session, settings=settings).run_closing()
+    assert closing["broker_orders_submitted"] is True
+    assert closing["orders_submitted"] >= 1
+
+
+@pytest.mark.asyncio
 async def test_force_close_intent_only_when_not_armed(session: AsyncSession) -> None:
     settings = Settings(
         app_env="test",
@@ -116,7 +155,7 @@ async def test_force_close_intent_only_when_not_armed(session: AsyncSession) -> 
         enable_automated_execution=True,
         require_manual_order_approval=False,
         auto_execute_force_close=False,
-        intraday_operation_mode="PAPER_AUTOMATED",
+        intraday_operation_mode="MANUAL_APPROVAL",
         default_closing_policy="CLOSE_INTRADAY_ONLY",
     )
     session.add(
@@ -252,7 +291,7 @@ async def test_closing_skips_duplicate_pending_close(session: AsyncSession) -> N
         enable_automated_execution=True,
         require_manual_order_approval=False,
         auto_execute_force_close=False,
-        intraday_operation_mode="PAPER_AUTOMATED",
+        intraday_operation_mode="MANUAL_APPROVAL",
         default_closing_policy="CLOSE_INTRADAY_ONLY",
     )
     session.add(
@@ -292,7 +331,7 @@ async def test_daily_start_closing_materializes_intents(session: AsyncSession) -
         enable_automated_execution=True,
         require_manual_order_approval=False,
         auto_execute_force_close=False,
-        intraday_operation_mode="PAPER_AUTOMATED",
+        intraday_operation_mode="MANUAL_APPROVAL",
         default_closing_policy="CLOSE_INTRADAY_ONLY",
         enable_scheduler=False,
     )
@@ -334,7 +373,7 @@ async def test_closing_scopes_to_venue_lifecycles(session: AsyncSession) -> None
         broker_environment="paper",
         enable_broker_orders=False,
         auto_execute_force_close=False,
-        intraday_operation_mode="PAPER_AUTOMATED",
+        intraday_operation_mode="MANUAL_APPROVAL",
         default_closing_policy="CLOSE_INTRADAY_ONLY",
         enabled_venues=["US", "AU"],
         primary_venue="US",

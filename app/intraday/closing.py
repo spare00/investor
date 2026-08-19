@@ -216,7 +216,7 @@ class ClosingService:
     def _should_auto_submit_force_close(self, caps: ModeCapabilities) -> bool:
         from app.execution.firm_execution import paper_auto_submit_allowed
 
-        if not self.settings.auto_execute_force_close:
+        if not self.settings.effective_auto_execute_force_close():
             return False
         if not caps.can_submit:
             return False

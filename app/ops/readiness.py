@@ -179,14 +179,14 @@ class GateEvaluator:
             ),
             ReadinessCheck(
                 name="hard_stops_armed_for_paper_auto",
-                passed=bool(cfg.auto_execute_hard_stops),
-                detail="AUTO_EXECUTE_HARD_STOPS=true required for unattended exits",
+                passed=bool(cfg.effective_auto_execute_hard_stops()),
+                detail="PAPER_AUTOMATED implies hard-stop submits (AUTO_EXECUTE_HARD_STOPS for other modes)",
                 required_for=ReadinessGate.PAPER_AUTOMATED_CANDIDATE,
             ),
             ReadinessCheck(
                 name="force_close_armed_for_paper_auto",
-                passed=bool(cfg.auto_execute_force_close),
-                detail="AUTO_EXECUTE_FORCE_CLOSE=true required for closing-window exits",
+                passed=bool(cfg.effective_auto_execute_force_close()),
+                detail="PAPER_AUTOMATED implies force-close submits (AUTO_EXECUTE_FORCE_CLOSE for other modes)",
                 required_for=ReadinessGate.PAPER_AUTOMATED_CANDIDATE,
             ),
             ReadinessCheck(

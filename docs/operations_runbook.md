@@ -10,9 +10,8 @@ Fail-closed defaults keep orders off. To run the 6-agent paper loop:
 2. Unlock paper submits: `ENABLE_BROKER_ORDERS=true`, `ENABLE_AUTOMATED_EXECUTION=true`, `REQUIRE_MANUAL_ORDER_APPROVAL=false`
 3. Scheduler: `ENABLE_SCHEDULER=true` (plans `intraday_eval_*`, `closing_window`, optional `universe_refresh`)
 4. Monitoring: `ENABLE_INTRADAY_MONITORING=true` (stop/TP ticks escalate to CIO on each eval)
-5. **Required** hard stops: `AUTO_EXECUTE_HARD_STOPS=true` — without this, stop hits only create pending intents
-6. **Required** force flatten: `AUTO_EXECUTE_FORCE_CLOSE=true` — without this, closing-window flatten stays pending
-7. Universe: `UNIVERSE_MODE=dynamic`, `UNIVERSE_MANAGER_ENABLED=true`
+5. Hard stops and closing-window flatten: `INTRADAY_OPERATION_MODE=PAPER_AUTOMATED` implies both. `AUTO_EXECUTE_HARD_STOPS` / `AUTO_EXECUTE_FORCE_CLOSE` only arm those exits in other modes (e.g. MANUAL_APPROVAL).
+6. Universe: `UNIVERSE_MODE=dynamic`, `UNIVERSE_MANAGER_ENABLED=true`
 
 ### Embedded local LLM (no OpenAI spend cap)
 
