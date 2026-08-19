@@ -122,17 +122,20 @@ async def test_postmarket_completes_when_a_step_times_out(
     assert "timeout:settlement" in str((post.get("review") or {}).get("settlement_error") or "")
 
 
-def _cio_row(ts: datetime, action: str = "HOLD"):
+def _cio_row(ts: datetime, action: str = "HOLD", *, venue: str | None = None):
     from app.models import CIODecisionRecord
 
     did = uuid4()
+    payload: dict = {"portfolio_action": action, "symbol_actions": []}
+    if venue:
+        payload["venue"] = venue
     return did, CIODecisionRecord(
         id=uuid4(),
         decision_id=did,
         decision_timestamp=ts,
         market_regime="neutral",
         portfolio_action=action,
-        payload={"portfolio_action": action, "symbol_actions": []},
+        payload=payload,
         risk_approval=True,
     )
 
@@ -169,6 +172,7 @@ async def test_evaluate_decisions_batch_skips_already_scored(session: AsyncSessi
         limit=10,
         persist=True,
         skip_evaluated=True,
+        venue="US",
     )
     eval_ids = {e["decision_id"] for e in out["evaluations"]}
     assert str(ids[0]) not in eval_ids
@@ -210,3 +214,75 @@ async def test_postmarket_eval_enqueues_next_chunk(
     assert second["eval"]["decisions_processed"] == 1
     assert second["eval"]["remaining_decisions"] == 0
     assert second["eval"]["next_job"] is None
+
+
+@pytest.mark.asyncio
+async def test_evaluate_decisions_batch_scopes_to_venue(session: AsyncSession) -> None:
+    from app.performance.service import PerformanceService
+
+    now = datetime.now(UTC)
+    us_id, us_row = _cio_row(now, venue="US")
+    au_id, au_row = _cio_row(now - timedelta(minutes=1), venue="AU")
+    session.add_all([us_row, au_row])
+    await session.flush()
+    perf = PerformanceService(session, settings=get_settings())
+    out = await perf.evaluate_decisions_batch(
+        now - timedelta(hours=1),
+        now + timedelta(hours=1),
+        limit=10,
+        persist=True,
+        skip_evaluated=True,
+        venue="AU",
+    )
+    eval_ids = {e["decision_id"] for e in out["evaluations"]}
+    assert str(au_id) in eval_ids
+    assert str(us_id) not in eval_ids
+    assert out["decisions_processed"] == 1
+    assert out["remaining_decisions"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_refresh_is_venue_scoped(session: AsyncSession) -> None:
+    from app.models import DecisionEvaluationRecord
+    from app.performance.service import PerformanceService
+
+    now = datetime.now(UTC)
+    us_id, us_row = _cio_row(now, venue="US")
+    au_id, au_row = _cio_row(now - timedelta(minutes=1), venue="AU")
+    session.add_all([us_row, au_row])
+    session.add_all(
+        [
+            DecisionEvaluationRecord(
+                id=uuid4(),
+                decision_id=us_id,
+                decision_type="cio",
+                action="HOLD",
+                decision_price=0,
+                evaluation_horizon="1d",
+                evaluated_at=now,
+                status="PENDING",
+                payload={"venue": "US"},
+            ),
+            DecisionEvaluationRecord(
+                id=uuid4(),
+                decision_id=au_id,
+                decision_type="cio",
+                action="HOLD",
+                decision_price=0,
+                evaluation_horizon="1d",
+                evaluated_at=now,
+                status="PENDING",
+                payload={"venue": "AU"},
+            ),
+        ]
+    )
+    await session.flush()
+    perf = PerformanceService(session, settings=get_settings())
+    deleted = await perf.refresh_pending_evaluations(
+        now - timedelta(hours=1), now + timedelta(hours=1), venue="AU"
+    )
+    assert deleted == 1
+    left = list((await session.execute(select(DecisionEvaluationRecord))).scalars().all())
+    assert len(left) == 1
+    assert left[0].decision_id == us_id
+    assert left[0].status == "PENDING"

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -462,22 +462,68 @@ class PerformanceService:
         by_horizon["_all"] = all_samples
         return by_horizon
 
-    async def evaluate_decisions_batch(
+    async def _workflow_venues(self, wf_ids: set[Any]) -> dict[Any, str]:
+        wf_venues: dict[Any, str] = {}
+        if not wf_ids:
+            return wf_venues
+        wf_rows = await self.session.execute(
+            select(DailyWorkflowRun.id, DailyWorkflowRun.metadata_json).where(
+                DailyWorkflowRun.id.in_(wf_ids)
+            )
+        )
+        for wf_id, meta in wf_rows.all():
+            raw = (meta or {}).get("venue")
+            if raw:
+                v = str(raw).upper()
+                if v in {"US", "AU"}:
+                    wf_venues[wf_id] = v
+        agent_rows = await self.session.execute(
+            select(AgentRun.workflow_id, AgentReport.payload)
+            .join(AgentReport, AgentReport.agent_run_id == AgentRun.id)
+            .where(AgentRun.workflow_id.in_(wf_ids))
+            .where(AgentRun.agent_name == "market_intelligence")
+        )
+        for wf_id, rep_payload in agent_rows.all():
+            if wf_id in wf_venues:
+                continue
+            book = (rep_payload or {}).get("trace", {}).get("book") or {}
+            raw = book.get("venue") if isinstance(book, dict) else None
+            if raw:
+                v = str(raw).upper()
+                if v in {"US", "AU"}:
+                    wf_venues[wf_id] = v
+        return wf_venues
+
+    def _cio_row_venue(
+        self,
+        *,
+        payload: dict[str, Any],
+        workflow_id: Any,
+        wf_venues: dict[Any, str],
+    ) -> str:
+        plans = list(payload.get("symbol_actions") or [])
+        plan_syms = [
+            str(p.get("symbol") or "").upper()
+            for p in plans
+            if isinstance(p, dict) and p.get("symbol")
+        ]
+        return _decision_book_venue(
+            payload=payload,
+            workflow_id=workflow_id,
+            wf_venues=wf_venues,
+            symbol=plan_syms[0] if plan_syms else None,
+            settings=self.settings,
+        )
+
+    async def _cio_eval_selection(
         self,
         period_start: datetime,
         period_end: datetime,
         *,
-        limit: int = 50,
-        persist: bool = False,
-        skip_evaluated: bool = False,
-    ) -> dict[str, Any]:
-        from app.models import WatchlistSymbol
-        from app.performance.price_lookup import (
-            DecisionPriceResolver,
-            evaluation_horizon_delta,
-            evaluation_horizon_label,
-        )
-
+        limit: int,
+        skip_evaluated: bool,
+        venue: str | None,
+    ) -> tuple[list[CIODecisionRecord], int]:
         window = [
             CIODecisionRecord.decision_timestamp >= period_start,
             CIODecisionRecord.decision_timestamp <= period_end,
@@ -487,18 +533,103 @@ class PerformanceService:
             .where(DecisionEvaluationRecord.decision_type == "cio")
             .where(DecisionEvaluationRecord.decision_id.is_not(None))
         )
-        q = select(CIODecisionRecord).where(*window)
-        if skip_evaluated:
-            q = q.where(CIODecisionRecord.decision_id.notin_(done))
-        remaining_q = select(func.count()).select_from(CIODecisionRecord).where(*window)
-        if skip_evaluated:
-            remaining_q = remaining_q.where(CIODecisionRecord.decision_id.notin_(done))
-        unevaluated = int(await self.session.scalar(remaining_q) or 0)
-        result = await self.session.execute(
-            q.order_by(desc(CIODecisionRecord.decision_timestamp)).limit(limit)
+        light = (
+            select(
+                CIODecisionRecord.decision_id,
+                CIODecisionRecord.workflow_id,
+                CIODecisionRecord.payload,
+            )
+            .where(*window)
+            .order_by(desc(CIODecisionRecord.decision_timestamp))
         )
-        rows = list(result.scalars().all())
-        remaining_after = max(0, unevaluated - len(rows))
+        if skip_evaluated:
+            light = light.where(CIODecisionRecord.decision_id.notin_(done))
+        candidates = list((await self.session.execute(light)).all())
+        want = str(venue or "").upper() or None
+        if want in {"US", "AU"}:
+            wf_venues = await self._workflow_venues(
+                {row.workflow_id for row in candidates if row.workflow_id}
+            )
+            matched_ids = [
+                row.decision_id
+                for row in candidates
+                if self._cio_row_venue(
+                    payload=dict(row.payload or {}),
+                    workflow_id=row.workflow_id,
+                    wf_venues=wf_venues,
+                )
+                == want
+            ]
+        else:
+            matched_ids = [row.decision_id for row in candidates]
+        remaining_after = max(0, len(matched_ids) - limit)
+        picked = matched_ids[:limit]
+        if not picked:
+            return [], remaining_after
+        fetched = list(
+            (
+                await self.session.execute(
+                    select(CIODecisionRecord).where(CIODecisionRecord.decision_id.in_(picked))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_id = {row.decision_id: row for row in fetched}
+        rows = [by_id[i] for i in picked if i in by_id]
+        return rows, remaining_after
+
+    async def refresh_pending_evaluations(
+        self,
+        period_start: datetime,
+        period_end: datetime,
+        *,
+        venue: str,
+    ) -> int:
+        """Drop PENDING scores for this venue's CIO rows so completed horizons retry."""
+        rows, _ = await self._cio_eval_selection(
+            period_start,
+            period_end,
+            limit=10_000,
+            skip_evaluated=False,
+            venue=venue,
+        )
+        ids = [row.decision_id for row in rows]
+        if not ids:
+            return 0
+        result = await self.session.execute(
+            delete(DecisionEvaluationRecord).where(
+                DecisionEvaluationRecord.decision_id.in_(ids),
+                DecisionEvaluationRecord.status == "PENDING",
+            )
+        )
+        await self.session.flush()
+        return int(result.rowcount or 0)
+
+    async def evaluate_decisions_batch(
+        self,
+        period_start: datetime,
+        period_end: datetime,
+        *,
+        limit: int = 50,
+        persist: bool = False,
+        skip_evaluated: bool = False,
+        venue: str | None = None,
+    ) -> dict[str, Any]:
+        from app.models import WatchlistSymbol
+        from app.performance.price_lookup import (
+            DecisionPriceResolver,
+            evaluation_horizon_delta,
+            evaluation_horizon_label,
+        )
+
+        rows, remaining_after = await self._cio_eval_selection(
+            period_start,
+            period_end,
+            limit=limit,
+            skip_evaluated=skip_evaluated,
+            venue=venue,
+        )
         if persist and rows:
             await self.session.execute(
                 delete(DecisionEvaluationRecord).where(
@@ -509,35 +640,9 @@ class PerformanceService:
                 )
             )
             await self.session.flush()
-        wf_ids = {row.workflow_id for row in rows if row.workflow_id}
-        wf_venues: dict[Any, str] = {}
-        if wf_ids:
-            wf_rows = await self.session.execute(
-                select(DailyWorkflowRun.id, DailyWorkflowRun.metadata_json).where(
-                    DailyWorkflowRun.id.in_(wf_ids)
-                )
-            )
-            for wf_id, meta in wf_rows.all():
-                raw = (meta or {}).get("venue")
-                if raw:
-                    v = str(raw).upper()
-                    if v in {"US", "AU"}:
-                        wf_venues[wf_id] = v
-            agent_rows = await self.session.execute(
-                select(AgentRun.workflow_id, AgentReport.payload)
-                .join(AgentReport, AgentReport.agent_run_id == AgentRun.id)
-                .where(AgentRun.workflow_id.in_(wf_ids))
-                .where(AgentRun.agent_name == "market_intelligence")
-            )
-            for wf_id, rep_payload in agent_rows.all():
-                if wf_id in wf_venues:
-                    continue
-                book = (rep_payload or {}).get("trace", {}).get("book") or {}
-                raw = book.get("venue") if isinstance(book, dict) else None
-                if raw:
-                    v = str(raw).upper()
-                    if v in {"US", "AU"}:
-                        wf_venues[wf_id] = v
+        wf_venues = await self._workflow_venues(
+            {row.workflow_id for row in rows if row.workflow_id}
+        )
         wl = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
         watchlist_hz = {r.symbol.upper(): str(r.horizon) for r in wl if r.symbol}
         resolver = DecisionPriceResolver(self.session)

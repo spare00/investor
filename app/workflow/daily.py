@@ -1318,24 +1318,15 @@ class DailyWorkflowService:
             end = start + timedelta(days=1)
 
             async def _chunk() -> dict[str, Any]:
-                from sqlalchemy import delete as sa_delete
-
-                from app.models import DecisionEvaluationRecord
-
                 perf = PerformanceService(self.session, settings=self.settings)
                 out: dict[str, Any] = {}
+                book = self.venue.value
                 if int(seq) == 0:
-                    # One PENDING refresh per session so completed horizons
-                    # get another look; later chunks skip already-touched ids.
-                    await self.session.execute(
-                        sa_delete(DecisionEvaluationRecord).where(
-                            DecisionEvaluationRecord.status == "PENDING",
-                            DecisionEvaluationRecord.decision_type.in_(
-                                ("cio", "cio_symbol")
-                            ),
-                        )
+                    # One PENDING refresh per venue so completed horizons
+                    # get another look; do not wipe the other book's queue.
+                    await perf.refresh_pending_evaluations(
+                        eval_start, eval_end, venue=book
                     )
-                    await self.session.flush()
                     perf_run = await perf.recalculate(start, end)
                     out["run_id"] = perf_run.get("run_id")
                 decisions = await perf.evaluate_decisions_batch(
@@ -1344,6 +1335,7 @@ class DailyWorkflowService:
                     limit=chunk,
                     persist=True,
                     skip_evaluated=True,
+                    venue=book,
                 )
                 out["decision_evaluations"] = int(decisions.get("count") or 0)
                 out["decisions_processed"] = int(decisions.get("decisions_processed") or 0)
