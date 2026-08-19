@@ -52,6 +52,7 @@ POSTMARKET_STEP_TIMEOUTS_SECONDS: dict[str, float] = {
     "overnight_review": 20.0,
     "settlement": 60.0,
     "posttrade": 20.0,
+    "force_close": 20.0,
     "performance": 60.0,
 }
 POSTMARKET_EVAL_CHUNK = 12
@@ -1275,6 +1276,25 @@ class DailyWorkflowService:
             review["posttrade_error"] = str(exc)[:240]
         except Exception as exc:  # noqa: BLE001
             review["posttrade_error"] = str(exc)[:240]
+
+        try:
+            from app.intraday.closing import ClosingService
+
+            async def _force_close_retry() -> dict[str, Any]:
+                return await ClosingService(
+                    self.session, settings=self.settings, venue=self.venue.value
+                ).run_closing(in_closing_window=False)
+
+            fc = await _await_postmarket_step("force_close", _force_close_retry())
+            review["force_close"] = {
+                "orders_submitted": int(fc.get("orders_submitted") or 0),
+                "intent_ids": list(fc.get("intent_ids") or []),
+                "notes": list(fc.get("notes") or [])[:12],
+            }
+        except TimeoutError as exc:
+            review["force_close_error"] = str(exc)[:240]
+        except Exception as exc:  # noqa: BLE001
+            review["force_close_error"] = str(exc)[:240]
 
         meta = dict(run.metadata_json or {})
         meta["postmarket_review"] = review

@@ -88,6 +88,7 @@ async def test_postmarket_runs_settlement(session: AsyncSession) -> None:
     review = post["review"]
     # Settlement may soft-fail without broker; either settlement or settlement_error is set.
     assert "settlement" in review or "settlement_error" in review
+    assert "force_close" in review or "force_close_error" in review
     queued = (review.get("decision_eval") or {}).get("queued")
     assert queued and queued.endswith(":postmarket_eval")
     jobs = await svc.planned_jobs("2026-08-03")
