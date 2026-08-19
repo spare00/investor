@@ -205,7 +205,7 @@ def test_validator_sell_requires_position() -> None:
     assert with_pos.intents[0].quantity == 10
 
 
-def test_validator_no_trade_ignores_symbol_exits() -> None:
+def test_validator_no_trade_still_honors_symbol_exits() -> None:
     decision = CIODecision(
         decision_id=uuid4(),
         timestamp=NOW,
@@ -217,7 +217,7 @@ def test_validator_no_trade_ignores_symbol_exits() -> None:
                 action=SymbolAction.SELL,
                 confidence=70,
                 target_position_pct=0,
-                thesis="should not submit under NO_TRADE",
+                thesis="flatten under NO_TRADE",
                 invalidation="n/a",
             )
         ],
@@ -239,6 +239,96 @@ def test_validator_no_trade_ignores_symbol_exits() -> None:
         ),
         latest_prices={"CORZ": 20},
         data_quality_score=0.9,
+    )
+    assert result.approved is True
+    assert len(result.intents) == 1
+    assert result.intents[0].symbol == "CORZ"
+    assert result.intents[0].side == "sell"
+
+
+def test_validator_hold_submits_partial_sell() -> None:
+    """Local CIO HOLDs the book while flattening a day-book name — still submit."""
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.HOLD,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="VAS",
+                action=SymbolAction.PARTIAL_SELL,
+                confidence=70,
+                target_position_pct=2,
+                thesis="Day trade trend exhaustion",
+                invalidation="n/a",
+            ),
+            SymbolActionPlan(
+                symbol="BHP",
+                action=SymbolAction.HOLD,
+                confidence=60,
+                target_position_pct=8,
+                thesis="hold",
+                invalidation="n/a",
+            ),
+        ],
+        cash_target_pct=70,
+        risk_approval=True,
+    )
+    result = ExecutionValidator(controls=TradingControls()).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=25_000,
+            cash=18_000,
+            cash_pct=72,
+            gross_exposure_pct=28,
+            positions=[
+                PositionRiskView(
+                    symbol="VAS", quantity=876, market_value=800, sector="ETF", weight_pct=4, venue="AU"
+                ),
+                PositionRiskView(
+                    symbol="BHP", quantity=1575, market_value=4000, sector="Materials", weight_pct=16, venue="AU"
+                ),
+            ],
+        ),
+        latest_prices={"VAS": 90, "BHP": 40},
+        data_quality_score=0.9,
+    )
+    assert result.approved is True
+    assert len(result.intents) == 1
+    assert result.intents[0].symbol == "VAS"
+    assert result.intents[0].side == "sell"
+    assert result.intents[0].order_type == "market"
+
+
+def test_validator_hold_skips_new_entries() -> None:
+    decision = CIODecision(
+        decision_id=uuid4(),
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.HOLD,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="QQQ",
+                action=SymbolAction.BUY,
+                confidence=70,
+                target_position_pct=5,
+                stop_loss=95,
+                thesis="should not enter under HOLD",
+                invalidation="break 95",
+                entry_zone=PriceZone(min=99, max=101),
+            )
+        ],
+        cash_target_pct=70,
+        risk_approval=True,
+    )
+    result = ExecutionValidator(controls=TradingControls()).validate(
+        decision,
+        portfolio=PortfolioRiskView(
+            equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0
+        ),
+        latest_prices={"QQQ": 100},
+        data_quality_score=0.9,
+        entry_universe={"QQQ"},
     )
     assert result.approved is True
     assert result.intents == []

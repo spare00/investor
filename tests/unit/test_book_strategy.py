@@ -26,6 +26,7 @@ from app.universe.book_strategy import (
     filter_strategy_horizons,
     horizon_for_symbol,
     playbook_for,
+    portfolio_action_from_symbol_actions,
     should_propose_entry,
     structure_allows_entry,
 )
@@ -189,3 +190,12 @@ def test_cio_fallback_ignores_other_venue_positions() -> None:
     out = CIOAgent().fallback_output(payload, reason="test")
     assert all(a.symbol != "BHP" for a in out.symbol_actions)
     assert any(a.symbol == "QQQ" for a in out.symbol_actions)
+
+
+def test_portfolio_action_promotes_hold_when_partial_sell() -> None:
+    assert (
+        portfolio_action_from_symbol_actions(
+            [{"action": "HOLD"}, {"action": "PARTIAL_SELL"}]
+        )
+        == PortfolioAction.REDUCE
+    )

@@ -61,3 +61,34 @@ def test_enrich_session_jobs_includes_premarket_in_session_seq() -> None:
     assert intra["session_seq"] == 2
     assert intra["intraday_seq"] == 1
     assert intra["display_name"] == "Intraday eval #1"
+
+
+def test_enrich_session_jobs_postmarket_eval_label() -> None:
+    rows = enrich_session_jobs(
+        [
+            {
+                "job_key": "AU:postmarket_review",
+                "venue": "AU",
+                "planned_at": "2026-08-19T06:30:00+00:00",
+                "status": "completed",
+            },
+            {
+                "job_key": "AU:postmarket_eval_0",
+                "venue": "AU",
+                "planned_at": "2026-08-19T06:31:00+00:00",
+                "status": "completed",
+            },
+            {
+                "job_key": "AU:postmarket_eval_1",
+                "venue": "AU",
+                "planned_at": "2026-08-19T06:32:00+00:00",
+                "status": "planned",
+            },
+        ]
+    )
+    by_key = {r["job_key"]: r for r in rows}
+    assert by_key["AU:postmarket_review"]["display_name"] == "Postmarket review"
+    assert by_key["AU:postmarket_eval_0"]["display_name"] == "Postmarket eval #1"
+    assert by_key["AU:postmarket_eval_1"]["display_name"] == "Postmarket eval #2"
+    assert by_key["AU:postmarket_eval_1"]["plan_index"] == 1
+    assert by_key["AU:postmarket_eval_1"]["job_type"] == "postmarket_eval"

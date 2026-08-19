@@ -393,7 +393,8 @@ def cio_brief(payload: CIOInput) -> str:
         ),
     }
     return _ask(
-        "Decide per book. 초단타/단타/단기 each follow their playbook — never one strategy for all. Ignore medium. One portfolio_action. Review every open position in THIS book's allowlist. New buys only from allowlist if risk_approval.",
+        "Decide per book. 초단타/단타/단기 follow their own playbook. Ignore medium. "
+        "HOLD/NO_TRADE = no new buys; SELL/PARTIAL_SELL/REDUCE still flatten.",
         data,
         "CIODecision. HONOR hard vetoes. Entries need numeric stop_loss. thesis/invalidation <=80 chars.",
     )

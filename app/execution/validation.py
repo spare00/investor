@@ -20,6 +20,11 @@ ENTRY_ACTIONS = {
     SymbolAction.HEDGE,
 }
 
+ANALYSIS_ONLY_PORTFOLIO = {
+    PortfolioAction.NO_TRADE,
+    PortfolioAction.HOLD,
+}
+
 RISK_INCREASING_PORTFOLIO = {
     PortfolioAction.STRONG_BUY,
     PortfolioAction.BUY,
@@ -102,13 +107,11 @@ class ExecutionValidator:
                 rejections=["cio_risk_approval_false"],
             )
 
-        if decision.portfolio_action in {
-            PortfolioAction.NO_TRADE,
-            PortfolioAction.HOLD,
-        }:
-            # Portfolio-level hold / no-trade means no broker submits, even if
-            # symbol_actions contain review notes.
-            return ExecutionValidationResult(approved=True, intents=[], rejections=[])
+        # HOLD / NO_TRADE means no new risk. Per-symbol SELL / REDUCE / PARTIAL_SELL
+        # still execute — local CIO often HOLDs the book while flattening 단타.
+        skip_entries = (
+            block_new_entries or decision.portfolio_action in ANALYSIS_ONLY_PORTFOLIO
+        )
 
         if decision.portfolio_action == PortfolioAction.STAY_CASH and not decision.symbol_actions:
             return ExecutionValidationResult(approved=True, intents=[], rejections=[])
@@ -147,7 +150,7 @@ class ExecutionValidator:
                 allowlist=plan_allowlist,
                 horizon_by_symbol=horizons,
                 held_symbols=held_syms,
-                block_new_entries=block_new_entries,
+                block_new_entries=skip_entries,
                 venue=plan_venue,
             )
             if result is None:

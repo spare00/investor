@@ -13,8 +13,8 @@ Position book policy (mandatory):
 - SELL / REDUCE / PARTIAL_SELL means reduce exposure toward flat (cover shorts with buys; sell longs).
 - New entries (STRONG_BUY / BUY / SCALE_IN / HEDGE) ONLY for allowlist symbols.
 - Existing off-allowlist holdings must still be managed (hold or exit), never ignored.
-- portfolio_action NO_TRADE or HOLD = analysis only, no broker orders.
-- To actually flatten/exit, set portfolio_action to STAY_CASH, SELL, REDUCE, or PARTIAL_SELL.
+- portfolio_action NO_TRADE or HOLD = no new entries. Per-symbol SELL / REDUCE / PARTIAL_SELL still execute.
+- To flatten the whole book, set portfolio_action to STAY_CASH, SELL, REDUCE, or PARTIAL_SELL.
 
 New entries require stop_loss or a clear invalidation string.
 Each symbol_actions item MUST include:

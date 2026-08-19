@@ -7,6 +7,7 @@ ops brake, not the firm identity.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -41,6 +42,29 @@ logger = get_logger(__name__)
 
 class DailyWorkflowError(Exception):
     pass
+
+
+# Postmarket is settlement + bookkeeping, not a committee call. Bound each
+# step so a wedged IBKR/perf scan cannot eat the 8-minute job cap and leave
+# the session stuck in POSTMARKET_REVIEW. Decision eval is split across
+# follow-up postmarket_eval_* jobs — no practical count cap, just time slices.
+POSTMARKET_STEP_TIMEOUTS_SECONDS: dict[str, float] = {
+    "overnight_review": 20.0,
+    "settlement": 60.0,
+    "posttrade": 20.0,
+    "performance": 60.0,
+}
+POSTMARKET_EVAL_CHUNK = 12
+POSTMARKET_EVAL_MAX_SEQ = 200
+
+
+async def _await_postmarket_step(name: str, coro: Any) -> Any:
+    timeout = float(POSTMARKET_STEP_TIMEOUTS_SECONDS.get(name) or 30.0)
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout)
+    except TimeoutError:
+        logger.error("postmarket_step_timeout", step=name, timeout_s=timeout)
+        raise TimeoutError(f"timeout:{name}:{int(timeout)}s") from None
 
 
 class DailyWorkflowService:
@@ -1137,36 +1161,53 @@ class DailyWorkflowService:
         }
 
         # Settlement + light performance eval (fail-soft; never block session complete).
-        try:
-            from datetime import date as date_cls
+        # Each step is time-bounded so IBKR/perf cannot pin the scheduler job.
+        prior_overnight = ((run.metadata_json or {}).get("closing") or {}).get(
+            "overnight_review"
+        )
+        if isinstance(prior_overnight, dict) and prior_overnight.get("reviews") is not None:
+            review["overnight_review"] = prior_overnight
+            review["overnight_review_reused"] = True
+        else:
+            try:
+                from datetime import date as date_cls
 
-            from app.alerts.ops import emit_overnight_review_alert
-            from app.intraday.closing import ClosingService
+                from app.alerts.ops import emit_overnight_review_alert
+                from app.intraday.closing import ClosingService
 
-            session_day = date_cls.fromisoformat(run.session_date)
-            holiday_gap = self.calendar.next_session_has_holiday_gap(
-                session_day
-            )
-            overnight = await ClosingService(
-                self.session, settings=self.settings, venue=self.venue.value
-            ).overnight_review(next_session_holiday=holiday_gap)
-            overnight["next_session_holiday"] = holiday_gap
-            review["overnight_review"] = overnight
-            await emit_overnight_review_alert(
-                self.session,
-                self.settings,
-                reviews=list(overnight.get("reviews") or []),
-                session_date=run.session_date,
-            )
-        except Exception as exc:  # noqa: BLE001
-            review["overnight_review_error"] = str(exc)[:240]
+                session_day = date_cls.fromisoformat(run.session_date)
+                holiday_gap = self.calendar.next_session_has_holiday_gap(session_day)
+
+                async def _overnight() -> dict[str, Any]:
+                    overnight = await ClosingService(
+                        self.session, settings=self.settings, venue=self.venue.value
+                    ).overnight_review(next_session_holiday=holiday_gap)
+                    overnight["next_session_holiday"] = holiday_gap
+                    await emit_overnight_review_alert(
+                        self.session,
+                        self.settings,
+                        reviews=list(overnight.get("reviews") or []),
+                        session_date=run.session_date,
+                    )
+                    return overnight
+
+                review["overnight_review"] = await _await_postmarket_step(
+                    "overnight_review", _overnight()
+                )
+            except TimeoutError as exc:
+                review["overnight_review_error"] = str(exc)[:240]
+            except Exception as exc:  # noqa: BLE001
+                review["overnight_review_error"] = str(exc)[:240]
 
         try:
             from app.intraday.settlement import SettlementService
 
-            settlement = await SettlementService(
-                self.session, settings=self.settings, venue=self.venue.value
-            ).settle(session_date=run.session_date, venue=self.venue.value)
+            settlement = await _await_postmarket_step(
+                "settlement",
+                SettlementService(
+                    self.session, settings=self.settings, venue=self.venue.value
+                ).settle(session_date=run.session_date, venue=self.venue.value),
+            )
             review["settlement"] = {
                 "id": settlement.get("settlement_id"),
                 "overnight_positions": settlement.get("overnight_positions") or [],
@@ -1175,6 +1216,8 @@ class DailyWorkflowService:
                 if isinstance(settlement.get("reconciliation"), dict)
                 else settlement.get("reconciliation"),
             }
+        except TimeoutError as exc:
+            review["settlement_error"] = str(exc)[:240]
         except Exception as exc:  # noqa: BLE001
             review["settlement_error"] = str(exc)[:240]
 
@@ -1184,56 +1227,46 @@ class DailyWorkflowService:
             from app.intraday.posttrade import PostTradeReviewService
             from app.models import PositionLifecycle
 
-            closed = list(
-                (
-                    await self.session.execute(
-                        sa_select(PositionLifecycle).where(
-                            PositionLifecycle.status.in_(["CLOSED", "PENDING_CLOSE"]),
-                            PositionLifecycle.venue == self.venue.value,
+            day_start = datetime.fromisoformat(run.session_date).replace(tzinfo=UTC)
+            day_end = day_start + timedelta(days=1)
+
+            async def _posttrade() -> list[str]:
+                closed = list(
+                    (
+                        await self.session.execute(
+                            sa_select(PositionLifecycle).where(
+                                PositionLifecycle.status.in_(["CLOSED", "PENDING_CLOSE"]),
+                                PositionLifecycle.venue == self.venue.value,
+                                PositionLifecycle.updated_at >= day_start,
+                                PositionLifecycle.updated_at < day_end,
+                            )
                         )
                     )
+                    .scalars()
+                    .all()
                 )
-                .scalars()
-                .all()
+                ptr = PostTradeReviewService(self.session)
+                review_ids: list[str] = []
+                for lc in closed[:20]:
+                    out = await ptr.create_review(
+                        position_lifecycle_id=lc.id,
+                        decision_id=lc.decision_id,
+                        symbol=lc.symbol,
+                        outcome="closed" if lc.status == "CLOSED" else "pending_close",
+                        exit_reason="postmarket_review",
+                        pnl=float(lc.realized_pl or lc.unrealized_pl or 0),
+                    )
+                    if out.get("review_id"):
+                        review_ids.append(str(out["review_id"]))
+                return review_ids
+
+            review["posttrade_review_ids"] = await _await_postmarket_step(
+                "posttrade", _posttrade()
             )
-            ptr = PostTradeReviewService(self.session)
-            review_ids: list[str] = []
-            for lc in closed[:20]:
-                out = await ptr.create_review(
-                    position_lifecycle_id=lc.id,
-                    decision_id=lc.decision_id,
-                    symbol=lc.symbol,
-                    outcome="closed" if lc.status == "CLOSED" else "pending_close",
-                    exit_reason="postmarket_review",
-                    pnl=float(lc.realized_pl or lc.unrealized_pl or 0),
-                )
-                if out.get("review_id"):
-                    review_ids.append(str(out["review_id"]))
-            review["posttrade_review_ids"] = review_ids
+        except TimeoutError as exc:
+            review["posttrade_error"] = str(exc)[:240]
         except Exception as exc:  # noqa: BLE001
             review["posttrade_error"] = str(exc)[:240]
-
-        try:
-            from datetime import date as date_cls
-
-            from app.performance.service import PerformanceService
-
-            day = date_cls.fromisoformat(run.session_date)
-            start = datetime(day.year, day.month, day.day, tzinfo=UTC)
-            end = start + timedelta(days=1)
-            lookback = max(1, int(self.settings.decision_eval_lookback_days or 90))
-            eval_end = datetime.now(UTC)
-            eval_start = eval_end - timedelta(days=lookback)
-            perf = PerformanceService(self.session, settings=self.settings)
-            perf_run = await perf.recalculate(start, end)
-            decisions = await perf.evaluate_decisions_batch(eval_start, eval_end, persist=True)
-            review["performance"] = {
-                "run_id": perf_run.get("run_id"),
-                "decision_evaluations": decisions.get("count", 0),
-                "decision_eval_lookback_days": lookback,
-            }
-        except Exception as exc:  # noqa: BLE001
-            review["performance_error"] = str(exc)[:240]
 
         meta = dict(run.metadata_json or {})
         meta["postmarket_review"] = review
@@ -1243,8 +1276,154 @@ class DailyWorkflowService:
         )
         run.status = WorkflowRunStatus.COMPLETED.value
         run.completed_at = now
+        queued = await self._enqueue_postmarket_eval(run, 0, planned_at=now)
+        review["decision_eval"] = {
+            "queued": queued,
+            "chunk": POSTMARKET_EVAL_CHUNK,
+        }
+        meta = dict(run.metadata_json or {})
+        meta["postmarket_review"] = review
+        run.metadata_json = meta
         await self.session.flush()
         return {**self._run_dict(run), "review": review}
+
+    async def run_postmarket_eval(
+        self,
+        *,
+        session_date: str | None = None,
+        seq: int = 0,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Score the next unevaluated CIO slice; enqueue another job if any remain."""
+        now = now or datetime.now(UTC)
+        run = await self._require_run(session_date)
+        self._assert_not_blocked(run)
+        lookback = max(1, int(self.settings.decision_eval_lookback_days or 90))
+        eval_end = now
+        eval_start = eval_end - timedelta(days=lookback)
+        chunk = POSTMARKET_EVAL_CHUNK
+        payload: dict[str, Any] = {
+            "seq": seq,
+            "chunk": chunk,
+            "decision_eval_lookback_days": lookback,
+        }
+        timed_out = False
+        try:
+            from datetime import date as date_cls
+
+            from app.performance.service import PerformanceService
+
+            day = date_cls.fromisoformat(run.session_date)
+            start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+            end = start + timedelta(days=1)
+
+            async def _chunk() -> dict[str, Any]:
+                from sqlalchemy import delete as sa_delete
+
+                from app.models import DecisionEvaluationRecord
+
+                perf = PerformanceService(self.session, settings=self.settings)
+                out: dict[str, Any] = {}
+                if int(seq) == 0:
+                    # One PENDING refresh per session so completed horizons
+                    # get another look; later chunks skip already-touched ids.
+                    await self.session.execute(
+                        sa_delete(DecisionEvaluationRecord).where(
+                            DecisionEvaluationRecord.status == "PENDING",
+                            DecisionEvaluationRecord.decision_type.in_(
+                                ("cio", "cio_symbol")
+                            ),
+                        )
+                    )
+                    await self.session.flush()
+                    perf_run = await perf.recalculate(start, end)
+                    out["run_id"] = perf_run.get("run_id")
+                decisions = await perf.evaluate_decisions_batch(
+                    eval_start,
+                    eval_end,
+                    limit=chunk,
+                    persist=True,
+                    skip_evaluated=True,
+                )
+                out["decision_evaluations"] = int(decisions.get("count") or 0)
+                out["decisions_processed"] = int(decisions.get("decisions_processed") or 0)
+                out["remaining_decisions"] = int(decisions.get("remaining_decisions") or 0)
+                return out
+
+            payload.update(await _await_postmarket_step("performance", _chunk()))
+        except TimeoutError as exc:
+            timed_out = True
+            payload["error"] = str(exc)[:240]
+        except Exception as exc:  # noqa: BLE001
+            payload["error"] = str(exc)[:240]
+
+        processed = int(payload.get("decisions_processed") or 0)
+        remaining = int(payload.get("remaining_decisions") or 0)
+        if remaining > 0 and (processed > 0 or timed_out):
+            payload["next_job"] = await self._enqueue_postmarket_eval(
+                run, int(seq) + 1, planned_at=now
+            )
+        else:
+            payload["next_job"] = None
+            if remaining > 0 and processed == 0:
+                logger.warning(
+                    "postmarket_eval_stalled",
+                    seq=seq,
+                    remaining=remaining,
+                    error=payload.get("error"),
+                )
+
+        meta = dict(run.metadata_json or {})
+        history = list(meta.get("postmarket_evals") or [])
+        history.append({k: v for k, v in payload.items() if k != "evaluations"})
+        meta["postmarket_evals"] = history[-20:]
+        meta["postmarket_eval"] = payload
+        run.metadata_json = meta
+        await self.session.flush()
+        return {**self._run_dict(run), "eval": payload}
+
+    async def _enqueue_postmarket_eval(
+        self,
+        run: DailyWorkflowRun,
+        seq: int,
+        *,
+        planned_at: datetime | None = None,
+    ) -> str | None:
+        if seq > POSTMARKET_EVAL_MAX_SEQ:
+            logger.warning(
+                "postmarket_eval_seq_cap",
+                seq=seq,
+                cap=POSTMARKET_EVAL_MAX_SEQ,
+                session_date=run.session_date,
+            )
+            return None
+        key = self._jk(f"postmarket_eval_{seq}")
+        existing = (
+            await self.session.execute(
+                select(ScheduledJobRecord).where(
+                    ScheduledJobRecord.job_key == key,
+                    ScheduledJobRecord.session_date == run.session_date,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            return key
+        when = planned_at or datetime.now(UTC)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        self.session.add(
+            ScheduledJobRecord(
+                id=uuid4(),
+                job_key=key,
+                session_date=run.session_date,
+                planned_at=when.astimezone(UTC),
+                status="planned",
+                workflow_run_id=run.id,
+                metadata_json={"kind": "postmarket_eval", "seq": seq},
+            )
+        )
+        await self.session.flush()
+        return key
 
     async def list_transitions(self, workflow_run_id: Any) -> list[dict[str, Any]]:
         rows = list(

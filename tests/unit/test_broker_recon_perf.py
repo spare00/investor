@@ -83,3 +83,87 @@ async def test_recon_shared_book_avoids_refetch(session: AsyncSession) -> None:
     result = await svc.run("SCHEDULED", book=book)
     assert result["book"] is book
     assert result["result"] in {"IN_SYNC", "MATERIAL_DRIFT", "MINOR_DRIFT"}
+
+
+@pytest.mark.asyncio
+async def test_recon_adopts_remote_only_order(session: AsyncSession) -> None:
+    from datetime import UTC, datetime
+
+    from app.brokers.base import OrderResult, OrderStatus
+
+    settings = Settings(app_env="test", broker_provider="mock", enable_broker_connection=True)
+    broker = MockBroker(starting_cash=25_000)
+    broker.orders["46"] = OrderResult(
+        broker_order_id="46",
+        status=OrderStatus.ACCEPTED,
+        submitted_at=datetime.now(UTC),
+        raw={"symbol": "VAS", "side": "sell", "qty": 400, "order_type": "market"},
+    )
+    svc = ReconciliationService(session, settings=settings)
+    svc.broker = broker
+    result = await svc.run("ON_DEMAND")
+    assert result["adopted_orders"] == 1
+    assert result["result"] == "IN_SYNC"
+    assert result["blocks_new_orders"] is False
+    row = (await session.execute(select(Order).where(Order.broker_order_id == "46"))).scalar_one()
+    assert row.symbol == "VAS"
+    assert row.side == "sell"
+    assert row.raw_payload.get("adopted") is True
+    again = await svc.run("ON_DEMAND")
+    assert again["adopted_orders"] == 0
+    assert again["result"] == "IN_SYNC"
+
+
+@pytest.mark.asyncio
+async def test_recon_empty_remote_book_is_not_material(session: AsyncSession) -> None:
+    settings = Settings(app_env="test", broker_provider="mock", enable_broker_connection=True)
+    session.add(
+        Order(
+            id=uuid4(),
+            symbol="VAS",
+            side="sell",
+            qty=400,
+            order_type="market",
+            status="ACCEPTED",
+            broker_order_id="42",
+            idempotency_key=f"local-{uuid4()}",
+        )
+    )
+    await session.flush()
+    svc = ReconciliationService(session, settings=settings)
+    svc.broker = MockBroker(starting_cash=25_000)
+    book = BrokerBook(orders=[], positions=[], account={"cash": 1})
+    result = await svc.run("ON_DEMAND", book=book)
+    assert result["result"] == "MINOR_DRIFT"
+    assert result["blocks_new_orders"] is False
+    assert result["issues"][0]["type"] == "empty_remote_open_orders"
+
+
+@pytest.mark.asyncio
+async def test_reap_stale_running_jobs(session: AsyncSession) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.core.scheduler import _reap_stale_running_jobs
+    from app.models import ScheduledJobRecord
+
+    settings = Settings(app_env="test", job_action_timeout_seconds_local=60, llm_runtime="local")
+    now = datetime.now(UTC)
+    session.add(
+        ScheduledJobRecord(
+            job_key="AU:intraday_eval_5",
+            session_date="2026-08-19",
+            planned_at=now - timedelta(hours=2),
+            started_at=now - timedelta(hours=1),
+            status="running",
+        )
+    )
+    await session.flush()
+    n = await _reap_stale_running_jobs(session, settings, now)
+    assert n == 1
+    row = (
+        await session.execute(
+            select(ScheduledJobRecord).where(ScheduledJobRecord.job_key == "AU:intraday_eval_5")
+        )
+    ).scalar_one()
+    assert row.status == "failed"
+    assert row.error and row.error.startswith("stale_running_reaped")

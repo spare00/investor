@@ -69,12 +69,24 @@ def _parse_session_job_key(job_key: str) -> dict[str, Any]:
         except ValueError:
             plan_index = None
         return {"venue": venue, "job_type": "intraday_eval", "plan_index": plan_index}
+    if rest.startswith("postmarket_eval_"):
+        try:
+            plan_index = int(rest.rsplit("_", 1)[-1])
+        except ValueError:
+            plan_index = None
+        return {"venue": venue, "job_type": "postmarket_eval", "plan_index": plan_index}
     return {"venue": venue, "job_type": rest, "plan_index": None}
 
 
-def _session_job_display_name(job_type: str, *, intraday_seq: int | None) -> str:
+def _session_job_display_name(
+    job_type: str, *, intraday_seq: int | None, plan_index: int | None = None
+) -> str:
     if job_type == "intraday_eval" and intraday_seq is not None:
         return f"Intraday eval #{intraday_seq}"
+    if job_type == "postmarket_eval":
+        if plan_index is not None:
+            return f"Postmarket eval #{plan_index + 1}"
+        return "Postmarket eval"
     labels = {
         "premarket_analysis": "Premarket analysis",
         "closing_window": "Closing window",
@@ -112,7 +124,7 @@ def enrich_session_jobs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "job_type": job_type,
                     "plan_index": parsed["plan_index"],
                     "display_name": _session_job_display_name(
-                        job_type, intraday_seq=intra_seq
+                        job_type, intraday_seq=intra_seq, plan_index=parsed["plan_index"]
                     ),
                     "duration_s": job_duration_seconds(row),
                 }
@@ -459,6 +471,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 "last_monitor": meta.get("last_monitor"),
                 "last_news_ingest": meta.get("last_news_ingest"),
                 "postmarket_review": meta.get("postmarket_review"),
+                "postmarket_eval": meta.get("postmarket_eval"),
             }
             workflows_by_venue[venue.value] = summary
             jrows = list(
@@ -467,7 +480,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                         select(ScheduledJobRecord)
                         .where(ScheduledJobRecord.session_date == run.session_date)
                         .order_by(ScheduledJobRecord.planned_at)
-                        .limit(120)
+                        .limit(300)
                     )
                 )
                 .scalars()

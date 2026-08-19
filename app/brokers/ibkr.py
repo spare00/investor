@@ -228,6 +228,11 @@ class IbkrBroker:
         order_id = status.orderId or getattr(trade.order, "orderId", 0) or 0
         perm_id = getattr(status, "permId", None) or getattr(trade.order, "permId", None)
         broker_id = str(perm_id or order_id)
+        order = getattr(trade, "order", None)
+        contract = getattr(trade, "contract", None)
+        action = str(getattr(order, "action", "") or "BUY")
+        qty = float(getattr(order, "totalQuantity", 0) or 0)
+        otype = str(getattr(order, "orderType", "") or "MKT")
         raw = {
             "order_id": order_id,
             "perm_id": perm_id,
@@ -236,8 +241,11 @@ class IbkrBroker:
             "remaining": float(status.remaining or 0),
             "avg_fill_price": avg,
             "why_held": getattr(status, "whyHeld", "") or "",
-            "order_ref": getattr(trade.order, "orderRef", "") or "",
-            "symbol": getattr(getattr(trade, "contract", None), "symbol", None),
+            "order_ref": getattr(order, "orderRef", "") or "",
+            "symbol": getattr(contract, "symbol", None),
+            "side": "buy" if action.upper() == "BUY" else "sell",
+            "qty": qty,
+            "order_type": otype.lower(),
         }
         return OrderResult(
             broker_order_id=broker_id,
@@ -344,11 +352,17 @@ class IbkrBroker:
     async def get_open_orders(self) -> list[OrderResult]:
         ib = await self._ensure_connected()
         try:
-            await self._ib_wait(ib.reqOpenOrdersAsync(), label="reqOpenOrders")
+            # All clients (TWS + this API) so leftover working orders are visible.
+            await self._ib_wait(ib.reqAllOpenOrdersAsync(), label="reqAllOpenOrders")
         except BrokerError:
             raise
         except Exception:  # noqa: BLE001
-            pass
+            try:
+                await self._ib_wait(ib.reqOpenOrdersAsync(), label="reqOpenOrders")
+            except BrokerError:
+                raise
+            except Exception:  # noqa: BLE001
+                pass
         await asyncio.sleep(0.2)
         return [self._trade_to_result(t) for t in ib.openTrades()]
 

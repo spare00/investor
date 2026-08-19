@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import desc, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -469,6 +469,7 @@ class PerformanceService:
         *,
         limit: int = 50,
         persist: bool = False,
+        skip_evaluated: bool = False,
     ) -> dict[str, Any]:
         from app.models import WatchlistSymbol
         from app.performance.price_lookup import (
@@ -477,14 +478,37 @@ class PerformanceService:
             evaluation_horizon_label,
         )
 
+        window = [
+            CIODecisionRecord.decision_timestamp >= period_start,
+            CIODecisionRecord.decision_timestamp <= period_end,
+        ]
+        done = (
+            select(DecisionEvaluationRecord.decision_id)
+            .where(DecisionEvaluationRecord.decision_type == "cio")
+            .where(DecisionEvaluationRecord.decision_id.is_not(None))
+        )
+        q = select(CIODecisionRecord).where(*window)
+        if skip_evaluated:
+            q = q.where(CIODecisionRecord.decision_id.notin_(done))
+        remaining_q = select(func.count()).select_from(CIODecisionRecord).where(*window)
+        if skip_evaluated:
+            remaining_q = remaining_q.where(CIODecisionRecord.decision_id.notin_(done))
+        unevaluated = int(await self.session.scalar(remaining_q) or 0)
         result = await self.session.execute(
-            select(CIODecisionRecord)
-            .where(CIODecisionRecord.decision_timestamp >= period_start)
-            .where(CIODecisionRecord.decision_timestamp <= period_end)
-            .order_by(desc(CIODecisionRecord.decision_timestamp))
-            .limit(limit)
+            q.order_by(desc(CIODecisionRecord.decision_timestamp)).limit(limit)
         )
         rows = list(result.scalars().all())
+        remaining_after = max(0, unevaluated - len(rows))
+        if persist and rows:
+            await self.session.execute(
+                delete(DecisionEvaluationRecord).where(
+                    DecisionEvaluationRecord.decision_id.in_(
+                        [row.decision_id for row in rows]
+                    ),
+                    DecisionEvaluationRecord.status == "PENDING",
+                )
+            )
+            await self.session.flush()
         wf_ids = {row.workflow_id for row in rows if row.workflow_id}
         wf_venues: dict[Any, str] = {}
         if wf_ids:
@@ -757,12 +781,14 @@ class PerformanceService:
                         status=port_status,
                     )
                 )
-        if persist:
-            await self.session.flush()
+            if persist:
+                await self.session.flush()
         evaluations.sort(key=lambda e: str(e.get("evaluated_at") or ""), reverse=True)
         summary = summarize_decision_evaluations(evaluations)
         return {
             "count": len(evaluations),
+            "decisions_processed": len(rows),
+            "remaining_decisions": remaining_after,
             "evaluations": evaluations,
             "summary": summary,
             "price_resolution": {

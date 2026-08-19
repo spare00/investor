@@ -69,6 +69,14 @@ def test_local_does_not_block_when_cloud_budget_exhausted(tmp_path) -> None:
     snap = snapshot_llm_budget(settings)
     assert snap.blocked is False
     assert snap.enforce is False
+    assert snap.billable is False
+    assert snap.runtime == "local"
+    assert snap.month_aud_estimate == 0
+    assert snap.token_budget == 0
+    assert snap.call_budget == 0
+    payload = snap.to_dict()
+    assert payload["display_pct"] == 0
+    assert payload["month_aud_estimate"] == 0
 
 
 def test_local_job_timeout_and_fake_llm_flag() -> None:

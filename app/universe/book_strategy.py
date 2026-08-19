@@ -336,7 +336,12 @@ def symbol_action_for_exit(decision: BookExit) -> SymbolAction:
 def portfolio_action_from_symbol_actions(
     actions: Iterable[Any],
 ) -> PortfolioAction:
-    kinds = {getattr(a, "action", a) for a in actions}
+    def _kind(item: Any) -> Any:
+        if isinstance(item, dict):
+            return item.get("action", item)
+        return getattr(item, "action", item)
+
+    kinds = {_kind(a) for a in actions}
     values = {
         (k.value if hasattr(k, "value") else str(k)) for k in kinds
     }

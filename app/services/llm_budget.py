@@ -132,16 +132,19 @@ class LLMBudgetSnapshot:
     daily_aud_budget: float = 0.0
     daily_budget_derived: bool = False
     trading_days_per_month: int = 21
+    billable: bool = True
+    runtime: str = "cloud"
 
     def to_dict(self) -> dict[str, Any]:
         daily_pct = 0.0
-        if self.token_budget > 0:
-            daily_pct = max(daily_pct, self.total_tokens / self.token_budget)
-        if self.call_budget > 0:
-            daily_pct = max(daily_pct, self.calls / self.call_budget)
         month_pct = 0.0
-        if self.month_aud_budget > 0:
-            month_pct = self.month_aud_estimate / self.month_aud_budget
+        if self.billable:
+            if self.token_budget > 0:
+                daily_pct = max(daily_pct, self.total_tokens / self.token_budget)
+            if self.call_budget > 0:
+                daily_pct = max(daily_pct, self.calls / self.call_budget)
+            if self.month_aud_budget > 0:
+                month_pct = self.month_aud_estimate / self.month_aud_budget
         return {
             "day": self.day,
             "month": self.month,
@@ -177,6 +180,8 @@ class LLMBudgetSnapshot:
             "daily_pct": round(daily_pct, 4),
             "month_pct": round(month_pct, 4),
             "display_pct": round(max(daily_pct, month_pct), 4),
+            "billable": self.billable,
+            "runtime": self.runtime,
         }
 
 
@@ -367,12 +372,26 @@ def snapshot_llm_budget(settings: Settings | None = None) -> LLMBudgetSnapshot:
         total = _prompt_tokens + _completion_tokens
         month_total = _month_prompt_tokens + _month_completion_tokens
         daily = resolve_daily_llm_budgets(cfg)
-        token_budget = daily.token_budget
-        call_budget = daily.call_budget
-        month_aud_budget = max(0.0, float(cfg.llm_monthly_aud_budget))
-        month_usd = estimate_usd_cost(_month_prompt_tokens, _month_completion_tokens, cfg)
-        month_aud = month_usd * float(cfg.llm_aud_per_usd)
-        enforce = bool(cfg.llm_spend_budget_applies())
+        billable = bool(cfg.llm_spend_budget_applies())
+        runtime = "local" if cfg.llm_is_local() else "cloud"
+        if billable:
+            token_budget = daily.token_budget
+            call_budget = daily.call_budget
+            month_aud_budget = max(0.0, float(cfg.llm_monthly_aud_budget))
+            month_usd = estimate_usd_cost(_month_prompt_tokens, _month_completion_tokens, cfg)
+            month_aud = month_usd * float(cfg.llm_aud_per_usd)
+            daily_aud_budget = daily.daily_aud_budget
+            daily_budget_derived = daily.derived
+        else:
+            # Ollama / embedded: count tokens for ops, never price them as OpenAI.
+            token_budget = 0
+            call_budget = 0
+            month_aud_budget = 0.0
+            month_usd = 0.0
+            month_aud = 0.0
+            daily_aud_budget = 0.0
+            daily_budget_derived = False
+        enforce = billable
         blocked = False
         month_blocked = False
         if enforce:
@@ -397,7 +416,7 @@ def snapshot_llm_budget(settings: Settings | None = None) -> LLMBudgetSnapshot:
             tokens_remaining=(token_budget - total) if token_budget > 0 else None,
             calls_remaining=(call_budget - _calls) if call_budget > 0 else None,
             blocked=blocked,
-            soft_warned=_warned_soft,
+            soft_warned=_warned_soft if billable else False,
             month_prompt_tokens=_month_prompt_tokens,
             month_completion_tokens=_month_completion_tokens,
             month_total_tokens=month_total,
@@ -407,10 +426,12 @@ def snapshot_llm_budget(settings: Settings | None = None) -> LLMBudgetSnapshot:
             month_aud_budget=month_aud_budget,
             month_aud_remaining=(month_aud_budget - month_aud) if month_aud_budget > 0 else None,
             month_blocked=month_blocked,
-            month_soft_warned=_month_warned_soft,
-            daily_aud_budget=daily.daily_aud_budget,
-            daily_budget_derived=daily.derived,
+            month_soft_warned=_month_warned_soft if billable else False,
+            daily_aud_budget=daily_aud_budget,
+            daily_budget_derived=daily_budget_derived,
             trading_days_per_month=daily.trading_days,
+            billable=billable,
+            runtime=runtime,
         )
 
 
@@ -464,7 +485,8 @@ def record_llm_usage(
         call_budget = daily.call_budget
         month_aud_budget = max(0.0, float(cfg.llm_monthly_aud_budget))
         month_aud = estimate_aud_cost(_month_prompt_tokens, _month_completion_tokens, cfg)
-        if not _warned_soft and soft_pct > 0:
+        billable = bool(cfg.llm_spend_budget_applies())
+        if billable and not _warned_soft and soft_pct > 0:
             token_hit = token_budget > 0 and total >= int(token_budget * soft_pct)
             call_hit = call_budget > 0 and _calls >= int(call_budget * soft_pct)
             if token_hit or call_hit:
@@ -479,7 +501,7 @@ def record_llm_usage(
                     soft_limit_pct=soft_pct,
                     daily_budget_derived=daily.derived,
                 )
-        if not _month_warned_soft and soft_pct > 0 and month_aud_budget > 0:
+        if billable and not _month_warned_soft and soft_pct > 0 and month_aud_budget > 0:
             if month_aud >= month_aud_budget * soft_pct:
                 _month_warned_soft = True
                 logger.warning(

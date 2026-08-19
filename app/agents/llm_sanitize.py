@@ -720,6 +720,14 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
         out.setdefault("symbol_actions", [])
         if "cash_target_pct" not in out:
             out["cash_target_pct"] = 50.0
+        # Local CIO often HOLDs the book while emitting PARTIAL_SELL on 단타.
+        current_pa = str(out.get("portfolio_action") or "").upper()
+        if out["symbol_actions"] and current_pa in {"HOLD", "NO_TRADE"}:
+            from app.universe.book_strategy import portfolio_action_from_symbol_actions
+
+            derived = portfolio_action_from_symbol_actions(out["symbol_actions"])
+            if derived.value not in {"HOLD", "NO_TRADE"}:
+                out["portfolio_action"] = derived.value
 
     return out
 

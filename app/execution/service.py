@@ -48,6 +48,22 @@ def make_client_order_id(
     return f"inv-{digest}"[:48]
 
 
+_EXIT_INTENT_TYPES = {
+    IntentType.REDUCE_LONG.value,
+    IntentType.CLOSE_LONG.value,
+    IntentType.REDUCE_SHORT.value,
+    IntentType.CLOSE_SHORT.value,
+    IntentType.CANCEL_PENDING.value,
+}
+
+
+def _intent_is_exit(intent: OrderIntent) -> bool:
+    if str(intent.intent_type or "") in _EXIT_INTENT_TYPES:
+        return True
+    thesis = str(intent.thesis or "")
+    return thesis.startswith("closing:") or thesis.startswith("force_close:")
+
+
 class ExecutionService:
     """CIO Decision → Intent → Pretrade → Approval → (optional) Broker submit."""
 
@@ -305,7 +321,7 @@ class ExecutionService:
         if intent.status != IntentStatus.APPROVED.value:
             raise ValueError(f"submit_not_allowed_from:{intent.status}")
 
-        # Material broker drift blocks new risk
+        # Material broker drift blocks new risk, not flatten/reduce.
         from app.models import BrokerReconciliationRun
 
         latest_recon = (
@@ -314,7 +330,8 @@ class ExecutionService:
             )
         ).scalar_one_or_none()
         if latest_recon and latest_recon.result in {"MATERIAL_DRIFT", "BROKER_UNAVAILABLE", "LOCAL_STATE_INVALID"}:
-            raise BrokerError(f"reconciliation_blocks_submit:{latest_recon.result}")
+            if not _intent_is_exit(intent):
+                raise BrokerError(f"reconciliation_blocks_submit:{latest_recon.result}")
 
         # Final hard pretrade gates (deterministic — not LLM)
         hard = self.pretrade.validate(

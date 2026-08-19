@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -32,11 +32,54 @@ def _scheduler_job_kind(job_key: str) -> str:
     key = job_key.split(":", 1)[-1]
     if key.startswith("intraday_eval"):
         return "intraday_eval"
+    if key.startswith("postmarket_eval"):
+        return "postmarket_eval"
     if key.startswith("premarket"):
         return "premarket"
     if key.startswith("universe"):
         return "universe"
     return key or "other"
+
+
+async def _reap_stale_running_jobs(session: Any, settings: Settings, now: datetime) -> int:
+    """Fail running rows older than the job timeout so a wedged eval cannot linger."""
+    from sqlalchemy import select
+    from app.models import ScheduledJobRecord
+
+    timeout_s = float(settings.effective_job_action_timeout_seconds())
+    cutoff = now - timedelta(seconds=timeout_s + 60)
+    rows = list(
+        (
+            await session.execute(
+                select(ScheduledJobRecord).where(
+                    ScheduledJobRecord.status == "running",
+                    ScheduledJobRecord.started_at.is_not(None),
+                    ScheduledJobRecord.started_at < cutoff,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return 0
+    for job in rows:
+        started = job.started_at
+        if started is not None and started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        job.status = "failed"
+        job.error = f"stale_running_reaped:{int(timeout_s)}s"
+        job.completed_at = (
+            started + timedelta(seconds=int(timeout_s)) if started is not None else now
+        )
+        logger.error(
+            "scheduler_stale_job_reaped",
+            job=job.job_key,
+            session_date=job.session_date,
+            started_at=str(started),
+        )
+    await session.flush()
+    return len(rows)
 
 
 def _observe_scheduler_job(
@@ -248,6 +291,10 @@ async def _dispatch_due_jobs() -> None:
         try:
             from app.market.venues import enabled_venues, parse_scoped_job_key
 
+            reaped = await _reap_stale_running_jobs(session, settings, now)
+            if reaped:
+                await session.commit()
+
             try:
                 await _ensure_sessions_prepared(session, settings)
                 await session.commit()
@@ -309,9 +356,17 @@ async def _dispatch_due_jobs() -> None:
                             timeout=timeout_s,
                         )
                     except TimeoutError:
-                        job.status = "failed"
-                        job.error = f"job_action_timeout:{int(timeout_s)}s"
-                        job.completed_at = datetime.now(UTC)
+                        from sqlalchemy import update
+
+                        await session.execute(
+                            update(ScheduledJobRecord)
+                            .where(ScheduledJobRecord.id == job.id)
+                            .values(
+                                status="failed",
+                                error=f"job_action_timeout:{int(timeout_s)}s",
+                                completed_at=datetime.now(UTC),
+                            )
+                        )
                         _observe_scheduler_job(job, timeout_s=timeout_s, timed_out=True)
                         logger.error(
                             "scheduler_job_timeout",
@@ -443,6 +498,13 @@ async def _run_job_action(svc: Any, job_key: str, session_date: str) -> None:
         await svc.start_closing(session_date=session_date)
     elif action == "postmarket_review":
         await svc.run_postmarket(session_date=session_date)
+    elif action.startswith("postmarket_eval"):
+        seq = 0
+        try:
+            seq = int(action.rsplit("_", 1)[-1])
+        except ValueError:
+            seq = 0
+        await svc.run_postmarket_eval(session_date=session_date, seq=seq)
     else:
         logger.warning("unknown_scheduled_job", job_key=job_key)
 
@@ -569,6 +631,8 @@ async def _reconcile_broker() -> None:
             return
         try:
             try:
+                await _reap_stale_running_jobs(session, settings, datetime.now(UTC))
+                await session.commit()
 
                 async def _recon_once() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], Any]:
                     from app.execution.order_manager import OrderManager

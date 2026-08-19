@@ -498,3 +498,32 @@ def test_sanitize_local_14b_list_and_missing_regime_types() -> None:
     assert cio.market_regime.value == "NEUTRAL"
     assert cio.portfolio_action.value == "HOLD"
     assert any("market_regime omitted" in c for c in cio.risk_conditions)
+
+
+def test_sanitize_cio_promotes_hold_when_symbol_exits() -> None:
+    from app.agents.llm_sanitize import sanitize_for_model
+    from app.schemas.cio import CIODecision
+
+    cio = CIODecision.model_validate(
+        sanitize_for_model(
+            {
+                "timestamp": "2026-08-19T02:00:00Z",
+                "portfolio_action": "HOLD",
+                "cash_target_pct": 70,
+                "risk_approval": True,
+                "symbol_actions": [
+                    {
+                        "symbol": "VAS",
+                        "action": "PARTIAL_SELL",
+                        "confidence": 70,
+                        "target_position_pct": 2,
+                        "thesis": "Day trade trend exhaustion",
+                        "invalidation": "n/a",
+                    }
+                ],
+            },
+            CIODecision,
+        )
+    )
+    assert cio.portfolio_action.value == "REDUCE"
+    assert cio.symbol_actions[0].action.value == "PARTIAL_SELL"

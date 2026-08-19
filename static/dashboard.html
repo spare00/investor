@@ -1263,25 +1263,31 @@
         detail.innerHTML = "";
         return;
       }
-      const blocked = budget.blocked || budget.month_blocked;
-      const enforce = budget.enforce;
+      const billable = budget.billable !== false && budget.runtime !== "local";
+      const blocked = billable && (budget.blocked || budget.month_blocked);
+      const enforce = billable && budget.enforce;
       meta.innerHTML = [
-        pill(enforce ? "enforce on" : "monitor only", enforce ? "good" : "warn"),
+        pill(billable ? (enforce ? "enforce on" : "monitor only") : "local · not billed", billable && enforce ? "good" : "warn"),
         pill(blocked ? "BLOCKED" : "ok", blocked ? "bad" : "good"),
-        budget.soft_warned || budget.month_soft_warned ? pill("soft warn", "warn") : "",
+        billable && (budget.soft_warned || budget.month_soft_warned) ? pill("soft warn", "warn") : "",
         pill(budget.day ? esc(String(budget.day)) : "—", ""),
       ].filter(Boolean).join(" ");
-      const tokRem = budget.tokens_remaining;
-      const callRem = budget.calls_remaining;
-      const audRem = budget.month_aud_remaining;
-      detail.innerHTML = [
+      const tokRem = billable ? budget.tokens_remaining : null;
+      const callRem = billable ? budget.calls_remaining : null;
+      const audRem = billable ? budget.month_aud_remaining : null;
+      detail.innerHTML = billable
+        ? [
         pill(`day ${formatTokens(budget.total_tokens)} / ${budget.token_budget > 0 ? formatTokens(budget.token_budget) : "∞"} tok`, ""),
         pill(`${budget.calls ?? 0} / ${budget.call_budget > 0 ? budget.call_budget : "∞"} calls`, ""),
         tokRem != null ? pill(`tok left ${formatTokens(tokRem)}`, tokRem < (budget.token_budget || 0) * 0.2 ? "warn" : "") : "",
         callRem != null ? pill(`calls left ${callRem}`, callRem < 10 ? "warn" : "") : "",
         pill(`month A$${(Number(budget.month_aud_estimate) || 0).toFixed(2)} / ${budget.month_aud_budget > 0 ? "A$" + Number(budget.month_aud_budget).toFixed(0) : "∞"}`, ""),
         audRem != null ? pill(`A$ left ${Number(audRem).toFixed(2)}`, audRem < 1 ? "warn" : "") : "",
-      ].filter(Boolean).join(" ");
+      ].filter(Boolean).join(" ")
+        : [
+        pill(`day ${formatTokens(budget.total_tokens)} tok`, ""),
+        pill(`${budget.calls ?? 0} local calls`, ""),
+      ].join(" ");
     }
 
     function renderLlmUsage(budget) {
@@ -1298,12 +1304,13 @@
         }
         return;
       }
-      const tokenBudget = Number(budget.token_budget) || 0;
-      const callBudget = Number(budget.call_budget) || 0;
+      const billable = budget.billable !== false && budget.runtime !== "local";
+      const tokenBudget = billable ? (Number(budget.token_budget) || 0) : 0;
+      const callBudget = billable ? (Number(budget.call_budget) || 0) : 0;
       const total = Number(budget.total_tokens) || 0;
       const calls = Number(budget.calls) || 0;
-      const monthAud = Number(budget.month_aud_estimate) || 0;
-      const monthBudget = Number(budget.month_aud_budget) || 0;
+      const monthAud = billable ? (Number(budget.month_aud_estimate) || 0) : 0;
+      const monthBudget = billable ? (Number(budget.month_aud_budget) || 0) : 0;
       const dayPct = tokenBudget > 0 ? total / tokenBudget : 0;
       const callPct = callBudget > 0 ? calls / callBudget : 0;
       const monthPct = monthBudget > 0 ? monthAud / monthBudget : 0;
@@ -1319,20 +1326,23 @@
             ? "calls"
             : "day";
       let level = "ok";
-      if (!budget.enforce) level = "off";
+      if (!billable || !budget.enforce) level = "off";
       else if (budget.blocked || budget.month_blocked || pctVal >= 0.9) level = "bad";
       else if (pctVal >= 0.7) level = "warn";
       meter.className = `usage-meter level-${level}`;
-      fill.style.width = `${Math.min(100, pctShow)}%`;
-      meter.setAttribute("aria-valuenow", String(Math.round(pctShow)));
-      const status = !budget.enforce
+      fill.style.width = `${billable ? Math.min(100, pctShow) : 0}%`;
+      meter.setAttribute("aria-valuenow", String(billable ? Math.round(pctShow) : 0));
+      const status = !billable
+        ? "local · not billed"
+        : !budget.enforce
         ? "monitor only"
         : budget.blocked
           ? (budget.month_blocked ? "MONTH BLOCKED" : "BLOCKED")
           : `${pctShow}% ${driver}`;
       const monthPctShow = Math.round(monthPct * 1000) / 10;
       meta.dataset.hasValue = "1";
-      meta.innerHTML =
+      meta.innerHTML = billable
+        ? (
         `<strong>${status}</strong>` +
         ` · day ${formatTokens(total)} / ${tokenBudget > 0 ? formatTokens(tokenBudget) : "∞"} tok` +
         ` · ${calls} / ${callBudget > 0 ? callBudget : "∞"} calls` +
@@ -1341,7 +1351,12 @@
         (budget.daily_budget_derived
           ? ` · day from month÷${budget.trading_days_per_month || 21}`
           : "") +
-        ` · ${budget.day ? esc(String(budget.day)) : "—"}`;
+        ` · ${budget.day ? esc(String(budget.day)) : "—"}`)
+        : (
+        `<strong>${status}</strong>` +
+        ` · day ${formatTokens(total)} tok` +
+        ` · ${calls} calls` +
+        ` · ${budget.day ? esc(String(budget.day)) : "—"}`);
     }
 
     /** Lightweight strip update — avoids depending on heavy /dashboard/summary. */
@@ -1544,7 +1559,18 @@
         overnight.length
           ? pill(`overnight ${overnight.length}`, flagged.length ? "warn" : "good")
           : pill("no overnight review", "warn"),
-        pm.performance ? pill(`perf evals ${pm.performance.decision_evaluations ?? 0}`, "good") : "",
+        (() => {
+          const pe = wf.postmarket_eval || {};
+          if (pe.remaining_decisions != null) {
+            const left = Number(pe.remaining_decisions) || 0;
+            return pill(
+              `perf left ${left}`,
+              pe.error ? "bad" : left ? "" : "good"
+            );
+          }
+          if ((pm.decision_eval || {}).queued) return pill("perf queued", "");
+          return "";
+        })(),
         pm.settlement_error ? pill("settle err", "bad") : "",
       ].filter(Boolean).join(" ");
 
@@ -2454,7 +2480,7 @@
           kpiCard("Daily max loss", risk.daily_max_loss_pct != null ? `${fmtNum(risk.daily_max_loss_pct, 1)}%` : "—"),
           kpiCard("Max DD", risk.max_drawdown_pct != null ? `${fmtNum(risk.max_drawdown_pct, 1)}%` : "—"),
         ])}
-        <div class="muted" style="margin:0.65rem 0 0.35rem">LLM · day ${esc(formatTokens(budget.total_tokens))} tok · ${esc(budget.calls ?? 0)} calls · month A$${esc(fmtNum(budget.month_aud_estimate, 2))}</div>
+        <div class="muted" style="margin:0.65rem 0 0.35rem">LLM · ${budget.runtime === "local" || budget.billable === false ? "local · not billed" : "cloud"} · day ${esc(formatTokens(budget.total_tokens))} tok · ${esc(budget.calls ?? 0)} calls${budget.runtime === "local" || budget.billable === false ? "" : ` · month A$${esc(fmtNum(budget.month_aud_estimate, 2))}`}</div>
         <div class="muted">Allowlist: ${esc((status.allowlist || []).join(", ") || "—")}</div>
         <ul style="margin-top:0.55rem">${jobs.length
           ? jobs.map((j) => `<li class="mono">${esc(j.id || j.name)}: ${esc(fmtJobWhen(j, opsClockVenue))}</li>`).join("")

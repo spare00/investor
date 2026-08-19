@@ -400,6 +400,65 @@ async def test_emergency_stop_blocks_submit(session: AsyncSession) -> None:
         await svc.submit_intent(intent.id)
 
 
+@pytest.mark.asyncio
+async def test_material_drift_blocks_entry_not_exit(session: AsyncSession) -> None:
+    from app.models import BrokerReconciliationRun, OrderIntent
+
+    settings = _settings(require_manual_order_approval=False)
+    controls = TradingControls()
+    svc = ExecutionService(session, settings=settings, controls=controls)
+    svc._broker = MockBroker(seed=3)
+    svc._broker.prices["VAS"] = 90.0
+    session.add(
+        BrokerReconciliationRun(
+            id=uuid4(),
+            sync_type="SCHEDULED",
+            result="MATERIAL_DRIFT",
+            issues=[{"type": "remote_order_missing_local", "broker_order_id": "46"}],
+            payload={},
+        )
+    )
+    entry = OrderIntent(
+        id=uuid4(),
+        symbol="QQQ",
+        intent_type="OPEN_LONG",
+        side="buy",
+        quantity=1,
+        approved_quantity=1,
+        entry_price=100,
+        stop_price=95,
+        status="APPROVED",
+        thesis="new risk",
+        exit_policy={},
+        metadata_json={"order_type": "market"},
+    )
+    exit_intent = OrderIntent(
+        id=uuid4(),
+        symbol="VAS",
+        intent_type="CLOSE_LONG",
+        side="sell",
+        quantity=400,
+        approved_quantity=400,
+        entry_price=90,
+        stop_price=None,
+        status="APPROVED",
+        thesis="Day trade trend exhaustion",
+        exit_policy={},
+        metadata_json={"order_type": "market"},
+    )
+    session.add_all([entry, exit_intent])
+    await session.flush()
+    with pytest.raises(BrokerError, match="reconciliation_blocks_submit:MATERIAL_DRIFT"):
+        await svc.submit_intent(entry.id)
+    try:
+        order = await svc.submit_intent(exit_intent.id)
+    except BrokerError as exc:
+        assert "reconciliation_blocks_submit" not in str(exc)
+    else:
+        assert order is not None
+        assert order.symbol == "VAS"
+
+
 def test_client_order_id_stable() -> None:
     a = make_client_order_id(
         workflow_run_id="w",
