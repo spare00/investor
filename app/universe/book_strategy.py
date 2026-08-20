@@ -41,7 +41,7 @@ _DEFAULT_HORIZON: dict[str, str] = {
     "IWM": "day",
     "DIA": "day",
     "VAS": "day",
-    "NDQ": "short",
+    "NDQ": "scalp",
     "IOZ": "short",
     "BHP": "short",
     "CBA": "short",
@@ -473,6 +473,88 @@ def portfolio_action_from_symbol_actions(
     if values:
         return PortfolioAction.HOLD
     return PortfolioAction.NO_TRADE
+
+
+def align_cio_playbook_exits(
+    decision: Any,
+    quant: Any,
+    watchlist: list[dict] | None,
+    *,
+    held_symbols: Iterable[str] | None = None,
+) -> Any:
+    """Rewrite LLM exits that violate the book (e.g. REDUCE a quiet short)."""
+    if decision is None:
+        return decision
+    held = {str(s).upper() for s in (held_symbols or []) if s}
+    views = {
+        str(v.symbol).upper(): v
+        for v in (getattr(quant, "symbol_views", None) or [])
+        if getattr(v, "symbol", None)
+    }
+    updated = []
+    changed = False
+    for plan in decision.symbol_actions:
+        action = plan.action
+        if action not in {SymbolAction.SELL, SymbolAction.PARTIAL_SELL, SymbolAction.REDUCE}:
+            updated.append(plan)
+            continue
+        sym = str(plan.symbol or "").upper()
+        if held and sym not in held:
+            updated.append(plan)
+            continue
+        hz = horizon_for_symbol(sym, watchlist)
+        view = views.get(sym)
+        if view is None:
+            if hz == "short" and action in {SymbolAction.REDUCE, SymbolAction.PARTIAL_SELL}:
+                changed = True
+                updated.append(
+                    plan.model_copy(
+                        update={
+                            "action": SymbolAction.HOLD,
+                            "thesis": f"{hz}: hold — no tape to break swing",
+                        }
+                    )
+                )
+                continue
+            updated.append(plan)
+            continue
+        allowed = exit_action(
+            horizon=hz,
+            trend=view.trend_state,
+            momentum=view.momentum_state,
+            liquidity=view.liquidity_state,
+        )
+        want = symbol_action_for_exit(allowed)
+        if want == SymbolAction.HOLD:
+            changed = True
+            updated.append(
+                plan.model_copy(
+                    update={
+                        "action": SymbolAction.HOLD,
+                        "thesis": f"{hz}: {allowed.value} — keep swing",
+                    }
+                )
+            )
+            continue
+        if want == SymbolAction.REDUCE and action == SymbolAction.SELL:
+            changed = True
+            updated.append(plan.model_copy(update={"action": SymbolAction.REDUCE}))
+            continue
+        if (
+            want == SymbolAction.SELL
+            and action in {SymbolAction.REDUCE, SymbolAction.PARTIAL_SELL}
+            and hz in {"scalp", "day"}
+        ):
+            changed = True
+            updated.append(plan.model_copy(update={"action": SymbolAction.SELL}))
+            continue
+        updated.append(plan)
+    if not changed:
+        return decision
+    portfolio = portfolio_action_from_symbol_actions(updated)
+    return decision.model_copy(
+        update={"symbol_actions": updated, "portfolio_action": portfolio}
+    )
 
 
 def policy_time_horizon(horizon: str | None) -> TimeHorizon:

@@ -47,10 +47,10 @@ class UniverseService:
 
         def _horizon_for(sym: str, venue: Venue, index: int) -> str:
             if venue == Venue.AU:
-                if sym in {"VAS", "IOZ", "NDQ", "JPEQ"}:
-                    return UniverseHorizon.DAY.value if index < 3 else UniverseHorizon.SHORT.value
-                if sym in {"BHP", "CBA"}:
-                    return UniverseHorizon.SHORT.value
+                if sym == "NDQ":
+                    return UniverseHorizon.SCALP.value
+                if sym in {"VAS", "JPEQ"}:
+                    return UniverseHorizon.DAY.value
                 return UniverseHorizon.SHORT.value
             indexes = {"SPY", "QQQ", "IWM", "DIA"}
             if sym in indexes:
@@ -90,10 +90,36 @@ class UniverseService:
                 )
                 existing.add(sym)
                 n += 1
+        n += await self._repair_seed_horizons(rows)
         if n:
             await self.session.flush()
             logger.info("universe_seeded", count=n)
         return n
+
+    async def _repair_seed_horizons(self, rows: list[WatchlistSymbol]) -> int:
+        """Keep AU tape (NDQ) on scalp even if it was seeded as short/day earlier."""
+        from app.models.entities import Position
+
+        desired = {"NDQ": UniverseHorizon.SCALP.value}
+        held = {
+            str(p.symbol or "").upper()
+            for p in (await self.session.execute(select(Position))).scalars().all()
+            if abs(float(p.quantity or 0)) > 1e-9
+        }
+        changed = 0
+        for row in rows:
+            want = desired.get(str(row.symbol or "").upper())
+            if not want or row.horizon == want:
+                continue
+            if str(row.symbol or "").upper() in held:
+                continue
+            if str(row.source or "") not in {"seed", "repair", ""}:
+                continue
+            row.horizon = want
+            row.thesis = f"Seeded into {want} book from AU allowlist"
+            row.source = "seed"
+            changed += 1
+        return changed
 
     async def list_active(self) -> list[WatchlistSymbol]:
         result = await self.session.execute(

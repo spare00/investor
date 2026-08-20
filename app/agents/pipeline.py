@@ -447,6 +447,14 @@ class AgentPipeline:
             if m.atr_14 is not None and float(m.atr_14) > 0
         }
         cio_out = align_cio_horizons(cio_out, watch_ctx)
+        from app.universe.book_strategy import align_cio_playbook_exits
+
+        cio_out = align_cio_playbook_exits(
+            cio_out,
+            quant_out,
+            watch_ctx,
+            held_symbols=[p.symbol for p in portfolio.positions if abs(p.quantity or 0) > 1e-9],
+        )
         cio_out = enrich_cio_entry_stops(
             cio_out,
             quant_out,

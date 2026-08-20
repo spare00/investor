@@ -143,10 +143,12 @@ class DataCollectionPipeline:
             universe = list(self.settings.trade_allowlist_au)
         else:
             universe = list(self.settings.trade_allowlist)
-        us_index = ["SPY", "QQQ", "IWM", "DIA"]
+        from app.market.book_context import index_symbols_for_venue
+
+        indexes = list(index_symbols_for_venue(book or Venue.US, self.settings))
         # US index overlays only for US (or unscoped) books — avoid SPY noise on ASX runs.
         if book != Venue.AU:
-            for s in us_index:
+            for s in indexes:
                 if s not in universe:
                     universe = [s, *universe]
 
@@ -186,13 +188,30 @@ class DataCollectionPipeline:
         metas.append(meta_n.to_dict())
         news, clusters = cluster_news(news_raw)
 
-        # SEC
-        sec_p = resolve_sec_provider(self.settings)
-        if self.fixture_mode or not self.settings.enable_sec_collection:
-            from app.providers.registry import FixtureSecProvider
+        # SEC EDGAR is US-only. Fake fixture 8-Ks on ASX names halt the AU book.
+        from app.providers.base import ProviderRequestMeta, ProviderStatus
 
-            sec_p = FixtureSecProvider()
-        filings, meta_s = await sec_p.fetch_filings(symbols=universe[:5], settings=self.settings)
+        skip_sec = book == Venue.AU or (
+            not self.fixture_mode and not self.settings.enable_sec_collection
+        )
+        if skip_sec:
+            now_sec = datetime.now(UTC)
+            filings = []
+            meta_s = ProviderRequestMeta(
+                provider_name="sec_skipped",
+                provider_version="1.0.0",
+                request_id=str(uuid4()),
+                request_started_at=now_sec,
+                request_completed_at=now_sec,
+                status=ProviderStatus.DISABLED,
+            )
+        else:
+            sec_p = resolve_sec_provider(self.settings)
+            if self.fixture_mode:
+                from app.providers.registry import FixtureSecProvider
+
+                sec_p = FixtureSecProvider()
+            filings, meta_s = await sec_p.fetch_filings(symbols=universe[:5], settings=self.settings)
         metas.append(meta_s.to_dict())
 
         # Macro
@@ -236,7 +255,7 @@ class DataCollectionPipeline:
             from app.canonical.models import CanonicalDataConflict
 
             for q in quotes:
-                if q.symbol in us_index:
+                if q.symbol in indexes:
                     conflicts.append(
                         CanonicalDataConflict(
                             data_type="quote",
@@ -259,11 +278,12 @@ class DataCollectionPipeline:
 
         # Fail closed checks
         reasons: list[str] = []
-        index_quotes = {q.symbol: q for q in quotes if q.symbol in us_index}
-        if len(index_quotes) < 4:
+        index_quotes = {q.symbol: q for q in quotes if q.symbol in indexes}
+        need = 1 if book == Venue.AU else len(indexes)
+        if len(index_quotes) < need:
             reasons.append("missing_core_index_data")
         hard = self.settings.data_quality_hard_fail_threshold
-        for sym in us_index:
+        for sym in indexes:
             q = index_quotes.get(sym)
             if q and q.quality and q.quality.overall < hard:
                 reasons.append(f"quality_hard_fail:{sym}")

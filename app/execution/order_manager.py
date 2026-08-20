@@ -37,6 +37,36 @@ def _internal_status(broker_status: OrderStatus) -> str:
     return _BROKER_STATUS_TO_INTERNAL.get(broker_status, InternalOrderState.UNKNOWN).value
 
 
+WORKING_ORDER_STATUSES = frozenset(
+    {
+        "new",
+        "accepted",
+        "partially_filled",
+        "pending_submit",
+        "pending_new",
+        InternalOrderState.SUBMITTING.value,
+        InternalOrderState.SUBMITTED.value,
+        InternalOrderState.ACCEPTED.value,
+        InternalOrderState.PARTIALLY_FILLED.value,
+        InternalOrderState.CANCEL_PENDING.value,
+        InternalOrderState.REPLACE_PENDING.value,
+    }
+)
+
+_DEAD_ORDER_STATUSES = frozenset(
+    {
+        InternalOrderState.CANCELLED.value,
+        InternalOrderState.REJECTED.value,
+        "cancelled",
+        "canceled",
+        "rejected",
+    }
+)
+
+_FLATTEN_MARKERS = ("force-close:", "hard-stop:", ":sell:SELL", ":buy:BUY")
+_PARTIAL_MARKERS = (":sell:PARTIAL_SELL", ":sell:REDUCE", ":buy:REDUCE")
+
+
 class OrderManager:
     def __init__(
         self,
@@ -117,6 +147,59 @@ class OrderManager:
                 created.append(order)
         return created
 
+    def _is_exit_intent(self, intent: ValidatedOrderIntent) -> bool:
+        key = str(intent.idempotency_key or "")
+        if any(m in key for m in (*_FLATTEN_MARKERS, *_PARTIAL_MARKERS)):
+            return True
+        thesis = str(intent.thesis or "").lower()
+        return thesis.startswith("force_close") or thesis.startswith("hard_stop") or thesis.startswith("closing:")
+
+    def _is_flatten_intent(self, intent: ValidatedOrderIntent) -> bool:
+        key = str(intent.idempotency_key or "")
+        thesis = str(intent.thesis or "").lower()
+        return any(m in key for m in _FLATTEN_MARKERS) or thesis.startswith("force_close") or thesis.startswith("hard_stop")
+
+    def _is_partial_exit(self, intent: ValidatedOrderIntent) -> bool:
+        key = str(intent.idempotency_key or "")
+        return any(m in key for m in _PARTIAL_MARKERS)
+
+    async def _working_same_side(self, symbol: str, side: str) -> list[Order]:
+        rows = list(
+            (
+                await self.session.execute(
+                    select(Order).where(
+                        Order.symbol == symbol.upper(),
+                        Order.side == side.lower(),
+                        Order.status.in_(list(WORKING_ORDER_STATUSES)),
+                    )
+                )
+            ).scalars().all()
+        )
+        return rows
+
+    async def cancel_working_for_symbol(self, symbol: str, *, side: str | None = None) -> int:
+        """Cancel local+broker working orders for a symbol (optionally one side)."""
+        q = select(Order).where(
+            Order.symbol == symbol.upper(),
+            Order.status.in_(list(WORKING_ORDER_STATUSES)),
+        )
+        if side:
+            q = q.where(Order.side == side.lower())
+        rows = list((await self.session.execute(q)).scalars().all())
+        n = 0
+        for row in rows:
+            try:
+                await self.cancel_order(row.id)
+                n += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "cancel_working_failed",
+                    symbol=symbol,
+                    order_id=str(row.id),
+                    error=str(exc)[:160],
+                )
+        return n
+
     async def _submit_one(
         self,
         intent: ValidatedOrderIntent,
@@ -124,33 +207,69 @@ class OrderManager:
         decision_id: UUID | None,
         workflow_id: UUID | None,
     ) -> Order | None:
-        # DB-level idempotency
-        existing = await self.session.execute(
-            select(Order).where(Order.idempotency_key == intent.idempotency_key)
-        )
-        if existing.scalar_one_or_none() is not None:
-            logger.info("order_idempotent_skip", key=intent.idempotency_key)
-            return None
+        if self._is_exit_intent(intent):
+            working = await self._working_same_side(intent.symbol, intent.side)
+            if working and self._is_partial_exit(intent):
+                logger.info(
+                    "order_skip_working_exit",
+                    symbol=intent.symbol,
+                    working=len(working),
+                    key=intent.idempotency_key,
+                )
+                return None
+            if working and self._is_flatten_intent(intent):
+                await self.cancel_working_for_symbol(intent.symbol, side=intent.side)
 
-        row = Order(
-            id=uuid4(),
-            idempotency_key=intent.idempotency_key,
-            symbol=intent.symbol,
-            side=intent.side,
-            qty=intent.quantity,
-            order_type=intent.order_type,
-            limit_price=intent.limit_price,
-            stop_price=intent.stop_price,
-            status="pending_submit",
-            decision_id=decision_id or UUID(intent.decision_id),
-            submitted_at=None,
-            raw_payload={
+        existing = (
+            await self.session.execute(
+                select(Order).where(Order.idempotency_key == intent.idempotency_key)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            st = str(existing.status or "")
+            if st in WORKING_ORDER_STATUSES:
+                logger.info("order_idempotent_skip", key=intent.idempotency_key)
+                return None
+            if st == InternalOrderState.FILLED.value or st.lower() == "filled":
+                logger.info("order_idempotent_filled", key=intent.idempotency_key)
+                return None
+            if st not in _DEAD_ORDER_STATUSES:
+                logger.info("order_idempotent_skip", key=intent.idempotency_key, status=st)
+                return None
+            row = existing
+            row.qty = intent.quantity
+            row.order_type = intent.order_type
+            row.limit_price = intent.limit_price
+            row.stop_price = intent.stop_price
+            row.status = "pending_submit"
+            row.broker_order_id = None
+            row.raw_payload = {
+                **(row.raw_payload or {}),
                 "thesis": intent.thesis,
                 "venue": intent.venue or resolve_venue(self.settings).value,
                 "con_id": intent.con_id,
-            },
-        )
-        self.session.add(row)
+                "resubmit": True,
+            }
+        else:
+            row = Order(
+                id=uuid4(),
+                idempotency_key=intent.idempotency_key,
+                symbol=intent.symbol,
+                side=intent.side,
+                qty=intent.quantity,
+                order_type=intent.order_type,
+                limit_price=intent.limit_price,
+                stop_price=intent.stop_price,
+                status="pending_submit",
+                decision_id=decision_id or UUID(intent.decision_id),
+                submitted_at=None,
+                raw_payload={
+                    "thesis": intent.thesis,
+                    "venue": intent.venue or resolve_venue(self.settings).value,
+                    "con_id": intent.con_id,
+                },
+            )
+            self.session.add(row)
         await self.session.flush()
 
         try:
@@ -213,7 +332,15 @@ class OrderManager:
         row.broker_order_id = result.broker_order_id
         row.status = _internal_status(result.status)
         row.submitted_at = result.submitted_at
-        row.raw_payload = {**row.raw_payload, "broker": result.raw or {}}
+        raw = dict(result.raw or {})
+        row.raw_payload = {**(row.raw_payload or {}), "broker": raw}
+        if raw.get("order_type"):
+            row.order_type = str(raw["order_type"])
+        if raw.get("limit_price") is not None:
+            try:
+                row.limit_price = float(raw["limit_price"])
+            except (TypeError, ValueError):
+                pass
 
         if result.status == OrderStatus.FILLED and result.avg_fill_price is not None:
             self.session.add(

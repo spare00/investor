@@ -97,6 +97,87 @@ async def test_idempotent_order_not_duplicated(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_skips_partial_exit_when_working_sell_exists(session: AsyncSession) -> None:
+    from app.models import Order
+
+    broker = SimulatedBroker()
+    om = OrderManager(session, broker=broker, controls=TradingControls(), settings=_exec_settings())
+    session.add(
+        Order(
+            idempotency_key="working-vas-flatten",
+            symbol="VAS",
+            side="sell",
+            qty=876,
+            order_type="market",
+            status="ACCEPTED",
+            decision_id=uuid4(),
+        )
+    )
+    await session.flush()
+    v = ExecutionValidationResult(
+        approved=True,
+        intents=[
+            ValidatedOrderIntent(
+                symbol="VAS",
+                side="sell",
+                quantity=438,
+                order_type="market",
+                limit_price=None,
+                stop_price=None,
+                idempotency_key=f"{uuid4()}:VAS:sell:PARTIAL_SELL",
+                decision_id=str(uuid4()),
+                thesis="cio partial",
+                venue="AU",
+            )
+        ],
+    )
+    assert await om.submit_validated_intents(v) == []
+
+
+@pytest.mark.asyncio
+async def test_reuses_cancelled_flatten_key(session: AsyncSession) -> None:
+    from app.models import Order
+
+    broker = SimulatedBroker()
+    broker.positions["VAS"] = {"symbol": "VAS", "qty": "876", "avg_entry_price": "114"}
+    om = OrderManager(session, broker=broker, controls=TradingControls(), settings=_exec_settings())
+    key = "force-close:vas-lc:close:2026-08-20"
+    session.add(
+        Order(
+            idempotency_key=key,
+            symbol="VAS",
+            side="sell",
+            qty=876,
+            order_type="market",
+            status="CANCELLED",
+            decision_id=uuid4(),
+        )
+    )
+    await session.flush()
+    v = ExecutionValidationResult(
+        approved=True,
+        intents=[
+            ValidatedOrderIntent(
+                symbol="VAS",
+                side="sell",
+                quantity=876,
+                order_type="market",
+                limit_price=None,
+                stop_price=112.0,
+                idempotency_key=key,
+                decision_id=str(uuid4()),
+                thesis="force_close:leftover",
+                venue="AU",
+            )
+        ],
+    )
+    rows = await om.submit_validated_intents(v)
+    assert len(rows) == 1
+    assert rows[0].idempotency_key == key
+    assert rows[0].status.upper() == "FILLED"
+
+
+@pytest.mark.asyncio
 async def test_controls_block_submit(session: AsyncSession) -> None:
     broker = SimulatedBroker()
     controls = TradingControls()

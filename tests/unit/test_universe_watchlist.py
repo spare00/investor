@@ -64,6 +64,30 @@ async def test_seed_and_entry_universe(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_au_seed_puts_ndq_on_scalp(session: AsyncSession) -> None:
+    from sqlalchemy import select
+
+    from app.models import WatchlistSymbol
+
+    settings = Settings(
+        universe_mode="dynamic",
+        trade_allowlist=["SPY"],
+        trade_allowlist_au=["BHP", "CBA", "VAS", "NDQ"],
+        enabled_venues=["US", "AU"],
+        universe_manager_enabled=False,
+    )
+    svc = UniverseService(session, settings=settings)
+    await svc.ensure_seeded()
+    rows = {
+        r.symbol: r.horizon
+        for r in (await session.execute(select(WatchlistSymbol))).scalars().all()
+    }
+    assert rows.get("NDQ") == "scalp"
+    assert rows.get("VAS") == "day"
+    assert rows.get("BHP") == "short"
+
+
+@pytest.mark.asyncio
 async def test_static_mode_uses_allowlist(session: AsyncSession) -> None:
     settings = Settings(universe_mode="static", trade_allowlist=["QQQ"], enabled_venues=["US"])
     svc = UniverseService(session, settings=settings)

@@ -23,6 +23,7 @@ from app.schemas.market_intelligence import MarketIntelligenceOutput
 from app.schemas.quant_strategist import BarSnapshot, QuantStrategistInput
 from app.schemas.risk_manager import PositionSnapshot, RiskManagerOutput
 from app.universe.book_strategy import (
+    align_cio_playbook_exits,
     filter_strategy_horizons,
     horizon_for_symbol,
     notional_pct_for_risk,
@@ -280,3 +281,60 @@ def test_portfolio_action_promotes_hold_when_partial_sell() -> None:
         )
         == PortfolioAction.REDUCE
     )
+
+
+def test_ndq_defaults_to_au_scalp() -> None:
+    assert horizon_for_symbol("NDQ") == "scalp"
+
+
+def test_align_blocks_short_reduce_when_swing_holds() -> None:
+    from app.schemas.cio import CIODecision, SymbolActionPlan
+    from app.schemas.common import BreadthState, OrderType
+    from app.schemas.quant_strategist import QuantStrategistOutput, SymbolQuantView
+
+    decision = CIODecision(
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.REDUCE,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="BHP",
+                action=SymbolAction.REDUCE,
+                confidence=70,
+                target_position_pct=5,
+                order_type=OrderType.MARKET,
+                thesis="llm noise reduce",
+                invalidation="n/a",
+            )
+        ],
+        cash_target_pct=80,
+        risk_approval=True,
+    )
+    quant = QuantStrategistOutput(
+        timestamp=NOW,
+        market_trend_state=TrendState.UP,
+        market_momentum_state=MomentumState.STEADY,
+        market_volatility_state=VolatilityState.NORMAL,
+        market_breadth_state=BreadthState.MIXED,
+        market_liquidity_state=LiquidityState.NORMAL,
+        symbol_views=[
+            SymbolQuantView(
+                symbol="BHP",
+                trend_state=TrendState.UP,
+                momentum_state=MomentumState.STEADY,
+                volatility_state=VolatilityState.NORMAL,
+                liquidity_state=LiquidityState.NORMAL,
+                probability_estimate=0.6,
+                probability_basis="test",
+            )
+        ],
+        data_quality_score=0.8,
+    )
+    out = align_cio_playbook_exits(
+        decision,
+        quant,
+        [{"symbol": "BHP", "horizon": "short"}],
+        held_symbols=["BHP"],
+    )
+    assert out.symbol_actions[0].action == SymbolAction.HOLD
+    assert out.portfolio_action == PortfolioAction.HOLD
