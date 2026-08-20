@@ -1218,6 +1218,74 @@ class DailyWorkflowService:
             "notes": list(closing.get("notes") or [])[:12],
         }
 
+    async def retry_incomplete_postmarket(
+        self, *, now: datetime | None = None, session_date: str | None = None
+    ) -> dict[str, Any]:
+        """Complete a session that closed but never finished postmarket review.
+
+        Settlement flush errors used to abort the scheduler session and leave
+        the run in CLOSING_WINDOW with the postmarket job stuck running.
+        Catch-up calls this after hours so the book can still settle. When
+        ``session_date`` is omitted, also try yesterday — a stuck AU close
+        must not be abandoned just because the next premarket has started.
+        """
+        now = now or datetime.now(UTC)
+        market_day = now.astimezone(self.calendar.market_tz).date()
+        if session_date is not None:
+            dates = [session_date]
+        else:
+            dates = [market_day.isoformat(), (market_day - timedelta(days=1)).isoformat()]
+        last: dict[str, Any] = {"skipped": True, "reason": "no_run"}
+        for day in dates:
+            last = await self._retry_incomplete_postmarket_one(session_date=day, now=now)
+            if not last.get("skipped"):
+                return last
+        return last
+
+    async def _retry_incomplete_postmarket_one(
+        self, *, session_date: str, now: datetime
+    ) -> dict[str, Any]:
+        run = await self.get_current(session_date)
+        if run is None:
+            return {"skipped": True, "reason": "no_run"}
+        if run.current_state not in {
+            DailyWorkflowState.CLOSING_WINDOW.value,
+            DailyWorkflowState.MARKET_CLOSED.value,
+            DailyWorkflowState.POSTMARKET_REVIEW.value,
+        }:
+            return {"skipped": True, "reason": f"state:{run.current_state}"}
+        market_day = now.astimezone(self.calendar.market_tz).date().isoformat()
+        prior_session = session_date < market_day
+        if not prior_session:
+            status = self.calendar.get_market_status(now)
+            if status.phase not in POSTMARKET_EVAL_PHASES:
+                return {"skipped": True, "reason": f"phase:{status.phase}"}
+        meta = dict(run.metadata_json or {})
+        last = meta.get("last_postmarket_retry_at")
+        if last:
+            try:
+                ts = datetime.fromisoformat(str(last))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                if (now - ts).total_seconds() < 5 * 60:
+                    return {"skipped": True, "reason": "cooldown"}
+            except ValueError:
+                pass
+        meta["last_postmarket_retry_at"] = now.isoformat()
+        run.metadata_json = meta
+        await self.session.flush()
+        out = await self.run_postmarket(session_date=run.session_date, now=now)
+        from sqlalchemy import update as sa_update
+
+        await self.session.execute(
+            sa_update(ScheduledJobRecord)
+            .where(ScheduledJobRecord.session_date == run.session_date)
+            .where(ScheduledJobRecord.job_key == self._jk("postmarket_review"))
+            .where(ScheduledJobRecord.status.in_(["failed", "running", "skipped"]))
+            .values(status="completed", error=None, completed_at=now)
+        )
+        return {**out, "skipped": False, "recovered": True}
+
     async def start_closing(
         self,
         *,
@@ -1385,12 +1453,13 @@ class DailyWorkflowService:
         try:
             from app.intraday.settlement import SettlementService
 
-            settlement = await _await_postmarket_step(
-                "settlement",
-                SettlementService(
-                    self.session, settings=self.settings, venue=self.venue.value
-                ).settle(session_date=run.session_date, venue=self.venue.value),
-            )
+            async def _settle() -> dict[str, Any]:
+                async with self.session.begin_nested():
+                    return await SettlementService(
+                        self.session, settings=self.settings, venue=self.venue.value
+                    ).settle(session_date=run.session_date, venue=self.venue.value)
+
+            settlement = await _await_postmarket_step("settlement", _settle())
             review["settlement"] = {
                 "id": settlement.get("settlement_id"),
                 "overnight_positions": settlement.get("overnight_positions") or [],

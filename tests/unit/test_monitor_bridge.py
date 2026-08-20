@@ -14,7 +14,7 @@ from app.core.config import clear_settings_cache, get_settings
 from app.core.database import Base
 import app.models  # noqa: F401
 from app.execution.safety_controls import trading_controls
-from app.models import IntradayEvent, PositionLifecycle
+from app.models import IntradayEvent, PositionLifecycle, ScheduledJobRecord
 from app.workflow.daily import DailyWorkflowService
 from app.workflow.states import DailyWorkflowState
 
@@ -264,6 +264,52 @@ async def test_postmarket_runs_settlement(session: AsyncSession) -> None:
     assert queued and queued.endswith(":postmarket_eval")
     jobs = await svc.planned_jobs("2026-08-03")
     assert any(j["job_key"].endswith(":postmarket_eval") for j in jobs)
+
+
+@pytest.mark.asyncio
+async def test_retry_incomplete_postmarket_after_hours(session: AsyncSession) -> None:
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-03")
+    run = await svc.get_current("2026-08-03")
+    assert run is not None
+    run.current_state = DailyWorkflowState.CLOSING_WINDOW.value
+    row = (
+        await session.execute(
+            select(ScheduledJobRecord).where(
+                ScheduledJobRecord.job_key == "US:postmarket_review",
+                ScheduledJobRecord.session_date == "2026-08-03",
+            )
+        )
+    ).scalar_one()
+    row.status = "failed"
+    row.error = "stale_running_reaped:480s"
+    await session.flush()
+    now = datetime(2026, 8, 4, 1, 0, tzinfo=UTC)
+    out = await svc.retry_incomplete_postmarket(now=now, session_date="2026-08-03")
+    assert out.get("skipped") is False
+    assert out["current_state"] == DailyWorkflowState.COMPLETED.value
+    await session.refresh(row)
+    assert row.status == "completed"
+    assert row.error is None
+
+
+@pytest.mark.asyncio
+async def test_retry_incomplete_postmarket_prior_session_during_premarket(
+    session: AsyncSession,
+) -> None:
+    """A stuck close must still finish after the next day's premarket has started."""
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-03")
+    run = await svc.get_current("2026-08-03")
+    assert run is not None
+    run.current_state = DailyWorkflowState.CLOSING_WINDOW.value
+    await session.flush()
+    now = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
+    out = await svc.retry_incomplete_postmarket(now=now)
+    assert out.get("skipped") is False
+    assert out["current_state"] == DailyWorkflowState.COMPLETED.value
+    review = out.get("review") or {}
+    assert review.get("session_date") == "2026-08-03"
 
 
 @pytest.mark.asyncio

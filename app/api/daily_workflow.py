@@ -166,10 +166,13 @@ async def daily_closing(
 @router.post("/workflow/daily/run-postmarket")
 async def daily_postmarket(
     venue: str | None = Query(default=None, description="US | AU | auto"),
+    session_date: str | None = Query(
+        default=None, description="YYYY-MM-DD; default is today in the venue TZ"
+    ),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     try:
-        result = await _svc(session, venue).run_postmarket()
+        result = await _svc(session, venue).run_postmarket(session_date=session_date)
         await session.commit()
         return result
     except HTTPException:

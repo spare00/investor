@@ -769,7 +769,7 @@ class TradePnL(Base, TimestampMixin):
     fees: Mapped[float] = mapped_column(Float, default=0.0)
     estimated_slippage: Mapped[float] = mapped_column(Float, default=0.0)
     return_pct: Mapped[float] = mapped_column(Float, default=0.0)
-    method: Mapped[str] = mapped_column(String(16), default="FIFO")
+    method: Mapped[str] = mapped_column(String(32), default="FIFO")
     conflict_with_broker: Mapped[bool] = mapped_column(Boolean, default=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
 

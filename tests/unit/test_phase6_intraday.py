@@ -22,7 +22,7 @@ from app.intraday.monitor import EXIT_INTENT_REQUIRED, PositionMonitor
 from app.intraday.pnl import apply_fill_fifo
 from app.intraday.risk import DynamicRiskRevalidator
 from app.intraday.service import IntradayService
-from app.models import PositionLifecycle
+from app.models import Execution, Order, PositionLifecycle, TradePnL
 from app.risk import PortfolioRiskView
 from app.schemas.cio import CIODecision, SymbolActionPlan
 from app.schemas.common import MarketRegime, OrderType, PortfolioAction, SymbolAction
@@ -287,6 +287,58 @@ async def test_settlement_scopes_overnight_by_venue(
     assert us["settlement_id"] != au["settlement_id"]
     rows = list((await session.execute(select(PostmarketSettlement))).scalars().all())
     assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_settlement_trade_pnl_method_fits_varchar16(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AU session tags used to overflow Postgres VARCHAR(16) on trade_pnl.method."""
+    from app.intraday.settlement import SettlementService
+    from sqlalchemy import select
+
+    async def _noop_sync(self):  # noqa: ANN001
+        return {"skipped": True}
+
+    monkeypatch.setattr(
+        "app.execution.position_manager.PositionManager.sync_from_broker", _noop_sync
+    )
+    settings = _settings(enabled_venues=["US", "AU"], primary_venue="AU")
+    oid = uuid4()
+    session.add(
+        Order(
+            id=oid,
+            symbol="CBA",
+            side="sell",
+            qty=100,
+            order_type="limit",
+            status="FILLED",
+            idempotency_key=f"cba-{oid}",
+            raw_payload={"venue": "AU"},
+        )
+    )
+    session.add(
+        Execution(
+            id=uuid4(),
+            order_id=oid,
+            symbol="CBA",
+            qty=100,
+            price=170.0,
+            executed_at=datetime(2026, 8, 20, 5, 0, tzinfo=UTC),
+        )
+    )
+    await session.flush()
+    out = await SettlementService(session, settings=settings, venue="AU").settle(
+        session_date="2026-08-20", venue="AU"
+    )
+    assert "settlement_id" in out
+    rows = list((await session.execute(select(TradePnL))).scalars().all())
+    assert rows
+    for row in rows:
+        assert len(row.method) <= 16
+        assert row.method == "FIFO"
+        assert (row.payload or {}).get("venue") == "AU"
+        assert (row.payload or {}).get("session_date") == "2026-08-20"
 
 
 @pytest.mark.asyncio

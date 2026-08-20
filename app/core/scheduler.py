@@ -82,6 +82,14 @@ async def _reap_stale_running_jobs(session: Any, settings: Settings, now: dateti
     return len(rows)
 
 
+async def _rollback_quietly(session: Any) -> None:
+    """Clear a failed flush so later commits (job status, leases) can succeed."""
+    try:
+        await session.rollback()
+    except Exception:  # noqa: BLE001
+        logger.exception("scheduler_session_rollback_failed")
+
+
 def _observe_scheduler_job(
     job: Any,
     *,
@@ -361,6 +369,7 @@ async def _dispatch_due_jobs() -> None:
                         from app.market.venues import job_key_base
 
                         resume = job_key_base(job.job_key).startswith("postmarket_eval")
+                        await _rollback_quietly(session)
                         await session.execute(
                             update(ScheduledJobRecord)
                             .where(ScheduledJobRecord.id == job.id)
@@ -414,15 +423,34 @@ async def _dispatch_due_jobs() -> None:
                     logger.info("scheduler_job_done", **entry)
                     await session.commit()
                 except DailyWorkflowError as exc:
-                    job.status = "skipped"
-                    job.error = str(exc)
-                    job.completed_at = datetime.now(UTC)
+                    from sqlalchemy import update as sa_update
+
+                    await _rollback_quietly(session)
+                    await session.execute(
+                        sa_update(ScheduledJobRecord)
+                        .where(ScheduledJobRecord.id == job.id)
+                        .values(
+                            status="skipped",
+                            error=str(exc)[:500],
+                            completed_at=datetime.now(UTC),
+                        )
+                    )
                     logger.warning("scheduler_job_skipped", job=job.job_key, error=str(exc))
                     await session.commit()
                 except Exception as exc:  # noqa: BLE001
-                    job.status = "failed"
-                    job.error = str(exc)[:500]
-                    job.completed_at = datetime.now(UTC)
+                    from sqlalchemy import update as sa_update
+
+                    err = str(exc)[:500]
+                    await _rollback_quietly(session)
+                    await session.execute(
+                        sa_update(ScheduledJobRecord)
+                        .where(ScheduledJobRecord.id == job.id)
+                        .values(
+                            status="failed",
+                            error=err,
+                            completed_at=datetime.now(UTC),
+                        )
+                    )
                     try:
                         _observe_scheduler_job(
                             job,
@@ -438,13 +466,23 @@ async def _dispatch_due_jobs() -> None:
                         await leases.release(job_lease, "scheduler")
                     except LeaseError:
                         pass
+                    except Exception:  # noqa: BLE001
+                        await _rollback_quietly(session)
+                        try:
+                            await leases.release(job_lease, "scheduler")
+                        except Exception:  # noqa: BLE001
+                            logger.exception("scheduler_job_lease_release_failed")
             await session.commit()
         finally:
+            await _rollback_quietly(session)
             try:
                 await leases.release("scheduler:dispatch", "scheduler")
                 await session.commit()
             except LeaseError:
                 await session.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception("scheduler_dispatch_lease_release_failed")
+                await _rollback_quietly(session)
 
         # Catch-up (may run LLM) outside dispatch lease so long analysis does not
         # block due-job ticks. Venue analysis leases still serialize the work.
@@ -477,6 +515,28 @@ async def _dispatch_due_jobs() -> None:
                     logger.error(
                         "scheduler_missed_exits_timeout",
                         venue=venue.value,
+                    )
+                try:
+                    recovered = await asyncio.wait_for(
+                        svc.retry_incomplete_postmarket(now=now),
+                        timeout=240,
+                    )
+                    if not recovered.get("skipped", True):
+                        logger.info(
+                            "scheduler_postmarket_recovered",
+                            venue=venue.value,
+                            state=recovered.get("current_state"),
+                        )
+                except TimeoutError:
+                    logger.error(
+                        "scheduler_postmarket_retry_timeout",
+                        venue=venue.value,
+                    )
+                except DailyWorkflowError as exc:
+                    logger.warning(
+                        "scheduler_postmarket_retry_skipped",
+                        venue=venue.value,
+                        error=str(exc),
                     )
                 await session.commit()
             for venue in enabled_venues(settings):
