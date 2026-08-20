@@ -291,7 +291,11 @@ class IbkrBroker:
             con_id=request.con_id,
         )
         self._stamp_contract_exchange(contract, request)
-        from app.brokers.venue_orders import apply_marketable_limit, uses_marketable_limit
+        from app.brokers.venue_orders import (
+            apply_marketable_limit,
+            is_sane_equity_price,
+            uses_marketable_limit,
+        )
 
         exchange = getattr(contract, "primaryExchange", None) or getattr(contract, "exchange", None)
         currency = str(getattr(contract, "currency", "") or "")
@@ -299,7 +303,20 @@ class IbkrBroker:
             request.venue, str(exchange) if exchange else None
         ) or currency.upper() == "AUD"
         if au_book:
+            try:
+                ib.reqMarketDataType(3)
+            except Exception:  # noqa: BLE001
+                pass
             tape = await self._snapshot_tape(ib, contract)
+            if not any(is_sane_equity_price(v) for v in tape.values()):
+                fb = await self._last_from_positions(request.symbol)
+                if fb is not None:
+                    tape["last"] = fb
+                    logger.warning(
+                        "asx_tape_from_position",
+                        symbol=request.symbol,
+                        last=round(fb, 4),
+                    )
             try:
                 otype, limit = apply_marketable_limit(
                     venue=request.venue or "AU",
@@ -403,6 +420,27 @@ class IbkrBroker:
                 except Exception:  # noqa: BLE001
                     pass
         return out
+
+    async def _last_from_positions(self, symbol: str) -> float | None:
+        """Paper ASX often has no MD entitlement; portfolio marks still have a price."""
+        from app.brokers.venue_orders import is_sane_equity_price
+
+        want = str(symbol or "").upper()
+        try:
+            rows = await self.get_positions()
+        except Exception:  # noqa: BLE001
+            return None
+        for p in rows:
+            if str(p.get("symbol") or "").upper() != want:
+                continue
+            qty = abs(float(p.get("qty") or 0))
+            mv = float(p.get("market_value") or 0)
+            if qty > 0 and is_sane_equity_price(abs(mv) / qty):
+                return abs(mv) / qty
+            avg = float(p.get("avg_entry_price") or 0)
+            if is_sane_equity_price(avg):
+                return avg
+        return None
 
     def _find_trade(self, ib: Any, broker_order_id: str) -> Any | None:
         needle = str(broker_order_id)
