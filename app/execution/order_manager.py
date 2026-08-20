@@ -218,6 +218,14 @@ class OrderManager:
                 )
                 return None
             if working and self._is_flatten_intent(intent):
+                same = [w for w in working if w.idempotency_key == intent.idempotency_key]
+                if same:
+                    logger.info(
+                        "order_skip_working_flatten",
+                        symbol=intent.symbol,
+                        key=intent.idempotency_key,
+                    )
+                    return None
                 await self.cancel_working_for_symbol(intent.symbol, side=intent.side)
 
         existing = (

@@ -135,6 +135,50 @@ async def test_skips_partial_exit_when_working_sell_exists(session: AsyncSession
 
 
 @pytest.mark.asyncio
+async def test_skips_flatten_when_same_key_is_working(session: AsyncSession) -> None:
+    from sqlalchemy import select
+
+    from app.models import Order
+
+    broker = SimulatedBroker()
+    om = OrderManager(session, broker=broker, controls=TradingControls(), settings=_exec_settings())
+    key = "hard-stop:vas-lc:2026-08-20"
+    session.add(
+        Order(
+            idempotency_key=key,
+            symbol="VAS",
+            side="sell",
+            qty=876,
+            order_type="limit",
+            limit_price=110.0,
+            status="ACCEPTED",
+            decision_id=uuid4(),
+        )
+    )
+    await session.flush()
+    v = ExecutionValidationResult(
+        approved=True,
+        intents=[
+            ValidatedOrderIntent(
+                symbol="VAS",
+                side="sell",
+                quantity=876,
+                order_type="market",
+                limit_price=None,
+                stop_price=None,
+                idempotency_key=key,
+                decision_id=str(uuid4()),
+                thesis="hard_stop",
+                venue="AU",
+            )
+        ],
+    )
+    assert await om.submit_validated_intents(v) == []
+    row = (await session.execute(select(Order).where(Order.idempotency_key == key))).scalar_one()
+    assert row.status == "ACCEPTED"
+
+
+@pytest.mark.asyncio
 async def test_reuses_cancelled_flatten_key(session: AsyncSession) -> None:
     from app.models import Order
 

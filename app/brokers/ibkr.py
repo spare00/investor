@@ -222,6 +222,18 @@ class IbkrBroker:
             order.account = account
         return order
 
+    def _stamp_contract_exchange(self, contract: Any, request: OrderRequest) -> None:
+        """IBKR error 321 'Missing order exchange' if only primaryExchange is set."""
+        from app.brokers.venue_orders import uses_marketable_limit
+
+        current = str(getattr(contract, "exchange", None) or "").strip()
+        if current:
+            return
+        primary = str(getattr(contract, "primaryExchange", None) or "").strip()
+        currency = str(getattr(contract, "currency", None) or "").strip().upper()
+        au = uses_marketable_limit(request.venue, primary) or currency == "AUD"
+        contract.exchange = primary or ("ASX" if au else "SMART")
+
     def _trade_to_result(self, trade: Any) -> OrderResult:
         status = trade.orderStatus
         filled = float(status.filled or 0)
@@ -278,14 +290,19 @@ class IbkrBroker:
             venue=request.venue,
             con_id=request.con_id,
         )
+        self._stamp_contract_exchange(contract, request)
         from app.brokers.venue_orders import apply_marketable_limit, uses_marketable_limit
 
         exchange = getattr(contract, "primaryExchange", None) or getattr(contract, "exchange", None)
-        if uses_marketable_limit(request.venue, str(exchange) if exchange else None):
+        currency = str(getattr(contract, "currency", "") or "")
+        au_book = uses_marketable_limit(
+            request.venue, str(exchange) if exchange else None
+        ) or currency.upper() == "AUD"
+        if au_book:
             tape = await self._snapshot_tape(ib, contract)
             try:
                 otype, limit = apply_marketable_limit(
-                    venue=request.venue,
+                    venue=request.venue or "AU",
                     exchange=str(exchange) if exchange else None,
                     side=request.side.value,
                     order_type=request.order_type,
@@ -305,6 +322,7 @@ class IbkrBroker:
                 bid=tape.get("bid"),
                 limit=limit,
                 side=request.side.value,
+                exchange=getattr(contract, "exchange", None),
             )
         order = self._build_order(request)
         try:
