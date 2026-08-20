@@ -128,63 +128,65 @@ class IntradayService:
                 )
             )
             if protective_exit:
+                reason = "hard_stop" if stop.triggered else str(
+                    next(
+                        (
+                            r
+                            for r in (result.reasons or [])
+                            if r
+                            in {
+                                "max_holding_time",
+                                "take_profit_triggered",
+                                "stop_triggered",
+                            }
+                        ),
+                        "monitor_exit",
+                    )
+                )
                 if lc.status == "PENDING_CLOSE":
                     entry["exit_skipped"] = "already_pending_close"
+                    intent = None
                 else:
-                    reason = "hard_stop" if stop.triggered else str(
-                        next(
-                            (
-                                r
-                                for r in (result.reasons or [])
-                                if r
-                                in {
-                                    "max_holding_time",
-                                    "take_profit_triggered",
-                                    "stop_triggered",
-                                }
-                            ),
-                            "monitor_exit",
-                        )
-                    )
                     intent = await self._exit_intent(
                         lc, reason=reason, qty=float(lc.quantity or 0)
                     )
-                    if intent is not None:
-                        entry["exit_intent_id"] = str(intent.id)
-                        submitted = 0
-                        if self._should_auto_submit_hard_stops(caps):
-                            submitted = await self._submit_hard_stop(lc)
-                            entry["orders_submitted"] = submitted
-                            if submitted:
-                                entry["notes"] = [
-                                    "hard_stop_orders_submitted"
-                                    if stop.triggered
-                                    else "protective_exit_orders_submitted"
-                                ]
-                        else:
-                            entry["notes"] = [
-                                "hard_stop_intent_pending_submit"
-                                if stop.triggered
-                                else "protective_exit_intent_pending_submit"
-                            ]
-                        if stop.triggered:
-                            try:
-                                from app.alerts.ops import emit_hard_stop_alert
+                if intent is not None:
+                    entry["exit_intent_id"] = str(intent.id)
+                # Unfilled ASX exits stay PENDING_CLOSE; still resubmit the daily key.
+                submitted = 0
+                if self._should_auto_submit_hard_stops(caps):
+                    submitted = await self._submit_hard_stop(lc)
+                    entry["orders_submitted"] = submitted
+                    if submitted:
+                        entry["notes"] = [
+                            "hard_stop_orders_submitted"
+                            if stop.triggered
+                            else "protective_exit_orders_submitted"
+                        ]
+                elif intent is not None:
+                    entry["notes"] = [
+                        "hard_stop_intent_pending_submit"
+                        if stop.triggered
+                        else "protective_exit_intent_pending_submit"
+                    ]
+                if stop.triggered:
+                    try:
+                        from app.alerts.ops import emit_hard_stop_alert
 
-                                await emit_hard_stop_alert(
-                                    self.session,
-                                    self.settings,
-                                    symbol=lc.symbol,
-                                    price=float(prices.get(lc.symbol) or lc.current_price or 0)
-                                    or None,
-                                    stop_price=float(lc.stop_price)
-                                    if lc.stop_price is not None
-                                    else None,
-                                    submitted=bool(submitted),
-                                    intent_id=str(intent.id),
-                                )
-                            except Exception:  # noqa: BLE001
-                                pass
+                        await emit_hard_stop_alert(
+                            self.session,
+                            self.settings,
+                            symbol=lc.symbol,
+                            price=float(prices.get(lc.symbol) or lc.current_price or 0)
+                            or None,
+                            stop_price=float(lc.stop_price)
+                            if lc.stop_price is not None
+                            else None,
+                            submitted=bool(submitted),
+                            intent_id=str(intent.id) if intent is not None else None,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
             if result.verdict == "EMERGENCY_ACTION_REQUIRED":
                 try:
                     from app.alerts.ops import emit_monitor_emergency_alert

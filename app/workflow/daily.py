@@ -289,6 +289,14 @@ class DailyWorkflowService:
                 meta["collection_symbols"] = collect_symbols
                 meta["venue"] = self.venue.value
                 run.metadata_json = meta
+            else:
+                meta = dict(run.metadata_json or {})
+                meta["data_fail_closed"] = False
+                meta["data_fail_closed_reasons"] = []
+                meta["collection_run_id"] = str(data.collection_run_id)
+                meta["collection_symbols"] = collect_symbols
+                meta["venue"] = self.venue.value
+                run.metadata_json = meta
             analysis = await AgentPipeline(settings=self.settings, llm=llm).run_from_collection(
                 collection,
                 portfolio=portfolio,
@@ -759,10 +767,12 @@ class DailyWorkflowService:
         # Safety: position monitor ticks on every unattended eval (before cooldown gate).
         pending: list[Any] = []
         actionable: list[dict[str, Any]] = []
+        cio_actionable: list[dict[str, Any]] = []
         if self.settings.enable_intraday_monitoring:
             try:
                 from sqlalchemy import select as sa_select
 
+                from app.intraday.events import MONITOR_EXECUTED_EVENT_TYPES
                 from app.intraday.monitor import (
                     ANALYSIS_REQUIRED,
                     EMERGENCY_ACTION_REQUIRED,
@@ -810,11 +820,32 @@ class DailyWorkflowService:
                             )
                 except Exception as exc:  # noqa: BLE001
                     meta["last_monitor_price_error"] = str(exc)[:200]
+                if mon_prices:
+                    from app.market.paper_gates import paper_relaxed_data_gates
+
+                    reasons = [
+                        str(r)
+                        for r in (meta.get("data_fail_closed_reasons") or [])
+                        if r
+                    ]
+                    if (
+                        paper_relaxed_data_gates(self.settings)
+                        and meta.get("data_fail_closed")
+                        and (not reasons or reasons == ["missing_core_index_data"])
+                    ):
+                        meta["data_fail_closed"] = False
+                        meta["data_fail_closed_reasons"] = []
+                        meta["data_fail_closed_cleared"] = "paper_live_quotes"
                 mon_rows = await intra.monitor_all(
                     prices=mon_prices or None, venue=self.venue.value
                 )
                 escalate_verdicts = {
                     EXIT_INTENT_REQUIRED,
+                    ANALYSIS_REQUIRED,
+                    EMERGENCY_ACTION_REQUIRED,
+                    RISK_REVIEW_REQUIRED,
+                }
+                cio_escalate = {
                     ANALYSIS_REQUIRED,
                     EMERGENCY_ACTION_REQUIRED,
                     RISK_REVIEW_REQUIRED,
@@ -828,9 +859,19 @@ class DailyWorkflowService:
                         or (r.get("stop") or {}).get("triggered")
                     )
                 ]
+                cio_actionable = [
+                    r
+                    for r in actionable
+                    if (r.get("monitor") or {}).get("verdict") in cio_escalate
+                ]
                 pending = await intra.bus.list_pending_actionable(
                     limit=40, venue=self.venue.value
                 )
+                pending = [
+                    e
+                    for e in pending
+                    if getattr(e, "event_type", "") not in MONITOR_EXECUTED_EVENT_TYPES
+                ]
                 trigger_event_ids = [str(e.id) for e in pending]
                 monitor_summary = {
                     "checked": len([r for r in mon_rows if not r.get("skipped")]),
@@ -885,7 +926,7 @@ class DailyWorkflowService:
             except Exception as exc:  # noqa: BLE001
                 meta["leftover_intraday_flatten_error"] = str(exc)[:240]
 
-        if actionable:
+        if cio_actionable:
             effective_trigger = "risk_change"
         elif pending:
             news_types = {"HIGH_IMPORTANCE_NEWS", "EARNINGS_RELEASE", "SEC_MATERIAL_FILING"}

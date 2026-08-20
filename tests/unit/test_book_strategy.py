@@ -338,3 +338,45 @@ def test_align_blocks_short_reduce_when_swing_holds() -> None:
     )
     assert out.symbol_actions[0].action == SymbolAction.HOLD
     assert out.portfolio_action == PortfolioAction.HOLD
+
+
+def test_align_flattens_day_partial_without_tape() -> None:
+    from app.schemas.cio import CIODecision, SymbolActionPlan
+    from app.schemas.common import BreadthState, OrderType
+    from app.schemas.quant_strategist import QuantStrategistOutput
+
+    decision = CIODecision(
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.REDUCE,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="VAS",
+                action=SymbolAction.PARTIAL_SELL,
+                confidence=70,
+                target_position_pct=5,
+                order_type=OrderType.MARKET,
+                thesis="llm leftover reduce",
+                invalidation="n/a",
+            )
+        ],
+        cash_target_pct=80,
+        risk_approval=True,
+    )
+    quant = QuantStrategistOutput(
+        timestamp=NOW,
+        market_trend_state=TrendState.UP,
+        market_momentum_state=MomentumState.STEADY,
+        market_volatility_state=VolatilityState.NORMAL,
+        market_breadth_state=BreadthState.MIXED,
+        market_liquidity_state=LiquidityState.NORMAL,
+        symbol_views=[],
+        data_quality_score=0.8,
+    )
+    out = align_cio_playbook_exits(
+        decision,
+        quant,
+        [{"symbol": "VAS", "horizon": "day"}],
+        held_symbols=["VAS"],
+    )
+    assert out.symbol_actions[0].action == SymbolAction.SELL

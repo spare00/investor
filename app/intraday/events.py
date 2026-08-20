@@ -32,6 +32,18 @@ PRIORITY: dict[str, int] = {
     "MARKET_DATA_UPDATE": 20,
 }
 
+# Monitor already submits flatten/stops for these. CIO reanalysis only stacks
+# unfilled PARTIAL_SELLs (and fake US 8-Ks halt the AU book).
+MONITOR_EXECUTED_EVENT_TYPES = frozenset(
+    {
+        "STOP_TRIGGERED",
+        "MAX_HOLDING_TIME_REACHED",
+        "TAKE_PROFIT_TRIGGERED",
+        "RISK_LIMIT_BREACH",
+    }
+)
+_FAKE_SEC_PREFIX = "sec:0000000000"
+
 
 @dataclass(slots=True)
 class EventPublishResult:
@@ -250,6 +262,11 @@ class IntradayEventBus:
                 ev_venue = payload.get("venue")
                 if ev_venue and str(ev_venue).upper() != book:
                     continue
+                if book == "AU" and ev.event_type == "SEC_MATERIAL_FILING":
+                    continue
+            key = str(ev.deduplication_key or "")
+            if key.startswith(_FAKE_SEC_PREFIX):
+                continue
             out.append(ev)
             if len(out) >= limit:
                 break

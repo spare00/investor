@@ -182,7 +182,7 @@ class UniverseService:
 
         if not self.is_dynamic():
             base = set(allow) if allow is not None else set(self.settings.trade_allowlist)
-            return sorted({*base, *held, bench})
+            return self._with_index_symbols(sorted({*base, *held, bench}), want)
 
         await self.ensure_seeded()
         active_set = {r.symbol.upper() for r in await self.list_active()}
@@ -197,10 +197,13 @@ class UniverseService:
             # Drop sold / paused names that lingered in an older focus snapshot.
             focus = [str(s).upper() for s in latest.symbols if str(s).upper() in allowed]
             if focus or held_scoped:
-                return await self._filter_collection_symbols(
-                    sorted({*focus, *held_scoped, bench}),
-                    held=set(held_scoped),
-                    bench=bench,
+                return self._with_index_symbols(
+                    await self._filter_collection_symbols(
+                        sorted({*focus, *held_scoped, bench}),
+                        held=set(held_scoped),
+                        bench=bench,
+                    ),
+                    want,
                 )
 
         active = await self.list_active()
@@ -208,11 +211,21 @@ class UniverseService:
             active = [r for r in active if r.symbol.upper() in allow]
         ranked = sorted(active, key=lambda r: (-r.priority, r.symbol))
         focus = [r.symbol.upper() for r in ranked[: self.settings.universe_focus_limit]]
-        return await self._filter_collection_symbols(
-            sorted({*focus, *held_scoped, bench}),
-            held=set(held_scoped),
-            bench=bench,
+        return self._with_index_symbols(
+            await self._filter_collection_symbols(
+                sorted({*focus, *held_scoped, bench}),
+                held=set(held_scoped),
+                bench=bench,
+            ),
+            want,
         )
+
+    def _with_index_symbols(self, symbols: list[str], venue: Any) -> list[str]:
+        if venue is None:
+            return list(symbols)
+        from app.market.book_context import index_symbols_for_venue
+
+        return sorted({str(s).upper() for s in symbols} | set(index_symbols_for_venue(venue, self.settings)))
 
     async def _filter_collection_symbols(
         self,

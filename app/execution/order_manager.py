@@ -275,10 +275,36 @@ class OrderManager:
         try:
             order_type = intent.order_type
             limit_price = intent.limit_price
-            if order_type in {"limit", "stop_limit"} and limit_price is None:
-                raise BrokerError(f"{intent.symbol}: limit order missing limit_price")
             venue = intent.venue or (row.raw_payload or {}).get("venue")
             con_id = intent.con_id or (row.raw_payload or {}).get("con_id")
+            from app.brokers.venue_orders import apply_marketable_limit, uses_marketable_limit
+
+            if uses_marketable_limit(str(venue) if venue else None):
+                from app.market.live_prices import fetch_live_last_prices
+
+                live: dict[str, float] = {}
+                try:
+                    live = await fetch_live_last_prices(
+                        [intent.symbol],
+                        settings=self.settings,
+                        con_ids={intent.symbol.upper(): int(con_id)} if con_id else None,
+                    )
+                except Exception:  # noqa: BLE001
+                    live = {}
+                last = live.get(str(intent.symbol).upper())
+                if last:
+                    try:
+                        order_type, limit_price = apply_marketable_limit(
+                            venue=str(venue) if venue else None,
+                            side=intent.side,
+                            order_type=order_type,
+                            limit_price=limit_price,
+                            last=last,
+                        )
+                    except ValueError:
+                        pass
+            if order_type in {"limit", "stop_limit"} and limit_price is None:
+                raise BrokerError(f"{intent.symbol}: limit order missing limit_price")
             result = await self.broker.submit_order(
                 OrderRequest(
                     symbol=intent.symbol,

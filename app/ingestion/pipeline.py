@@ -146,11 +146,9 @@ class DataCollectionPipeline:
         from app.market.book_context import index_symbols_for_venue
 
         indexes = list(index_symbols_for_venue(book or Venue.US, self.settings))
-        # US index overlays only for US (or unscoped) books — avoid SPY noise on ASX runs.
-        if book != Venue.AU:
-            for s in indexes:
-                if s not in universe:
-                    universe = [s, *universe]
+        for s in indexes:
+            if s not in universe:
+                universe = [s, *universe]
 
         result = DataLayerResult(
             collection_run_id=run_id,
@@ -295,7 +293,7 @@ class DataCollectionPipeline:
         if any(m.get("status") == "error" for m in metas) and not quotes:
             reasons.append("providers_failed_minimum_unmet")
 
-        from app.market.paper_gates import relax_fail_closed_reasons
+        from app.market.paper_gates import paper_relaxed_data_gates, relax_fail_closed_reasons
 
         reasons, paper_warnings = relax_fail_closed_reasons(
             reasons, quote_count=len(quotes), settings=self.settings
@@ -369,10 +367,14 @@ class DataCollectionPipeline:
             "components_sample": quotes[0].quality.to_dict() if quotes and quotes[0].quality else {},
         }
         result.legacy_bundle = legacy
-        result.fail_closed = bool(reasons) or (legacy.fail_closed if legacy else True)
-        result.fail_closed_reasons = reasons or (
-            list(legacy.errors) if legacy and legacy.fail_closed else []
-        )
+        if paper_relaxed_data_gates(self.settings) and quotes:
+            result.fail_closed = bool(reasons)
+            result.fail_closed_reasons = list(reasons)
+        else:
+            result.fail_closed = bool(reasons) or (legacy.fail_closed if legacy else True)
+            result.fail_closed_reasons = reasons or (
+                list(legacy.errors) if legacy and legacy.fail_closed else []
+            )
         result.status = "failed" if result.fail_closed and "providers_failed" in ",".join(reasons) else (
             "completed_with_warnings" if result.fail_closed else "completed"
         )

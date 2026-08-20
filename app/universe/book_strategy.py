@@ -516,6 +516,17 @@ def align_cio_playbook_exits(
                     )
                 )
                 continue
+            if hz in {"scalp", "day"} and action in {SymbolAction.REDUCE, SymbolAction.PARTIAL_SELL}:
+                changed = True
+                updated.append(
+                    plan.model_copy(
+                        update={
+                            "action": SymbolAction.SELL,
+                            "thesis": f"{hz}: flatten leftover",
+                        }
+                    )
+                )
+                continue
             updated.append(plan)
             continue
         allowed = exit_action(

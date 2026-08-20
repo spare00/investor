@@ -39,7 +39,8 @@ def _map_status(raw: str | None) -> OrderStatus:
         "PreSubmitted": OrderStatus.ACCEPTED,
         "Submitted": OrderStatus.ACCEPTED,
         "ApiPending": OrderStatus.NEW,
-        "ValidationError": OrderStatus.ACCEPTED,  # often outside-RTH hold (warn 399), not a hard reject
+        # Native MKT on ASX comes back ValidationError; treat as dead so we resubmit LMT.
+        "ValidationError": OrderStatus.REJECTED,
         "Filled": OrderStatus.FILLED,
         "PartiallyFilled": OrderStatus.PARTIAL,
         "Cancelled": OrderStatus.CANCELED,
@@ -233,6 +234,9 @@ class IbkrBroker:
         action = str(getattr(order, "action", "") or "BUY")
         qty = float(getattr(order, "totalQuantity", 0) or 0)
         otype = str(getattr(order, "orderType", "") or "MKT")
+        from app.brokers.venue_orders import is_sane_equity_price
+
+        raw_lmt = float(getattr(order, "lmtPrice", 0) or 0)
         raw = {
             "order_id": order_id,
             "perm_id": perm_id,
@@ -246,7 +250,7 @@ class IbkrBroker:
             "side": "buy" if action.upper() == "BUY" else "sell",
             "qty": qty,
             "order_type": otype.lower(),
-            "limit_price": float(getattr(order, "lmtPrice", 0) or 0) or None,
+            "limit_price": raw_lmt if is_sane_equity_price(raw_lmt) else None,
         }
         return OrderResult(
             broker_order_id=broker_id,
@@ -274,28 +278,34 @@ class IbkrBroker:
             venue=request.venue,
             con_id=request.con_id,
         )
-        from app.brokers.venue_orders import aggressive_limit_price, uses_marketable_limit
+        from app.brokers.venue_orders import apply_marketable_limit, uses_marketable_limit
 
         exchange = getattr(contract, "primaryExchange", None) or getattr(contract, "exchange", None)
-        if uses_marketable_limit(request.venue, str(exchange) if exchange else None) and (
-            str(request.order_type or "market").lower() == "market"
-        ):
-            last = await self._snapshot_last(ib, contract)
-            if last is not None and last > 0:
-                try:
-                    request.limit_price = aggressive_limit_price(
-                        side=request.side.value, last=last
-                    )
-                    request.order_type = "limit"
-                    logger.info(
-                        "asx_marketable_limit",
-                        symbol=request.symbol,
-                        last=round(last, 4),
-                        limit=request.limit_price,
-                        side=request.side.value,
-                    )
-                except ValueError:
-                    logger.warning("asx_marketable_limit_skipped", symbol=request.symbol, last=last)
+        if uses_marketable_limit(request.venue, str(exchange) if exchange else None):
+            tape = await self._snapshot_tape(ib, contract)
+            try:
+                otype, limit = apply_marketable_limit(
+                    venue=request.venue,
+                    exchange=str(exchange) if exchange else None,
+                    side=request.side.value,
+                    order_type=request.order_type,
+                    limit_price=request.limit_price,
+                    last=tape.get("last"),
+                    bid=tape.get("bid"),
+                    ask=tape.get("ask"),
+                )
+            except ValueError as exc:
+                raise BrokerError(f"asx_marketable_limit_no_price:{request.symbol}:{exc}") from exc
+            request.order_type = otype
+            request.limit_price = limit
+            logger.info(
+                "asx_marketable_limit",
+                symbol=request.symbol,
+                last=tape.get("last"),
+                bid=tape.get("bid"),
+                limit=limit,
+                side=request.side.value,
+            )
         order = self._build_order(request)
         try:
             trade = ib.placeOrder(contract, order)
@@ -325,37 +335,56 @@ class IbkrBroker:
         return result
 
     async def _snapshot_last(self, ib: Any, contract: Any) -> float | None:
-        """Best last/mid from a short IBKR snapshot. None if the tape is dark."""
-        import math
+        tape = await self._snapshot_tape(ib, contract)
+        return tape.get("last") or tape.get("bid") or tape.get("ask")
 
-        ticker = None
-        try:
-            ticker = ib.reqMktData(contract, "", False, False)
-            await asyncio.sleep(0.6)
-            candidates: list[float] = []
+    async def _snapshot_tape(self, ib: Any, contract: Any) -> dict[str, float | None]:
+        """Best last/bid/ask from tickers, then a short streaming snapshot."""
+        from app.brokers.venue_orders import is_sane_equity_price
+
+        out: dict[str, float | None] = {"last": None, "bid": None, "ask": None}
+
+        def _take(ticker: Any) -> None:
             try:
                 mkt = float(ticker.marketPrice())
-                if math.isfinite(mkt) and mkt > 0:
-                    candidates.append(mkt)
             except (TypeError, ValueError):
-                pass
-            for attr in ("last", "close", "bid", "ask"):
+                mkt = None
+            if is_sane_equity_price(mkt) and out["last"] is None:
+                out["last"] = float(mkt)
+            for dest, attr in (("last", "last"), ("last", "close"), ("bid", "bid"), ("ask", "ask")):
                 raw = getattr(ticker, attr, None)
                 try:
                     val = float(raw)
                 except (TypeError, ValueError):
                     continue
-                if math.isfinite(val) and val > 0:
-                    candidates.append(val)
-            return candidates[0] if candidates else None
+                if is_sane_equity_price(val) and out[dest] is None:
+                    out[dest] = val
+
+        try:
+            tickers = await ib.reqTickersAsync(contract)
+            await asyncio.sleep(0.4)
+            tickers = await ib.reqTickersAsync(contract)
+            for ticker in tickers or []:
+                _take(ticker)
         except Exception:  # noqa: BLE001
-            return None
+            pass
+        if any(out.values()):
+            return out
+
+        ticker = None
+        try:
+            ticker = ib.reqMktData(contract, "", True, False)
+            await asyncio.sleep(0.8)
+            _take(ticker)
+        except Exception:  # noqa: BLE001
+            pass
         finally:
             if ticker is not None:
                 try:
                     ib.cancelMktData(contract)
                 except Exception:  # noqa: BLE001
                     pass
+        return out
 
     def _find_trade(self, ib: Any, broker_order_id: str) -> Any | None:
         needle = str(broker_order_id)

@@ -70,9 +70,9 @@ async def test_evaluate_intraday_escalates_stop_to_risk_change(session: AsyncSes
     intra = out["intraday"]
     assert intra.get("monitor")
     assert (intra["monitor"].get("actionable") or 0) >= 1
-    assert intra.get("trigger") == "risk_change"
     events = list((await session.execute(select(IntradayEvent))).scalars().all())
     assert any(e.event_type == "STOP_TRIGGERED" for e in events)
+    # Protective exits are submitted by the monitor; they must not fan into CIO.
 
 
 @pytest.mark.asyncio

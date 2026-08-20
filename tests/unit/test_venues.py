@@ -127,6 +127,7 @@ def test_collection_universe_au_uses_vas_not_spy(monkeypatch: pytest.MonkeyPatch
             symbols = await univ.collection_universe(venue="AU")
             assert "VAS" in symbols
             assert "SPY" not in symbols
+            assert "IOZ" in symbols or "NDQ" in symbols
             assert "BHP" in symbols or "JPEQ" in symbols
         await engine.dispose()
 
