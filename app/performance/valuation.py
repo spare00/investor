@@ -57,8 +57,11 @@ def build_portfolio_valuation(
     for p in positions:
         qty = float(p.get("quantity", 0))
         side = str(p.get("side", "long")).lower()
-        price = float(p.get("price", p.get("current_price", 0)))
-        mv = abs(qty * price)
+        price = float(p.get("price") or p.get("current_price") or 0)
+        if "market_value" in p and p.get("market_value") is not None:
+            mv = abs(float(p.get("market_value") or 0))
+        else:
+            mv = abs(qty * price)
         if side == "short" or qty < 0:
             short_mv += mv
             side = "short"
@@ -93,3 +96,38 @@ def build_portfolio_valuation(
         source_snapshot_ids=source_snapshot_ids or [],
         positions=pos_out,
     )
+
+
+def positions_from_snapshot_payload(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Recover positions for Performance display.
+
+    Older snapshots stored holdings only in fingerprint tuples
+    ``[symbol, venue, qty, market_value]``, not a ``positions`` list. IBKR
+    marks often have market_value without a last price.
+    """
+    data = payload or {}
+    raw = data.get("positions")
+    if isinstance(raw, list) and raw and isinstance(raw[0], dict) and raw[0].get("symbol"):
+        return list(raw)
+    out: list[dict[str, Any]] = []
+    fingerprint = data.get("fingerprint") if isinstance(data.get("fingerprint"), dict) else {}
+    for row in fingerprint.get("positions") or []:
+        if not isinstance(row, (list, tuple)) or len(row) < 4:
+            continue
+        try:
+            qty = float(row[2] or 0)
+            mv = float(row[3] or 0)
+        except (TypeError, ValueError):
+            continue
+        if qty == 0:
+            continue
+        out.append(
+            {
+                "symbol": str(row[0]),
+                "quantity": qty,
+                "side": "long" if qty > 0 else "short",
+                "price": abs(mv / qty),
+                "market_value": abs(mv),
+            }
+        )
+    return out

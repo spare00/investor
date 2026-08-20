@@ -122,10 +122,14 @@ async def performance_trades(
 @router.get("/performance/execution")
 async def performance_execution(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     rows = list((await session.execute(select(Order))).scalars().all())
-    filled = [o for o in rows if o.status in {"filled", "partially_filled"}]
-    partial = [o for o in rows if o.status == "partially_filled"]
-    cancelled = [o for o in rows if o.status in {"canceled", "cancelled"}]
-    rejected = [o for o in rows if o.status == "rejected"]
+
+    def _st(order: Order) -> str:
+        return str(order.status or "").strip().lower()
+
+    filled = [o for o in rows if _st(o) in {"filled", "partially_filled"}]
+    partial = [o for o in rows if _st(o) == "partially_filled"]
+    cancelled = [o for o in rows if _st(o) in {"canceled", "cancelled"}]
+    rejected = [o for o in rows if _st(o) == "rejected"]
     stats = {
         "total_orders": len(rows),
         "filled": len(filled),

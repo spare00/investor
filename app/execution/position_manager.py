@@ -260,6 +260,23 @@ class PositionManager:
                 payload={
                     "account": safe_account,
                     "position_count": len(parsed),
+                    "positions": [
+                        {
+                            "symbol": p["symbol"],
+                            "quantity": p["quantity"],
+                            "side": "short" if float(p["quantity"]) < 0 else "long",
+                            "price": (
+                                abs(float(p["market_value"]) / float(p["quantity"]))
+                                if float(p["quantity"])
+                                else 0.0
+                            ),
+                            "market_value": p["market_value"],
+                            "cost_basis": p["cost_basis"],
+                            "venue": p.get("venue"),
+                            "currency": p.get("currency"),
+                        }
+                        for p in parsed
+                    ],
                     "fingerprint": fingerprint,
                     "base_currency": base_currency,
                     "cash_by_currency": cash_by_currency,

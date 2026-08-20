@@ -61,6 +61,7 @@ from app.performance.risk import (
 )
 from app.performance.trades import ClosedTrade, compute_trade_metrics, group_trade_metrics_by_horizon
 from app.performance.types import CALCULATION_VERSION, MetricResult
+from app.performance.valuation import build_portfolio_valuation, positions_from_snapshot_payload
 
 
 def _jsonable(value: Any) -> Any:
@@ -111,9 +112,6 @@ def _benchmark_for_venue(venue: str, settings: Settings) -> str:
     if str(venue).upper() == "AU":
         return str(settings.primary_benchmark_au or "VAS").upper()
     return str(settings.primary_benchmark or "SPY").upper()
-
-
-from app.performance.valuation import build_portfolio_valuation
 
 
 class PerformanceService:
@@ -199,14 +197,25 @@ class PerformanceService:
         snap = latest.scalar_one_or_none()
         valuation = None
         if snap:
+            payload = snap.payload if isinstance(snap.payload, dict) else {}
             valuation = build_portfolio_valuation(
                 portfolio_id="default",
                 as_of=snap.as_of,
                 valuation_kind="mark_to_market",
                 cash=snap.cash,
-                positions=snap.payload.get("positions", []) if snap.payload else [],
+                positions=positions_from_snapshot_payload(payload),
                 source_snapshot_ids=[str(snap.id)],
             )
+            # Snapshot equity is the broker mark; don't let a cash-only rebuild
+            # overwrite it when positions were omitted from an older payload.
+            if float(snap.equity or 0) > 0:
+                valuation["equity"] = float(snap.equity)
+                if valuation["gross_exposure"] <= 0 and float(snap.gross_exposure_pct or 0) > 0:
+                    valuation["long_market_value"] = max(
+                        0.0, float(snap.equity) - float(snap.cash or 0)
+                    )
+                    valuation["gross_exposure"] = valuation["long_market_value"]
+                    valuation["net_exposure"] = valuation["long_market_value"]
         bench = load_and_align(benchmark_name, curve) if curve else None
         return {
             "valuation": valuation,

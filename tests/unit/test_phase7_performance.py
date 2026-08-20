@@ -318,3 +318,33 @@ def test_valuation_dedup() -> None:
     assert v["equity"] == pytest.approx(15_000.0)
     key = valuation_dedup_key("default", as_of, "MARKET_CLOSE")
     assert "default" in key
+
+
+def test_valuation_uses_market_value_when_price_missing() -> None:
+    as_of = datetime(2026, 8, 20, tzinfo=UTC)
+    v = build_portfolio_valuation(
+        portfolio_id="default",
+        as_of=as_of,
+        valuation_kind="mark_to_market",
+        cash=890_418.41,
+        positions=[
+            {
+                "symbol": "BHP",
+                "quantity": 1575,
+                "side": "long",
+                "market_value": 102_948.3,
+            }
+        ],
+    )
+    assert v["long_market_value"] == pytest.approx(102_948.3)
+    assert v["equity"] == pytest.approx(993_366.71)
+
+
+def test_positions_from_fingerprint_tuples() -> None:
+    from app.performance.valuation import positions_from_snapshot_payload
+
+    rows = positions_from_snapshot_payload(
+        {"fingerprint": {"positions": [["BHP", "AU", 1575.0, 102948.3]]}}
+    )
+    assert rows[0]["symbol"] == "BHP"
+    assert rows[0]["price"] == pytest.approx(102948.3 / 1575.0)
