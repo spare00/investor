@@ -41,7 +41,7 @@ class UniverseManagerInput(StrictModel):
     themes: list[str] = Field(default_factory=list)
     horizon_policies: list[dict] = Field(default_factory=list)
     watchlist_limit: int = 40
-    focus_limit: int = 12
+    focus_limit: int = 10
     objective: str = (
         "Maximize expected return while minimizing loss via horizon-appropriate "
         "selection across enabled venues; never review the entire market each session."
@@ -57,6 +57,10 @@ class UniverseManagerOutput(StrictModel):
     timestamp: datetime
     proposals: list[WatchlistProposal] = Field(default_factory=list)
     focus_symbols: list[str] = Field(default_factory=list)
+    industries: list[str] = Field(
+        default_factory=list,
+        description="Sectors overweight in this week's membership review",
+    )
     focus_rationale: str = ""
     notes: list[str] = Field(default_factory=list)
     data_quality_score: float = Field(ge=0.0, le=1.0, default=0.8)
@@ -66,6 +70,15 @@ class UniverseManagerOutput(StrictModel):
     @classmethod
     def _none_to_list(cls, value: object) -> object:
         return [] if value is None else value
+
+    @field_validator("industries", mode="before")
+    @classmethod
+    def _coerce_industries(cls, value: object) -> object:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [p.strip() for p in value.replace(";", ",").split(",") if p.strip()]
+        return value
 
     @field_validator("notes", mode="before")
     @classmethod

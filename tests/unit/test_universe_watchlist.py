@@ -64,6 +64,37 @@ async def test_seed_and_entry_universe(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_promoted_candidate_is_entry_eligible(session: AsyncSession) -> None:
+    from app.models import WatchlistSymbol
+
+    settings = Settings(
+        universe_mode="dynamic",
+        trade_allowlist=["SPY"],
+        enabled_venues=["US"],
+        universe_manager_enabled=False,
+        universe_screener_enabled=False,
+    )
+    svc = UniverseService(session, settings=settings)
+    await svc.ensure_seeded()
+    session.add(
+        WatchlistSymbol(
+            symbol="PLTR",
+            horizon="short",
+            status="active",
+            priority=80,
+            thesis="weekend promote",
+            source="universe_manager",
+        )
+    )
+    await session.flush()
+    entries = await svc.entry_universe(venue="US")
+    assert "SPY" in entries
+    assert "PLTR" in entries
+    au = await svc.entry_universe(venue="AU")
+    assert "PLTR" not in au
+
+
+@pytest.mark.asyncio
 async def test_au_seed_puts_ndq_on_scalp(session: AsyncSession) -> None:
     from sqlalchemy import select
 

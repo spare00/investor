@@ -165,7 +165,7 @@ class Settings(BaseSettings):
 
     # Universe: static = TRADE_ALLOWLIST only; dynamic = AI watchlist (seeded from allowlist).
     universe_mode: str = "dynamic"  # static | dynamic
-    universe_focus_limit: int = 12
+    universe_focus_limit: int = 10
     universe_watchlist_limit: int = 40
     universe_manager_enabled: bool = True
     # How often Universe Manager may call the LLM (days). Premarket/scheduler

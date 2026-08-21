@@ -11,6 +11,7 @@ from app.agents.briefs import (
     market_intelligence_brief,
     quant_brief,
     risk_brief,
+    universe_brief,
 )
 from app.agents.cio import CIOAgent
 from app.agents.market_intelligence import MarketIntelligenceAgent
@@ -208,3 +209,30 @@ def test_mi_agent_uses_brief() -> None:
     payload = MarketIntelligenceInput(as_of=_now(), news_items=[], allowlist=["SPY"])
     text = MarketIntelligenceAgent().build_user_prompt(payload)
     assert text.startswith("QUESTION:")
+
+
+def test_universe_brief_is_industry_then_working_set() -> None:
+    from app.schemas.universe_manager import UniverseManagerInput
+
+    text = universe_brief(
+        UniverseManagerInput(
+            as_of=_now(),
+            current_watchlist=[
+                {"symbol": "BHP", "horizon": "short", "priority": 80, "status": "active"}
+            ],
+            holdings=["BHP"],
+            seed_pool=["SPY", "BHP"],
+            candidate_pool=["PLTR", "CSL"],
+            enabled_venues=["US", "AU"],
+            watchlist_limit=40,
+            focus_limit=10,
+            market_regime="risk_on",
+            themes=["resources"],
+        )
+    )
+    assert text.startswith("QUESTION:")
+    assert "Pick 4-8 industries" in text
+    assert "membership_by_sector" in text
+    assert "working" in text
+    assert "PLTR" in text
+    assert "BHP" in text

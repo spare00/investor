@@ -210,6 +210,107 @@ def ranked_candidate_pool(
     return boosted
 
 
+# Index-style sector tags for weekend membership review (not a full-market map).
+SECTOR_BY_SYMBOL: dict[str, str] = {
+    "SPY": "us_index",
+    "QQQ": "us_index",
+    "IWM": "us_index",
+    "DIA": "us_index",
+    "XLK": "tech",
+    "SMH": "semiconductor",
+    "SOXX": "semiconductor",
+    "NVDA": "semiconductor",
+    "AMD": "semiconductor",
+    "AVGO": "semiconductor",
+    "MU": "semiconductor",
+    "INTC": "semiconductor",
+    "AAPL": "tech",
+    "MSFT": "tech",
+    "GOOGL": "tech",
+    "META": "tech",
+    "AMZN": "consumer",
+    "CRM": "software",
+    "ORCL": "software",
+    "NOW": "software",
+    "SNOW": "software",
+    "NFLX": "consumer",
+    "TSLA": "growth",
+    "IONQ": "growth",
+    "PLTR": "ai",
+    "CRWD": "cyber",
+    "PANW": "cyber",
+    "XLF": "finance",
+    "JPM": "finance",
+    "GS": "finance",
+    "V": "finance",
+    "MA": "finance",
+    "PYPL": "finance",
+    "COIN": "finance",
+    "XLE": "energy",
+    "XOM": "energy",
+    "XBI": "biotech",
+    "UNH": "biotech",
+    "COST": "consumer",
+    "WMT": "consumer",
+    "HD": "consumer",
+    "DIS": "consumer",
+    "UBER": "consumer",
+    "SHOP": "growth",
+    "ARKK": "growth",
+    "EEM": "international",
+    "BA": "industrials",
+    "CAT": "industrials",
+    "VAS": "asx_index",
+    "IOZ": "asx_index",
+    "NDQ": "asx_index",
+    "JPEQ": "asx_index",
+    "BHP": "resources",
+    "RIO": "resources",
+    "FMG": "resources",
+    "MIN": "resources",
+    "CBA": "asx_banks",
+    "WBC": "asx_banks",
+    "NAB": "asx_banks",
+    "ANZ": "asx_banks",
+    "MQG": "asx_banks",
+    "CSL": "biotech",
+    "WES": "consumer",
+    "WOW": "consumer",
+    "COL": "consumer",
+    "TLS": "telecom",
+    "GMG": "property",
+    "TCL": "infrastructure",
+    "ALL": "consumer",
+    "QAN": "industrials",
+    "STO": "energy",
+    "ORG": "energy",
+    "WDS": "energy",
+    "JHX": "industrials",
+    "XRO": "software",
+    "REA": "growth",
+    "SUN": "finance",
+    "QBE": "finance",
+}
+
+
+def membership_symbols(settings: Settings, venue: str | None = None) -> set[str]:
+    """Bounded index-like pool: seed ∪ curated candidates (optionally one venue)."""
+    pool = set(combined_seed_pool(settings)) | set(curated_candidate_pool(settings))
+    if not venue:
+        return pool
+    want = str(venue).upper()
+    return {s for s in pool if venue_for_universe_symbol(settings, s) == want}
+
+
+def membership_by_sector(settings: Settings) -> dict[str, list[str]]:
+    """Group membership names by sector for the weekend Universe Manager brief."""
+    buckets: dict[str, list[str]] = {}
+    for sym in sorted(membership_symbols(settings)):
+        sector = SECTOR_BY_SYMBOL.get(sym, "other")
+        buckets.setdefault(sector, []).append(sym)
+    return buckets
+
+
 def addable_universe(
     settings: Settings,
     *,

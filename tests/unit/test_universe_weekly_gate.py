@@ -38,9 +38,11 @@ def _settings_cache() -> None:
 class _StubAgent:
     def __init__(self) -> None:
         self.calls = 0
+        self.payloads: list[object] = []
 
     async def run(self, payload: object) -> UniverseManagerOutput:
         self.calls += 1
+        self.payloads.append(payload)
         return UniverseManagerOutput(
             timestamp=datetime.now(UTC),
             proposals=[],
@@ -163,3 +165,30 @@ async def test_refresh_runs_llm_on_weekend_when_due(session: AsyncSession) -> No
         result = await svc.refresh(holdings=[])
     assert result["skipped"] is False
     assert agent.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_forwards_regime_and_themes(session: AsyncSession) -> None:
+    from unittest.mock import patch
+
+    settings = Settings(
+        universe_manager_enabled=True,
+        universe_mode="dynamic",
+        universe_refresh_min_interval_days=7,
+        universe_refresh_weekend_only=True,
+        trade_allowlist=["SPY", "QQQ"],
+        universe_screener_enabled=False,
+    )
+    agent = _StubAgent()
+    svc = UniverseService(session, settings=settings, agent=agent)  # type: ignore[arg-type]
+    with patch("app.universe.schedule.is_operator_weekend", return_value=True):
+        result = await svc.refresh(
+            holdings=["BHP"],
+            market_regime="risk_on",
+            themes=["resources", "asx_banks"],
+        )
+    assert result["skipped"] is False
+    payload = agent.payloads[0]
+    assert payload.market_regime == "risk_on"
+    assert payload.themes[:2] == ["resources", "asx_banks"]
+    assert "BHP" in payload.holdings

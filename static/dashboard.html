@@ -1400,11 +1400,13 @@
       const wl = (u.watchlist || []).filter((r) => (r.status || "active") === "active");
       const pausedRows = (u.watchlist || []).filter((r) => (r.status || "") === "paused");
       const cand = (u.candidate_pool || []).length;
+      const membership = (u.membership || []).length;
+      const working = (u.focus && u.focus.symbols) ? u.focus.symbols.length : 0;
       meta.innerHTML = [
         pill(`mode ${mode}`, mode === "dynamic" ? "good" : "warn"),
+        pill(`membership ${membership || cand}`, ""),
+        pill(`working ${working}/${limits.focus ?? "—"}`, ""),
         pill(`watch ${wl.length}/${limits.watchlist ?? "—"}`, ""),
-        pill(`focus ≤${limits.focus ?? "—"}`, ""),
-        pill(`candidates ${cand}`, ""),
         pill(u.allow_candidate_adds ? "candidate adds on" : "candidate adds off", u.allow_candidate_adds ? "good" : "warn"),
       ].join(" ");
       const scr = u.screener;

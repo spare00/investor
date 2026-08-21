@@ -399,26 +399,45 @@ def cio_brief(payload: CIOInput) -> str:
 
 
 def universe_brief(payload: UniverseManagerInput) -> str:
-    watch = _watch_rows(payload.current_watchlist, limit=24)
+    from app.universe.candidates import SECTOR_BY_SYMBOL
+
+    watch_cap = max(int(payload.watchlist_limit or 40), 16)
+    watch = _watch_rows(payload.current_watchlist, limit=watch_cap)
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in (
+        list(payload.seed_pool)
+        + list(payload.candidate_pool)
+        + [str(w.get("symbol") or "") for w in (payload.current_watchlist or []) if isinstance(w, dict)]
+    ):
+        sym = str(raw or "").upper().strip()
+        if not sym or sym in seen:
+            continue
+        seen.add(sym)
+        names.append(sym)
+    sectors: dict[str, list[str]] = {}
+    for sym in names:
+        sectors.setdefault(SECTOR_BY_SYMBOL.get(sym, "other"), []).append(sym)
     data = {
         "as_of": _iso(payload.as_of),
         "venues": payload.enabled_venues,
-        "held": [h.upper() for h in payload.holdings[:16]],
+        "held": [h.upper() for h in payload.holdings],
         "watch": watch,
-        "seed": [s.upper() for s in payload.seed_pool[:20]],
+        "seed": [s.upper() for s in payload.seed_pool],
         "seed_by_venue": {
-            k: [x.upper() for x in v[:12]] for k, v in (payload.seed_pool_by_venue or {}).items()
+            k: [x.upper() for x in v] for k, v in (payload.seed_pool_by_venue or {}).items()
         },
-        "candidates": [s.upper() for s in payload.candidate_pool[:20]],
+        "membership_by_sector": {k: v[:16] for k, v in sectors.items()},
+        "candidates": [s.upper() for s in payload.candidate_pool[:60]],
         "regime": payload.market_regime,
-        "themes": (payload.themes or [])[:6],
-        "limits": {"watch": payload.watchlist_limit, "focus": payload.focus_limit},
+        "themes": (payload.themes or [])[:8],
+        "limits": {"membership": payload.watchlist_limit, "working": payload.focus_limit},
         "outcomes": payload.recent_outcomes or {},
     }
     return _ask(
-        "Keep/pause/add liquid names only. Focus <=limit. Cover both venues if enabled. No obscure tickers.",
+        "Pick 4-8 industries, maintain membership in that bounded pool, then pick working focus <=limit. Not the whole market.",
         data,
-        "UniverseManagerOutput. thesis/invalidation <=80 chars.",
+        "UniverseManagerOutput. industries + focus_symbols. thesis/invalidation <=80 chars.",
     )
 
 

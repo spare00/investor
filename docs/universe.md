@@ -2,7 +2,7 @@
 
 ## Goal
 
-Stop treating `TRADE_ALLOWLIST` as the only tradable set. The firm maintains a **horizon-grouped watchlist** and a small **focus set** so agents do not review the entire market each session — while pursuing **max return / min loss** via style-appropriate selection.
+Stop treating `TRADE_ALLOWLIST` as the only tradable set. Weekend Universe Manager maintains an **index-like membership** (seed ∪ liquid candidates, grouped by industry — Nasdaq-100 / S&P-500 style book-keeping, not a full-market scan) and picks a **working set** of ~10 names. Weekday CIO uses that working set with tape, news, and horizon playbooks (scalp / day / short; medium is hold-only).
 
 ## Horizons
 
@@ -17,10 +17,10 @@ Policies live in `app/universe/horizons.py`. **Entry/exit rules** live in `app/u
 
 ## Modes
 
-- `UNIVERSE_MODE=dynamic` (default): active watchlist gates **new entries**; collection uses focus ∪ holdings.
+- `UNIVERSE_MODE=dynamic` (default): **new entries** = active watchlist ∩ membership (seed ∪ curated candidates). Collection = venue-scoped focus ∪ holdings.
 - `UNIVERSE_MODE=static`: legacy allowlist-only behavior.
 
-`TRADE_ALLOWLIST` seeds the US watchlist. `TRADE_ALLOWLIST_AU` is the ASX entry allowlist (separate book; empty disables AU new entries). Venue routing uses `PRIMARY_VENUE` / `ENABLED_VENUES` — see `docs/market_calendar.md`.
+`TRADE_ALLOWLIST` / `TRADE_ALLOWLIST_AU` **seed** membership. Weekend promotion from the curated candidate pool is buyable next week — the frozen `.env` list is no longer an entry ceiling in dynamic mode.
 
 ## Closing / overnight
 
@@ -44,12 +44,12 @@ Dashboard Overview renders the same snapshot under **Universe** (mode, focus chi
 
 ## Scheduler
 
-When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler polls `universe_refresh` every `UNIVERSE_REFRESH_SECONDS` (default **6h**). **Universe Manager LLM** runs only when:
+When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler polls `universe_refresh` every `UNIVERSE_REFRESH_SECONDS` (default **6h**). **Universe Manager LLM** (membership + working-set pick) runs only when:
 
 1. `UNIVERSE_REFRESH_WEEKEND_ONLY=true` (default) — operator TZ weekend (Sat/Sun, default `Australia/Brisbane`), and
 2. at least `UNIVERSE_REFRESH_MIN_INTERVAL_DAYS` (default **7**) since the last LLM focus snapshot.
 
-Between LLM runs (and on weekdays), premarket/scheduler only rebuild focus + hygiene without the model so daily trading tokens are not burned on watchlist churn. Legacy `UNIVERSE_REFRESH_SESSION_ONLY` applies only when weekend-only is off. Manual `POST /universe/refresh` with `{"force": true}` bypasses weekend + weekly gates.
+The weekend tick passes last CIO regime + Market Intelligence themes, the sector-grouped membership, and 90d outcomes. It does **not** scan the whole market. Between LLM runs (weekdays), premarket/scheduler only rebuild venue-scoped focus + hygiene. Manual `POST /universe/refresh` with `{"force": true}` bypasses weekend + weekly gates.
 
 Dual-book: seed = `TRADE_ALLOWLIST` ∪ `TRADE_ALLOWLIST_AU`; curated candidates include liquid US + ASX names when `ENABLED_VENUES` includes AU. Entry/collection remain venue-scoped.
 

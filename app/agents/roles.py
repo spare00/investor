@@ -102,12 +102,12 @@ ROLES: dict[AgentName, AgentRole] = {
         model_slot="decision",
     ),
     AgentName.UNIVERSE_MANAGER: AgentRole(
-        python_owns="seed/candidate pools, holdings, outcome stats, limits",
-        ai_owns="keep/pause/add on a bounded liquid list",
+        python_owns="membership pool, sectors, holdings, outcome stats, limits",
+        ai_owns="industry selection then keep/pause/add; pick ~10 working names",
         skip_llm_when_local=False,
-        num_ctx=4096,
-        max_tokens=500,
-        model_slot="fast",
+        num_ctx=8192,
+        max_tokens=700,
+        model_slot="decision",
     ),
 }
 

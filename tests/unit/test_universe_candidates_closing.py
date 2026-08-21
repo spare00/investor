@@ -77,6 +77,26 @@ def test_dual_venue_seed_and_au_candidates() -> None:
     assert "CSL" in allowed
 
 
+def test_membership_is_index_like_and_venue_scoped() -> None:
+    from app.universe.candidates import membership_by_sector, membership_symbols
+
+    settings = Settings(
+        trade_allowlist=["SPY", "QQQ"],
+        trade_allowlist_au=["BHP", "VAS"],
+        universe_candidate_pool=[],
+        enabled_venues=["US", "AU"],
+    )
+    us = membership_symbols(settings, "US")
+    au = membership_symbols(settings, "AU")
+    assert "SPY" in us and "JPM" in us
+    assert "BHP" not in us
+    assert "BHP" in au and "CSL" in au
+    assert "SPY" not in au
+    sectors = membership_by_sector(settings)
+    assert "resources" in sectors and "BHP" in sectors["resources"]
+    assert "semiconductor" in sectors
+
+
 def test_theme_ranking_boosts_matching_names() -> None:
     from app.universe.candidates import ranked_candidate_pool
 

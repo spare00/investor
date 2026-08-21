@@ -674,10 +674,17 @@ async def _refresh_universe() -> None:
             holdings = [
                 p.symbol for p in (await session.execute(select(Position))).scalars().all()
             ]
+            from app.universe.context import load_last_regime_context
+
+            ctx = await load_last_regime_context(session)
             svc = UniverseService(session, settings=settings)
             try:
                 result = await asyncio.wait_for(
-                    svc.refresh(holdings=holdings),
+                    svc.refresh(
+                        holdings=holdings,
+                        market_regime=ctx.get("market_regime"),
+                        themes=list(ctx.get("themes") or []),
+                    ),
                     timeout=float(_UNIVERSE_REFRESH_TIMEOUT_SECONDS),
                 )
                 replan: dict[str, Any] = {}

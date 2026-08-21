@@ -130,8 +130,14 @@ class UniverseService:
         return list(result.scalars().all())
 
     async def entry_universe(self, *, venue: str | None = None) -> set[str]:
-        """Symbols allowed for NEW entries (optionally scoped to a venue)."""
+        """Symbols allowed for NEW entries (optionally scoped to a venue).
+
+        Dynamic mode: active watchlist ∩ membership (seed ∪ curated candidates).
+        Promoted names in the weekend index can trade; invented tickers cannot.
+        Static mode: TRADE_ALLOWLIST / TRADE_ALLOWLIST_AU only.
+        """
         from app.market.venues import combined_entry_allowlist, parse_venue
+        from app.universe.candidates import membership_symbols
 
         want = parse_venue(venue)
         allow = (
@@ -147,12 +153,15 @@ class UniverseService:
             return set(allow)
         from app.universe.book_strategy import is_active_strategy_horizon
 
+        membership = membership_symbols(
+            self.settings, venue=want.value if want is not None else None
+        )
         active_syms = {
             row.symbol.upper()
             for row in active
             if is_active_strategy_horizon(row.horizon)
         }
-        return active_syms & set(allow)
+        return active_syms & membership
 
     async def horizon_by_symbol(self) -> dict[str, str]:
         await self.ensure_seeded()
@@ -165,30 +174,40 @@ class UniverseService:
         *,
         venue: str | None = None,
     ) -> list[str]:
-        """Symbols to collect/analyze this cycle: holdings ∪ focus (or watchlist capped)."""
+        """Symbols to collect/analyze this cycle: holdings ∪ focus (or watchlist capped).
+
+        Dynamic books use weekend membership (seed ∪ candidates) instead of the
+        frozen .env allowlist, then keep the live venue's names only.
+        """
         from app.market.venues import Venue, parse_venue
+        from app.universe.candidates import membership_symbols
 
         want = parse_venue(venue)
         held = sorted({h.upper() for h in (holdings or []) if h})
         if want == Venue.AU:
             bench = (self.settings.primary_benchmark_au or "VAS").upper()
-            allow = self.settings.allowlist_for_venue(Venue.AU)
+            book = membership_symbols(self.settings, venue="AU")
         elif want == Venue.US:
             bench = (self.settings.primary_benchmark or "SPY").upper()
-            allow = self.settings.allowlist_for_venue(Venue.US)
+            book = membership_symbols(self.settings, venue="US")
         else:
             bench = (self.settings.primary_benchmark or "SPY").upper()
-            allow = None
+            book = None
 
         if not self.is_dynamic():
-            base = set(allow) if allow is not None else set(self.settings.trade_allowlist)
+            allow = (
+                self.settings.allowlist_for_venue(want)
+                if want is not None
+                else set(self.settings.trade_allowlist)
+            )
+            base = set(allow)
             return self._with_index_symbols(sorted({*base, *held, bench}), want)
 
         await self.ensure_seeded()
         active_set = {r.symbol.upper() for r in await self.list_active()}
-        if allow is not None:
-            active_set &= set(allow)
-            held_scoped = [h for h in held if h in allow or h == bench]
+        if book is not None:
+            active_set &= book
+            held_scoped = [h for h in held if h in book or h == bench]
         else:
             held_scoped = held
         allowed = active_set | set(held_scoped) | {bench}
@@ -207,8 +226,8 @@ class UniverseService:
                 )
 
         active = await self.list_active()
-        if allow is not None:
-            active = [r for r in active if r.symbol.upper() in allow]
+        if book is not None:
+            active = [r for r in active if r.symbol.upper() in book]
         ranked = sorted(active, key=lambda r: (-r.priority, r.symbol))
         focus = [r.symbol.upper() for r in ranked[: self.settings.universe_focus_limit]]
         return self._with_index_symbols(
@@ -268,6 +287,8 @@ class UniverseService:
             by_horizon.setdefault(r.horizon, []).append(item)
         focus = await self._latest_focus()
         screened, screen_meta = await self._screened_candidate_pool()
+        from app.universe.candidates import membership_by_sector, membership_symbols
+
         return {
             "mode": self.settings.universe_mode,
             "watchlist": [self._row_dict(r) for r in rows],
@@ -289,6 +310,8 @@ class UniverseService:
                 "watchlist": self.settings.universe_watchlist_limit,
                 "focus": self.settings.universe_focus_limit,
             },
+            "membership": sorted(membership_symbols(self.settings)),
+            "membership_by_sector": membership_by_sector(self.settings),
             "candidate_pool": screened,
             "screener": screen_meta,
             "allow_candidate_adds": self.settings.universe_allow_candidate_adds,
@@ -538,6 +561,7 @@ class UniverseService:
             source="universe_manager",
             extra={
                 "notes": out.notes,
+                "industries": list(out.industries or [])[:12],
                 "quality": out.data_quality_score,
                 "screener": screen_meta,
                 "hygiene": hygiene,

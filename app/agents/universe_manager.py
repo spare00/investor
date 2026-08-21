@@ -18,7 +18,7 @@ from app.universe.horizons import UniverseHorizon
 class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput]):
     name = AgentName.UNIVERSE_MANAGER
     prompt_file = "system_v1.md"
-    prompt_version = "2.0.0"
+    prompt_version = "2.1.0"
 
     def output_model(self) -> type[UniverseManagerOutput]:
         return UniverseManagerOutput
@@ -66,6 +66,7 @@ class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput
             timestamp=datetime.now(UTC),
             proposals=proposals,
             focus_symbols=focus[: payload.focus_limit],
+            industries=["us_index", "asx_index"] if payload.enabled_venues else ["us_index"],
             focus_rationale="Fallback focus from seed + holdings",
             notes=[f"fallback:{reason[:200]}"],
             data_quality_score=0.5,
