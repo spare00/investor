@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import Settings, TradingMode
 from app.core.database import Base
+from app.execution.safety_controls import trading_controls
 from app.intraday.session_hygiene import committee_allowed_for_phase, fold_session_residue
 from app.models import AlertRecordModel, IntradayEvent, OrderIntent, PositionLifecycle
 from app.workflow.daily import DailyWorkflowService
@@ -27,6 +28,15 @@ async def session() -> AsyncSession:
     async with factory() as sess:
         yield sess
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _reset() -> None:
+    trading_controls.clear_emergency()
+    trading_controls.resume()
+    yield
+    trading_controls.clear_emergency()
+    trading_controls.resume()
 
 
 def test_committee_only_during_regular() -> None:
