@@ -856,9 +856,10 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             thesis = (intent.thesis or "").lower()
             if meta.get("reason") != "hard_stop" and thesis != "hard_stop":
                 continue
-            if str(intent.status or "").upper() == "CREATED" and (
-                str(intent.symbol or "").upper() not in open_syms
-            ):
+            st = str(intent.status or "").upper()
+            if st not in {"CREATED", "SUBMITTED", "ACCEPTED", "WORKING", "PARTIAL"}:
+                continue
+            if str(intent.symbol or "").upper() not in open_syms:
                 continue
             hard_stop_intents.append(
                     {
