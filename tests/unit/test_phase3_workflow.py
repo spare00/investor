@@ -538,6 +538,24 @@ def test_coalesce_keeps_latest_intraday_only() -> None:
     assert jobs[3].status == "planned"
 
 
+def test_prioritize_open_venue_jobs_runs_live_tape_first() -> None:
+    from app.core.config import Settings
+    from app.core.scheduler import _prioritize_open_venue_jobs
+
+    class Job:
+        def __init__(self, key: str, planned: datetime) -> None:
+            self.job_key = key
+            self.planned_at = planned
+
+    # 13:45 Sydney Friday = AU regular; 23:45 ET Thursday = US after hours.
+    now = datetime(2026, 8, 21, 3, 45, tzinfo=UTC)
+    us = Job("US:intraday_eval_179", datetime(2026, 8, 20, 19, 55, tzinfo=UTC))
+    au = Job("AU:intraday_eval_26", datetime(2026, 8, 21, 3, 40, tzinfo=UTC))
+    settings = Settings(app_env="test", enabled_venues=["US", "AU"], primary_venue="AU")
+    out = _prioritize_open_venue_jobs([us, au], settings, now)
+    assert [j.job_key for j in out] == ["AU:intraday_eval_26", "US:intraday_eval_179"]
+
+
 def test_coalesce_before_limit_keeps_closing_with_dense_intraday() -> None:
     """Dispatch must coalesce then slice — not slice then coalesce."""
     from app.core.scheduler import _coalesce_due_jobs

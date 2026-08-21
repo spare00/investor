@@ -122,6 +122,18 @@ class IntradayRecoveryService:
         )
         actions.append(f"unknown_orders:{len(unknown)}")
 
+        try:
+            from app.intraday.session_hygiene import fold_session_residue
+
+            fold = await fold_session_residue(self.session)
+            if any(fold.values()):
+                actions.append(
+                    "session_fold:"
+                    + ",".join(f"{k}={v}" for k, v in fold.items() if v)
+                )
+        except Exception as exc:  # noqa: BLE001
+            actions.append(f"session_fold_error:{str(exc)[:80]}")
+
         # 6. Unprocessed events
         pending_events = list(
             (

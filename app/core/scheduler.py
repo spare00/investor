@@ -233,6 +233,33 @@ def _coalesce_due_jobs(due: list[Any]) -> list[Any]:
     return out
 
 
+def _prioritize_open_venue_jobs(
+    due: list[Any], settings: Settings, now: datetime
+) -> list[Any]:
+    """Run the live tape's jobs before leftover evals from a closed venue."""
+    from app.market.calendar import MarketCalendarService
+    from app.market.venues import job_key_base, parse_scoped_job_key
+
+    live = {"REGULAR", "FORCE_CLOSE_WINDOW", "CLOSING_WINDOW"}
+
+    def _rank(job: Any) -> tuple[int, datetime]:
+        venue, _ = parse_scoped_job_key(str(job.job_key or ""))
+        phase = MarketCalendarService(settings, venue=venue).get_market_status(now).phase
+        intra = job_key_base(str(job.job_key or "")).startswith("intraday_eval")
+        planned = job.planned_at
+        if planned is not None and planned.tzinfo is None:
+            planned = planned.replace(tzinfo=UTC)
+        if planned is None:
+            planned = now
+        if phase in live:
+            return (0, planned)
+        if intra:
+            return (2, planned)
+        return (1, planned)
+
+    return sorted(due, key=_rank)
+
+
 # Skip redundant prepare work between dispatch ticks (prepare itself is idempotent).
 _PREPARE_CACHE: dict[str, datetime] = {}
 _PREPARE_TTL_SECONDS = 600
@@ -333,7 +360,9 @@ async def _dispatch_due_jobs() -> None:
                 return planned <= now
 
             due_all = [j for j in candidates if _due(j.planned_at)]
-            due = _coalesce_due_jobs(due_all)[:20]
+            due = _prioritize_open_venue_jobs(
+                _coalesce_due_jobs(due_all)[:20], settings, now
+            )
             services: dict[str, Any] = {}
             for job in due:
                 if job.status != "planned":

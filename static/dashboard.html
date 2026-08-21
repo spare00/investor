@@ -1524,8 +1524,8 @@
           : "";
         return `<div style="margin-bottom:0.85rem">
           <div style="margin-bottom:0.35rem">${pill(label, "")}
-            ${pill(`max ${pol.max_positions ?? "—"}`, "")}
-            ${pill(`${rows.length} active`, rows.length ? "good" : "")}
+            ${pill(`pos max ${pol.max_positions ?? "—"}`, "")}
+            ${pill(`watch ${rows.length}`, rows.length ? "good" : "")}
           </div>
           ${dataTable(["Symbol", "Pri", "Out", "Thesis"], body, 4)}
         </div>`;

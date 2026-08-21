@@ -730,6 +730,19 @@ class DailyWorkflowService:
         trigger_event_ids: list[str] = []
         effective_trigger = trigger
         meta = dict(run.metadata_json or {})
+        try:
+            from app.intraday.session_hygiene import fold_session_residue
+
+            fold = await fold_session_residue(
+                self.session,
+                now=now,
+                phase=status.phase,
+                session_date=run.session_date,
+            )
+            if any(fold.values()):
+                meta["last_session_fold"] = fold
+        except Exception as exc:  # noqa: BLE001
+            meta["last_session_fold_error"] = str(exc)[:200]
 
         # Ingest high-importance news onto the bus (works even if monitoring is off).
         try:
@@ -1036,6 +1049,16 @@ class DailyWorkflowService:
             # Unattended paper path: interval jobs drive CIO reanalysis (cooldown inside agents).
             result = IntradayEvalResult.REANALYZE
             reason = "interval_agent_reeval"
+
+        from app.intraday.session_hygiene import committee_allowed_for_phase
+
+        if result == IntradayEvalResult.REANALYZE and not committee_allowed_for_phase(
+            status.phase,
+            in_force_close=bool(status.in_force_close_window),
+            in_closing=bool(status.in_closing_window),
+        ):
+            result = IntradayEvalResult.NO_CHANGE
+            reason = f"committee_skipped_phase:{status.phase}"
 
         if result == IntradayEvalResult.REANALYZE and self.settings.enable_intraday_agent_reanalysis:
             from uuid import UUID as _UUID
@@ -1538,6 +1561,18 @@ class DailyWorkflowService:
             review["force_close_error"] = str(exc)[:240]
         except Exception as exc:  # noqa: BLE001
             review["force_close_error"] = str(exc)[:240]
+
+        try:
+            from app.intraday.session_hygiene import fold_session_residue
+
+            review["session_fold"] = await fold_session_residue(
+                self.session,
+                now=now,
+                phase=str(self.calendar.get_market_status(now).phase or ""),
+                session_date=run.session_date,
+            )
+        except Exception as exc:  # noqa: BLE001
+            review["session_fold_error"] = str(exc)[:240]
 
         meta = dict(run.metadata_json or {})
         meta["postmarket_review"] = review

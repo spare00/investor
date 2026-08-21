@@ -626,6 +626,10 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 await session.execute(
                     select(IntradayEvent)
                     .where(IntradayEvent.status == "NEW")
+                    .where(
+                        (IntradayEvent.expires_at.is_(None))
+                        | (IntradayEvent.expires_at > now)
+                    )
                     .order_by(desc(IntradayEvent.detected_at))
                     .limit(12)
                 )
@@ -831,11 +835,32 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             .scalars()
             .all()
         )
+        open_syms = {
+            str(lc.symbol or "").upper()
+            for lc in (
+                (
+                    await session.execute(
+                        select(PositionLifecycle).where(
+                            PositionLifecycle.status.in_(
+                                ["OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"]
+                            )
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        }
         for intent in irows:
             meta = intent.metadata_json or {}
             thesis = (intent.thesis or "").lower()
-            if meta.get("reason") == "hard_stop" or thesis == "hard_stop":
-                hard_stop_intents.append(
+            if meta.get("reason") != "hard_stop" and thesis != "hard_stop":
+                continue
+            if str(intent.status or "").upper() == "CREATED" and (
+                str(intent.symbol or "").upper() not in open_syms
+            ):
+                continue
+            hard_stop_intents.append(
                     {
                         "id": str(intent.id),
                         "symbol": intent.symbol,
