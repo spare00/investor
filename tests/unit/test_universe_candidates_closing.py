@@ -97,6 +97,30 @@ def test_membership_is_index_like_and_venue_scoped() -> None:
     assert "semiconductor" in sectors
 
 
+def test_rotating_working_set_moves_with_week() -> None:
+    from datetime import UTC, datetime
+
+    from app.universe.candidates import rotating_working_set
+
+    settings = Settings(
+        trade_allowlist=["SPY", "QQQ"],
+        trade_allowlist_au=["BHP", "VAS"],
+        universe_candidate_pool=[],
+        enabled_venues=["US", "AU"],
+    )
+    a = rotating_working_set(
+        settings, holdings=["BHP"], limit=10, now=datetime(2026, 8, 3, tzinfo=UTC)
+    )
+    b = rotating_working_set(
+        settings, holdings=["BHP"], limit=10, now=datetime(2026, 8, 24, tzinfo=UTC)
+    )
+    assert a[0] == "BHP"
+    assert b[0] == "BHP"
+    assert a != b
+    assert len(a) == 10
+    assert len(b) == 10
+
+
 def test_theme_ranking_boosts_matching_names() -> None:
     from app.universe.candidates import ranked_candidate_pool
 

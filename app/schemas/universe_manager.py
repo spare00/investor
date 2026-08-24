@@ -66,10 +66,43 @@ class UniverseManagerOutput(StrictModel):
     data_quality_score: float = Field(ge=0.0, le=1.0, default=0.8)
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 
-    @field_validator("proposals", "focus_symbols", mode="before")
+    @field_validator("focus_symbols", mode="before")
     @classmethod
     def _none_to_list(cls, value: object) -> object:
         return [] if value is None else value
+
+    @field_validator("proposals", mode="before")
+    @classmethod
+    def _coerce_proposals(cls, value: object) -> object:
+        """14B often emits a dict (symbol-keyed or a nested whole object)."""
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if not isinstance(value, dict):
+            return []
+        nested = value.get("proposals")
+        if isinstance(nested, list):
+            return nested
+        skip = {
+            "industries",
+            "focus_symbols",
+            "notes",
+            "focus_rationale",
+            "timestamp",
+            "data_quality_score",
+            "trace",
+            "proposals",
+        }
+        out: list[dict] = []
+        for key, raw in value.items():
+            if key in skip or not isinstance(raw, dict):
+                continue
+            row = dict(raw)
+            if not row.get("symbol"):
+                row["symbol"] = key
+            out.append(row)
+        return out
 
     @field_validator("industries", mode="before")
     @classmethod

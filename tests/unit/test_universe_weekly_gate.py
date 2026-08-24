@@ -139,10 +139,13 @@ async def test_refresh_skips_llm_on_weekday_when_weekend_only(session: AsyncSess
     )
     agent = _StubAgent()
     svc = UniverseService(session, settings=settings, agent=agent)  # type: ignore[arg-type]
-    with patch("app.universe.schedule.is_operator_weekend", return_value=False):
+    with (
+        patch("app.universe.schedule.is_operator_weekend", return_value=False),
+        patch.object(UniverseService, "_live_tape_open", return_value=True),
+    ):
         result = await svc.refresh(holdings=[])
     assert result["skipped"] is True
-    assert result["reason"] == "weekend_only"
+    assert result["reason"] == "weekend_only_live"
     assert agent.calls == 0
 
 
@@ -192,3 +195,70 @@ async def test_refresh_forwards_regime_and_themes(session: AsyncSession) -> None
     assert payload.market_regime == "risk_on"
     assert payload.themes[:2] == ["resources", "asx_banks"]
     assert "BHP" in payload.holdings
+
+
+def test_proposals_dict_coerces_to_list() -> None:
+    out = UniverseManagerOutput(
+        timestamp=datetime.now(UTC),
+        proposals={
+            "NVDA": {"horizon": "day", "action": "add", "priority": 80},
+            "industries": ["semiconductor"],
+        },
+        focus_symbols=["NVDA"],
+    )
+    assert len(out.proposals) == 1
+    assert out.proposals[0].symbol == "NVDA"
+    assert out.proposals[0].action == "add"
+
+
+@pytest.mark.asyncio
+async def test_fallback_snapshot_does_not_block_weekly_llm(session: AsyncSession) -> None:
+    session.add(
+        FocusSetSnapshot(
+            id=uuid4(),
+            as_of=datetime.now(UTC) - timedelta(hours=2),
+            session_date="2026-08-22",
+            symbols=["SPY"],
+            holdings=["BHP"],
+            rationale="Fallback focus from seed + holdings",
+            source="universe_fallback",
+            payload={"notes": ["fallback:validation"]},
+        )
+    )
+    await session.commit()
+    settings = Settings(
+        universe_manager_enabled=True,
+        universe_mode="dynamic",
+        universe_refresh_min_interval_days=7,
+        universe_refresh_weekend_only=False,
+        trade_allowlist=["SPY"],
+        universe_screener_enabled=False,
+    )
+    svc = UniverseService(session, settings=settings)
+    assert await svc.llm_refresh_due() is True
+
+
+@pytest.mark.asyncio
+async def test_weekday_catch_up_when_review_stale_and_tape_idle(
+    session: AsyncSession,
+) -> None:
+    from unittest.mock import patch
+
+    await _seed_llm_focus(session, days_ago=8)
+    settings = Settings(
+        universe_manager_enabled=True,
+        universe_mode="dynamic",
+        universe_refresh_min_interval_days=7,
+        universe_refresh_weekend_only=True,
+        trade_allowlist=["SPY", "QQQ"],
+        universe_screener_enabled=False,
+    )
+    agent = _StubAgent()
+    svc = UniverseService(session, settings=settings, agent=agent)  # type: ignore[arg-type]
+    with (
+        patch("app.universe.schedule.is_operator_weekend", return_value=False),
+        patch.object(UniverseService, "_live_tape_open", return_value=False),
+    ):
+        result = await svc.refresh(holdings=["BHP"])
+    assert result["skipped"] is False
+    assert agent.calls == 1

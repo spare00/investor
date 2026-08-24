@@ -1402,8 +1402,19 @@
       const cand = (u.candidate_pool || []).length;
       const membership = (u.membership || []).length;
       const working = (u.focus && u.focus.symbols) ? u.focus.symbols.length : 0;
+      const review = u.last_review || {};
+      const reviewTone = review.status === "ok" ? "good"
+        : review.status === "stale" || review.status === "fallback" ? "warn" : "";
+      const reviewLabel = review.status === "ok"
+        ? `review LLM`
+        : review.status === "fallback"
+          ? "review fallback"
+          : review.status === "stale"
+            ? "review stale"
+            : `review ${review.status || "—"}`;
       meta.innerHTML = [
         pill(`mode ${mode}`, mode === "dynamic" ? "good" : "warn"),
+        pill(reviewLabel, reviewTone),
         pill(`membership ${membership || cand}`, ""),
         pill(`working ${working}/${limits.focus ?? "—"}`, ""),
         pill(`watch ${wl.length}/${limits.watchlist ?? "—"}`, ""),
@@ -1489,6 +1500,7 @@
       if (focus && (focus.symbols || []).length) {
         focusEl.innerHTML =
           `<div class="muted" style="margin-bottom:0.35rem">Focus` +
+          (focus.source ? ` · ${esc(focus.source)}` : "") +
           (focus.as_of ? ` · ${esc(fmtBne(focus.as_of))}` : "") +
           (focus.rationale ? ` — ${esc(focus.rationale)}` : "") +
           `</div>` +

@@ -20,6 +20,14 @@ from app.universe.horizons import UniverseHorizon, all_horizon_summaries, policy
 
 logger = get_logger(__name__)
 
+_LIVE_TAPES = frozenset({"REGULAR", "FORCE_CLOSE_WINDOW", "CLOSING_WINDOW"})
+
+
+def _is_fallback_output(out: UniverseManagerOutput) -> bool:
+    if any(str(n).startswith("fallback:") for n in (out.notes or [])):
+        return True
+    return str(out.focus_rationale or "").lower().startswith("fallback")
+
 
 class UniverseService:
     def __init__(
@@ -294,18 +302,6 @@ class UniverseService:
             "watchlist": [self._row_dict(r) for r in rows],
             "by_horizon": by_horizon,
             "horizon_policies": all_horizon_summaries(),
-            "focus": None
-            if focus is None
-            else {
-                "as_of": focus.as_of.isoformat(),
-                "session_date": focus.session_date,
-                "symbols": focus.symbols,
-                "holdings": focus.holdings,
-                "rationale": focus.rationale,
-                "hygiene": (focus.payload or {}).get("hygiene")
-                if isinstance(focus.payload, dict)
-                else None,
-            },
             "limits": {
                 "watchlist": self.settings.universe_watchlist_limit,
                 "focus": self.settings.universe_focus_limit,
@@ -317,6 +313,20 @@ class UniverseService:
             "allow_candidate_adds": self.settings.universe_allow_candidate_adds,
             "book_usage": await self._book_usage(),
             "recent_outcomes": await self._outcome_snapshot_summary(),
+            "last_review": await self._last_review_status(),
+            "focus": None
+            if focus is None
+            else {
+                "as_of": focus.as_of.isoformat(),
+                "session_date": focus.session_date,
+                "symbols": focus.symbols,
+                "holdings": focus.holdings,
+                "rationale": focus.rationale,
+                "source": focus.source,
+                "hygiene": (focus.payload or {}).get("hygiene")
+                if isinstance(focus.payload, dict)
+                else None,
+            },
         }
 
     async def _outcome_snapshot_summary(self) -> dict[str, Any]:
@@ -451,6 +461,39 @@ class UniverseService:
         stamp = last if last.tzinfo is not None else last.replace(tzinfo=UTC)
         return (now or utc_now()) - stamp >= self.llm_refresh_interval()
 
+    def _live_tape_open(self) -> bool:
+        """True when any enabled venue is in regular/close — do not steal the committee GPU."""
+        from app.market.calendar import MarketCalendarService
+        from app.market.venues import enabled_venues
+
+        now = utc_now()
+        for venue in enabled_venues(self.settings):
+            phase = MarketCalendarService(self.settings, venue=venue).get_market_status(now).phase
+            if phase in _LIVE_TAPES:
+                return True
+        return False
+
+    async def _last_review_status(self) -> dict[str, Any]:
+        last_ok = await self.last_llm_refresh_at()
+        latest = await self._latest_focus()
+        src = str(latest.source or "") if latest is not None else ""
+        due = await self.llm_refresh_due()
+        if last_ok is not None and not due:
+            status = "ok"
+        elif src == "universe_fallback":
+            status = "fallback"
+        elif due:
+            status = "stale"
+        else:
+            status = "hygiene"
+        return {
+            "status": status,
+            "last_llm_at": last_ok.isoformat() if last_ok else None,
+            "latest_source": src or None,
+            "latest_rationale": (latest.rationale if latest is not None else None),
+            "due": due,
+        }
+
     async def refresh(
         self,
         *,
@@ -476,17 +519,22 @@ class UniverseService:
             from app.universe.schedule import is_operator_weekend
 
             if not is_operator_weekend(self.settings):
-                focus = await self.build_focus_without_llm(
-                    holdings=holdings or [], session_date=session_date
-                )
-                hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
-                logger.info("universe_refresh_deferred_weekend")
-                return {
-                    "skipped": True,
-                    "reason": "weekend_only",
-                    "focus": focus,
-                    "hygiene": hygiene,
-                }
+                due = await self.llm_refresh_due()
+                if due and not self._live_tape_open():
+                    logger.info("universe_refresh_weekday_catch_up")
+                else:
+                    focus = await self.build_focus_without_llm(
+                        holdings=holdings or [], session_date=session_date
+                    )
+                    hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
+                    reason = "weekend_only_live" if due else "weekend_only"
+                    logger.info("universe_refresh_deferred_weekend", reason=reason)
+                    return {
+                        "skipped": True,
+                        "reason": reason,
+                        "focus": focus,
+                        "hygiene": hygiene,
+                    }
 
         if not force and not await self.llm_refresh_due():
             last = await self.last_llm_refresh_at()
@@ -550,7 +598,11 @@ class UniverseService:
             trace=TraceMetadata(source_data_timestamp=utc_now()),
         )
         out = await self.agent.run(payload)
-        await self._apply_proposals(out, candidate_symbols=set(screened))
+        fallback = _is_fallback_output(out)
+        if fallback:
+            logger.warning("universe_manager_fallback_skip_apply")
+        else:
+            await self._apply_proposals(out, candidate_symbols=set(screened))
         await self._stamp_outcome_stats(outcomes)
         hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
         focus_doc = await self._persist_focus(
@@ -558,7 +610,7 @@ class UniverseService:
             holdings=holdings or [],
             rationale=out.focus_rationale,
             session_date=session_date,
-            source="universe_manager",
+            source="universe_fallback" if fallback else "universe_manager",
             extra={
                 "notes": out.notes,
                 "industries": list(out.industries or [])[:12],
@@ -575,7 +627,8 @@ class UniverseService:
         )
         return {
             "skipped": False,
-            "proposals": len(out.proposals),
+            "proposals": 0 if fallback else len(out.proposals),
+            "fallback": fallback,
             "focus": focus_doc,
             "notes": out.notes,
             "screener": screen_meta,

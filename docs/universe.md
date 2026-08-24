@@ -49,7 +49,7 @@ When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler polls `universe
 1. `UNIVERSE_REFRESH_WEEKEND_ONLY=true` (default) — operator TZ weekend (Sat/Sun, default `Australia/Brisbane`), and
 2. at least `UNIVERSE_REFRESH_MIN_INTERVAL_DAYS` (default **7**) since the last LLM focus snapshot.
 
-The weekend tick passes last CIO regime + Market Intelligence themes, the sector-grouped membership, and 90d outcomes. It does **not** scan the whole market. Between LLM runs (weekdays), premarket/scheduler only rebuild venue-scoped focus + hygiene. Manual `POST /universe/refresh` with `{"force": true}` bypasses weekend + weekly gates.
+The weekend tick passes last CIO regime + Market Intelligence themes, the sector-grouped membership, and 90d outcomes. It does **not** scan the whole market. A failed LLM (schema fallback) does **not** count as a successful review and will retry on the next weekend tick, or on a weekday tick when no venue is in regular/close. Between successful LLM runs, premarket/scheduler only rebuild venue-scoped focus + hygiene. Manual `POST /universe/refresh` with `{"force": true}` bypasses weekend + weekly gates.
 
 Dual-book: seed = `TRADE_ALLOWLIST` ∪ `TRADE_ALLOWLIST_AU`; curated candidates include liquid US + ASX names when `ENABLED_VENUES` includes AU. Entry/collection remain venue-scoped.
 

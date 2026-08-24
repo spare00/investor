@@ -18,7 +18,7 @@ from app.universe.horizons import UniverseHorizon
 class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput]):
     name = AgentName.UNIVERSE_MANAGER
     prompt_file = "system_v1.md"
-    prompt_version = "2.1.0"
+    prompt_version = "2.1.1"
 
     def output_model(self) -> type[UniverseManagerOutput]:
         return UniverseManagerOutput
@@ -53,15 +53,15 @@ class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput
                 )
             )
         holdings = [h.upper() for h in payload.holdings]
-        focus: list[str] = []
-        for h in holdings:
-            if h not in focus:
-                focus.append(h)
-        for p in sorted(proposals, key=lambda x: -x.priority):
-            if p.symbol not in focus:
-                focus.append(p.symbol)
-            if len(focus) >= payload.focus_limit:
-                break
+        from app.core.config import get_settings
+        from app.universe.candidates import rotating_working_set
+
+        focus = rotating_working_set(
+            get_settings(),
+            holdings=holdings,
+            limit=payload.focus_limit,
+            now=payload.as_of,
+        )
         return UniverseManagerOutput(
             timestamp=datetime.now(UTC),
             proposals=proposals,
