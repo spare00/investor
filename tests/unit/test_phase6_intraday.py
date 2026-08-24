@@ -91,6 +91,35 @@ async def test_event_bus_dedup_and_priority(session: AsyncSession) -> None:
     assert int(row.revision or 1) >= 2
 
 
+@pytest.mark.asyncio
+async def test_event_bus_sticky_new_beyond_window(session: AsyncSession) -> None:
+    bus = IntradayEventBus(session, settings=_settings())
+    first = await bus.publish(
+        event_type="MAX_HOLDING_TIME_REACHED",
+        source="test",
+        symbols=["BHP"],
+        deduplication_key="hold:bhp",
+        requires_analysis=True,
+    )
+    from app.models import IntradayEvent
+    from sqlalchemy import select
+
+    row = (await session.execute(select(IntradayEvent))).scalar_one()
+    row.detected_at = datetime.now(UTC) - timedelta(seconds=400)
+    await session.flush()
+    second = await bus.publish(
+        event_type="MAX_HOLDING_TIME_REACHED",
+        source="test",
+        symbols=["BHP"],
+        deduplication_key="hold:bhp",
+        requires_analysis=True,
+    )
+    assert first.status == "NEW"
+    assert second.status == "DEDUPLICATED"
+    rows = list((await session.execute(select(IntradayEvent))).scalars().all())
+    assert len(rows) == 1
+
+
 def test_reanalysis_cooldown() -> None:
     bus = IntradayEventBus.__new__(IntradayEventBus)
     bus.settings = _settings(min_global_reanalysis_gap_minutes=10, max_intraday_reanalyses=2)

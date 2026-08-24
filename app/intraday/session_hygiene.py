@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.intraday.events import MONITOR_EXECUTED_EVENT_TYPES
+from app.intraday.monitor import flatten_on_max_holding
 from app.models import (
     AlertRecordModel,
     IntradayEvent,
@@ -28,17 +28,20 @@ def committee_allowed_for_phase(phase: str, *, in_force_close: bool, in_closing:
     return phase == "REGULAR" and not in_force_close and not in_closing
 
 
-async def held_symbols(session: AsyncSession) -> set[str]:
-    rows = list(
+async def open_lifecycles(session: AsyncSession) -> list[PositionLifecycle]:
+    return list(
         (
             await session.execute(
-                select(PositionLifecycle.symbol).where(PositionLifecycle.status.in_(_OPEN_LC))
+                select(PositionLifecycle).where(PositionLifecycle.status.in_(_OPEN_LC))
             )
         )
         .scalars()
         .all()
     )
-    return {str(s).upper() for s in rows if s}
+
+
+async def held_symbols(session: AsyncSession) -> set[str]:
+    return {str(lc.symbol).upper() for lc in await open_lifecycles(session) if lc.symbol}
 
 
 async def fold_session_residue(
@@ -54,7 +57,13 @@ async def fold_session_residue(
     session filter, so a filled CBA stop stayed on the board all next day.
     """
     now = now or datetime.now(UTC)
-    held = await held_symbols(session)
+    open_lcs = await open_lifecycles(session)
+    held = {str(lc.symbol).upper() for lc in open_lcs if lc.symbol}
+    review_hold = {
+        str(lc.symbol).upper()
+        for lc in open_lcs
+        if lc.symbol and not flatten_on_max_holding(lc)
+    }
     out = {"events": 0, "intents": 0, "alerts": 0}
 
     events = list(
@@ -87,6 +96,27 @@ async def fold_session_residue(
         ev.status = "EXPIRED" if expired and not monitor_done else "PROCESSED"
         out["events"] += 1
 
+    hold_by_symbol: dict[str, list[IntradayEvent]] = {}
+    for ev in events:
+        if ev.status not in {"NEW", "QUEUED"}:
+            continue
+        if ev.event_type != "MAX_HOLDING_TIME_REACHED":
+            continue
+        names = {str(s).upper() for s in (ev.symbols or []) if s}
+        overlap = names & review_hold
+        if not overlap:
+            continue
+        key = next(iter(overlap))
+        hold_by_symbol.setdefault(key, []).append(ev)
+    for group in hold_by_symbol.values():
+        group.sort(
+            key=lambda row: row.detected_at or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        for ev in group[1:]:
+            ev.status = "PROCESSED"
+            out["events"] += 1
+
     intents = list(
         (
             await session.execute(
@@ -99,9 +129,18 @@ async def fold_session_residue(
     for intent in intents:
         meta = intent.metadata_json if isinstance(intent.metadata_json, dict) else {}
         thesis = str(intent.thesis or "").lower()
-        if meta.get("reason") != "hard_stop" and thesis != "hard_stop":
+        reason = str(meta.get("reason") or "").lower()
+        sym = str(intent.symbol or "").upper()
+        is_max_hold = reason == "max_holding_time" or thesis == "max_holding_time"
+        is_hard = reason == "hard_stop" or thesis == "hard_stop"
+        if is_max_hold:
+            if sym not in held or sym in review_hold:
+                intent.status = "EXPIRED"
+                out["intents"] += 1
             continue
-        if str(intent.symbol or "").upper() in held:
+        if not is_hard:
+            continue
+        if sym in held:
             continue
         intent.status = "EXPIRED"
         out["intents"] += 1

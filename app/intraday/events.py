@@ -133,6 +133,18 @@ class IntradayEventBus:
                 .limit(1)
             )
         ).scalar_one_or_none()
+        if existing is None:
+            # Windowed dedupe alone re-mints NEW every 5 minutes for a still-open
+            # MAX_HOLDING / STOP row. Keep one actionable row until it is folded.
+            existing = (
+                await self.session.execute(
+                    select(IntradayEvent)
+                    .where(IntradayEvent.deduplication_key == deduplication_key)
+                    .where(IntradayEvent.status.in_(["NEW", "QUEUED"]))
+                    .order_by(IntradayEvent.detected_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
         if existing is not None:
             # Keep NEW/QUEUED actionable for downstream drains; only bump revision.
             existing.revision = int(existing.revision or 1) + 1

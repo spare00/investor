@@ -27,6 +27,17 @@ EXIT_INTENT_REQUIRED = "EXIT_INTENT_REQUIRED"
 RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
 EMERGENCY_ACTION_REQUIRED = "EMERGENCY_ACTION_REQUIRED"
 
+
+def flatten_on_max_holding(lifecycle: PositionLifecycle) -> bool:
+    """Scalp/day time-stops flatten. Short/medium overnight books review instead."""
+    hz = str((lifecycle.exit_policy or {}).get("horizon") or "").lower()
+    if hz in {"scalp", "day"}:
+        return True
+    if hz in {"short", "medium"}:
+        return False
+    return not bool(lifecycle.overnight_allowed)
+
+
 _ACTIVE_LIFECYCLE_STATUSES = (
     "OPEN",
     "PENDING_OPEN",
@@ -147,24 +158,42 @@ class PositionMonitor:
                 },
             )
 
-        # Max holding
+        # Max holding: scalp/day flatten; short/medium overnight is a review, not a stop.
         if lifecycle.opened_at and lifecycle.max_holding_minutes:
             opened = lifecycle.opened_at
             if opened.tzinfo is None:
                 opened = opened.replace(tzinfo=UTC)
             held = (now - opened).total_seconds() / 60.0
             if held >= lifecycle.max_holding_minutes:
-                verdict = EXIT_INTENT_REQUIRED if verdict not in {EMERGENCY_ACTION_REQUIRED} else verdict
-                reasons.append("max_holding_time")
+                hard_exit = flatten_on_max_holding(lifecycle)
+                if hard_exit:
+                    verdict = EXIT_INTENT_REQUIRED if verdict not in {EMERGENCY_ACTION_REQUIRED} else verdict
+                    reasons.append("max_holding_time")
+                else:
+                    verdict = (
+                        RISK_REVIEW_REQUIRED
+                        if verdict not in {EMERGENCY_ACTION_REQUIRED, EXIT_INTENT_REQUIRED}
+                        else verdict
+                    )
+                    reasons.append("max_holding_review")
                 await self.bus.publish(
                     event_type="MAX_HOLDING_TIME_REACHED",
                     source="position_monitor",
                     symbols=[lifecycle.symbol],
-                    deduplication_key=f"hold:{lifecycle.id}",
+                    deduplication_key=f"hold:{lifecycle.id}:{now.date().isoformat()}",
                     position_id=lifecycle.id,
                     requires_analysis=True,
                     requires_risk_review=True,
-                    importance="high",
+                    requires_execution_review=hard_exit,
+                    bypass_cooldown=hard_exit,
+                    importance="high" if hard_exit else "medium",
+                    payload={
+                        "held_minutes": round(held, 1),
+                        "max_holding_minutes": lifecycle.max_holding_minutes,
+                        "horizon": str((lifecycle.exit_policy or {}).get("horizon") or ""),
+                        "flatten": hard_exit,
+                        "venue": getattr(lifecycle, "venue", None) or "US",
+                    },
                 )
 
         # Protection order missing

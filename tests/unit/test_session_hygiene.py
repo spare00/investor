@@ -129,6 +129,72 @@ async def test_fold_expires_orphan_hard_stop_and_cba_event(session: AsyncSession
 
 
 @pytest.mark.asyncio
+async def test_fold_expires_overnight_max_holding_intents(session: AsyncSession) -> None:
+    now = datetime(2026, 8, 24, 3, 0, tzinfo=UTC)
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="BHP",
+            status="OPEN",
+            quantity=1575,
+            average_entry_price=63,
+            current_price=67,
+            venue="AU",
+            overnight_allowed=True,
+            exit_policy={"horizon": "short"},
+        )
+    )
+    older = IntradayEvent(
+        id=uuid4(),
+        event_type="MAX_HOLDING_TIME_REACHED",
+        source="test",
+        symbols=["BHP"],
+        importance="high",
+        detected_at=now - timedelta(hours=2),
+        expires_at=now + timedelta(hours=4),
+        deduplication_key="hold:bhp:old",
+        status="NEW",
+        requires_analysis=True,
+    )
+    newest = IntradayEvent(
+        id=uuid4(),
+        event_type="MAX_HOLDING_TIME_REACHED",
+        source="test",
+        symbols=["BHP"],
+        importance="high",
+        detected_at=now - timedelta(minutes=5),
+        expires_at=now + timedelta(hours=6),
+        deduplication_key="hold:bhp:new",
+        status="NEW",
+        requires_analysis=True,
+    )
+    session.add_all([older, newest])
+    session.add(
+        OrderIntent(
+            id=uuid4(),
+            symbol="BHP",
+            intent_type="exit",
+            side="sell",
+            quantity=1575,
+            status="CREATED",
+            thesis="max_holding_time",
+            metadata_json={"reason": "max_holding_time"},
+        )
+    )
+    await session.flush()
+    out = await fold_session_residue(
+        session, now=now, phase="REGULAR", session_date="2026-08-24"
+    )
+    assert out["intents"] == 1
+    assert out["events"] >= 1
+    intent = (await session.execute(select(OrderIntent))).scalar_one()
+    assert intent.status == "EXPIRED"
+    evs = {e.deduplication_key: e.status for e in (await session.execute(select(IntradayEvent))).scalars()}
+    assert evs["hold:bhp:old"] == "PROCESSED"
+    assert evs["hold:bhp:new"] == "NEW"
+
+
+@pytest.mark.asyncio
 async def test_evaluate_intraday_skips_committee_after_hours(
     session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

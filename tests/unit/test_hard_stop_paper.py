@@ -394,3 +394,42 @@ async def test_max_holding_submits_when_armed(
     assert "max_holding_time" in (hit["monitor"]["reasons"] or [])
     assert hit.get("exit_intent_id")
     assert hit.get("orders_submitted", 0) >= 1
+
+
+@pytest.mark.asyncio
+async def test_max_holding_overnight_short_reviews_not_flattens(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    settings = _armed()
+    broker = MockBroker(seed=7, starting_cash=50_000, allow_short=False)
+    broker.prices["BHP"] = 67.4
+    monkeypatch.setattr("app.brokers.factory.get_broker", lambda _s=None: broker)
+    monkeypatch.setattr("app.execution.order_manager.get_broker", lambda _s=None: broker)
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="BHP",
+            status="OPEN",
+            quantity=1575,
+            average_entry_price=63.0,
+            current_price=67.4,
+            stop_price=61.581,
+            overnight_allowed=True,
+            max_holding_minutes=10 * 24 * 60,
+            opened_at=datetime.now(UTC) - timedelta(days=12),
+            venue="AU",
+            exit_policy={"horizon": "short", "overnight_allowed": True},
+        )
+    )
+    await session.flush()
+    rows = await IntradayService(session, settings=settings).monitor_all(
+        prices={"BHP": 67.4}, venue="AU"
+    )
+    hit = next(r for r in rows if r["symbol"] == "BHP")
+    assert hit["monitor"]["verdict"] == "RISK_REVIEW_REQUIRED"
+    assert "max_holding_review" in (hit["monitor"]["reasons"] or [])
+    assert "max_holding_time" not in (hit["monitor"]["reasons"] or [])
+    assert not hit.get("exit_intent_id")
+    assert int(hit.get("orders_submitted") or 0) == 0

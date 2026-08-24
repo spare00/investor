@@ -123,7 +123,7 @@ class IntradayService:
             protective_exit = stop.triggered or (
                 result.verdict == "EXIT_INTENT_REQUIRED"
                 and any(
-                    r in {"stop_triggered", "max_holding_time", "take_profit_triggered"}
+                    r in {"stop_triggered", "take_profit_triggered", "max_holding_time"}
                     for r in (result.reasons or [])
                 )
             )
