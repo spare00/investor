@@ -138,6 +138,37 @@ class MockBroker:
                 raw = existing.raw or {}
                 if raw.get("client_order_id") == request.idempotency_key:
                     return existing
+        otype = str(request.order_type or "market").lower()
+        last = self._price(sym, request.limit_price or 100.0)
+        if otype in {"stop", "stp", "stop_limit"}:
+            stop = float(request.stop_price or 0)
+            triggered = False
+            if stop > 0:
+                if request.side == OrderSide.SELL:
+                    triggered = last <= stop
+                else:
+                    triggered = last >= stop
+            if not triggered:
+                self._seq += 1
+                oid = f"mock-{self.seed}-{self._seq}"
+                result = OrderResult(
+                    broker_order_id=oid,
+                    status=OrderStatus.ACCEPTED,
+                    submitted_at=datetime.now(UTC),
+                    filled_qty=0.0,
+                    avg_fill_price=None,
+                    raw={
+                        "client_order_id": request.idempotency_key,
+                        "symbol": sym,
+                        "side": request.side.value,
+                        "qty": request.qty,
+                        "type": request.order_type,
+                        "stop_price": request.stop_price,
+                    },
+                )
+                self.orders[oid] = result
+                self._order_meta[oid] = {"request": request, "replaced_by": None}
+                return result
         if request.side == OrderSide.SELL and not self.allow_short:
             pos_qty = float(self.positions.get(sym, {}).get("qty", 0) or 0)
             if request.qty > pos_qty + 1e-9:

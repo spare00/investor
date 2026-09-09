@@ -52,6 +52,7 @@ class ValidatedOrderIntent:
     thesis: str
     venue: str | None = None  # US | AU
     con_id: int | None = None  # IBKR Contract ID when known
+    time_in_force: str | None = None
 
 
 @dataclass(slots=True)

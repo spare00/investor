@@ -170,10 +170,15 @@ def test_cio_brief_summarizes_upstream_instead_of_nested_reports() -> None:
             )
         ],
         allowlist=["SPY"],
+        recent_lessons=[
+            {"s": "QQQ", "h": "scalp", "n": 3, "wr": 0.33, "pnl": -3.0, "sig": "negative"}
+        ],
     )
     text = cio_brief(payload)
     assert "QUESTION:" in text
     assert "BHP" in text
+    assert "lessons" in text
+    assert "QQQ" in text
     assert "market_events" not in text
     assert "prompt_sha256" not in text
     assert CIOAgent().build_user_prompt(payload) == text

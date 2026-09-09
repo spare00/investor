@@ -51,6 +51,7 @@ from app.models import (
 )
 from app.services.briefing import BriefingService
 from app.services.llm_budget import snapshot_llm_budget
+from app.services.picks import PicksService
 from app.universe.reeval import effective_max_intraday_reanalyses
 from app.workflow.daily import DailyWorkflowService
 
@@ -209,6 +210,32 @@ async def dashboard_briefing(
         session_date=session_date or None,
         include_raw=bool(raw),
         calendar_name=calendar,
+    )
+    payload["venue"] = book
+    payload["calendar_name"] = calendar
+    return payload
+
+
+@router.get("/dashboard/picks")
+async def dashboard_picks(
+    session_date: str | None = None,
+    venue: str | None = None,
+    limit: int = 30,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """Compact selected / rejected name ledger (lighter than briefing)."""
+    from app.market.session_ops import resolve_active_session_venue
+    from app.market.venues import run_calendar_name
+
+    settings = get_settings()
+    active = resolve_active_session_venue(settings)
+    book = (venue or (active.value if active else None) or "US").upper()
+    calendar = run_calendar_name(book, settings)
+    payload = await PicksService(session).build(
+        session_date=session_date or None,
+        venue=book,
+        calendar_name=calendar,
+        limit=limit,
     )
     payload["venue"] = book
     payload["calendar_name"] = calendar

@@ -90,6 +90,29 @@ async def _rollback_quietly(session: Any) -> None:
         logger.exception("scheduler_session_rollback_failed")
 
 
+async def _set_job_row_status(
+    session: Any,
+    job_id: Any,
+    *,
+    status: str,
+    error: str | None = None,
+    completed_at: datetime | None = None,
+    **extra: Any,
+) -> None:
+    """Update a scheduled job by primary key. Safe after session.rollback() expires ORM state."""
+    from sqlalchemy import update as sa_update
+
+    from app.models import ScheduledJobRecord
+
+    values: dict[str, Any] = {"status": status, "error": error}
+    if completed_at is not None:
+        values["completed_at"] = completed_at
+    values.update(extra)
+    await session.execute(
+        sa_update(ScheduledJobRecord).where(ScheduledJobRecord.id == job_id).values(**values)
+    )
+
+
 def _observe_scheduler_job(
     job: Any,
     *,
@@ -228,6 +251,22 @@ def _coalesce_due_jobs(due: list[Any]) -> list[Any]:
             job.status = "skipped"
             job.error = "coalesced_stale_intraday"
             job.completed_at = datetime.now(UTC)
+    closing_venues = {
+        parse_scoped_job_key(job.job_key)[0]
+        for job in other
+        if job_key_base(job.job_key) in {"closing_window", "force_close"}
+    }
+    if closing_venues:
+        kept: list[Any] = []
+        for job in keep_intra:
+            venue, _ = parse_scoped_job_key(job.job_key)
+            if venue in closing_venues:
+                job.status = "skipped"
+                job.error = "skipped_after_closing"
+                job.completed_at = datetime.now(UTC)
+                continue
+            kept.append(job)
+        keep_intra = kept
     out = other + keep_intra
     out.sort(key=lambda j: j.planned_at)
     return out
@@ -367,7 +406,10 @@ async def _dispatch_due_jobs() -> None:
             for job in due:
                 if job.status != "planned":
                     continue
-                job_lease = f"job:{job.session_date}:{job.job_key}"
+                job_id = job.id
+                job_key = job.job_key
+                session_date = job.session_date
+                job_lease = f"job:{session_date}:{job_key}"
                 try:
                     await leases.acquire(job_lease, "scheduler")
                 except LeaseError:
@@ -379,7 +421,10 @@ async def _dispatch_due_jobs() -> None:
                     job.started_at = now
                     await session.flush()
                     await session.commit()
-                    venue, _ = parse_scoped_job_key(job.job_key)
+                    job_id = job.id
+                    job_key = job.job_key
+                    session_date = job.session_date
+                    venue, _ = parse_scoped_job_key(job_key)
                     if venue.value not in services:
                         services[venue.value] = DailyWorkflowService(
                             session, settings=settings, owner="scheduler", venue=venue
@@ -388,33 +433,35 @@ async def _dispatch_due_jobs() -> None:
                         timeout_s = float(settings.effective_job_action_timeout_seconds())
                         outcome = await asyncio.wait_for(
                             _run_job_action(
-                                services[venue.value], job.job_key, job.session_date
+                                services[venue.value], job_key, session_date
                             ),
                             timeout=timeout_s,
                         )
                     except TimeoutError:
-                        from sqlalchemy import update
+                        from types import SimpleNamespace
 
                         from app.market.venues import job_key_base
 
-                        resume = job_key_base(job.job_key).startswith("postmarket_eval")
+                        resume = job_key_base(job_key).startswith("postmarket_eval")
                         await _rollback_quietly(session)
-                        await session.execute(
-                            update(ScheduledJobRecord)
-                            .where(ScheduledJobRecord.id == job.id)
-                            .values(
-                                status="planned" if resume else "failed",
-                                error=f"job_action_timeout:{int(timeout_s)}s",
-                                planned_at=datetime.now(UTC) + timedelta(seconds=30),
-                                started_at=None,
-                                completed_at=None if resume else datetime.now(UTC),
-                            )
+                        await _set_job_row_status(
+                            session,
+                            job_id,
+                            status="planned" if resume else "failed",
+                            error=f"job_action_timeout:{int(timeout_s)}s",
+                            planned_at=datetime.now(UTC) + timedelta(seconds=30),
+                            started_at=None,
+                            completed_at=None if resume else datetime.now(UTC),
                         )
-                        _observe_scheduler_job(job, timeout_s=timeout_s, timed_out=True)
+                        _observe_scheduler_job(
+                            SimpleNamespace(job_key=job_key, started_at=now),
+                            timeout_s=timeout_s,
+                            timed_out=True,
+                        )
                         logger.error(
                             "scheduler_job_timeout",
-                            job=job.job_key,
-                            session_date=job.session_date,
+                            job=job_key,
+                            session_date=session_date,
                             timeout_s=timeout_s,
                             rescheduled=resume,
                         )
@@ -452,43 +499,39 @@ async def _dispatch_due_jobs() -> None:
                     logger.info("scheduler_job_done", **entry)
                     await session.commit()
                 except DailyWorkflowError as exc:
-                    from sqlalchemy import update as sa_update
+                    from types import SimpleNamespace
 
                     await _rollback_quietly(session)
-                    await session.execute(
-                        sa_update(ScheduledJobRecord)
-                        .where(ScheduledJobRecord.id == job.id)
-                        .values(
-                            status="skipped",
-                            error=str(exc)[:500],
-                            completed_at=datetime.now(UTC),
-                        )
+                    await _set_job_row_status(
+                        session,
+                        job_id,
+                        status="skipped",
+                        error=str(exc)[:500],
+                        completed_at=datetime.now(UTC),
                     )
-                    logger.warning("scheduler_job_skipped", job=job.job_key, error=str(exc))
+                    logger.warning("scheduler_job_skipped", job=job_key, error=str(exc))
                     await session.commit()
                 except Exception as exc:  # noqa: BLE001
-                    from sqlalchemy import update as sa_update
+                    from types import SimpleNamespace
 
                     err = str(exc)[:500]
                     await _rollback_quietly(session)
-                    await session.execute(
-                        sa_update(ScheduledJobRecord)
-                        .where(ScheduledJobRecord.id == job.id)
-                        .values(
-                            status="failed",
-                            error=err,
-                            completed_at=datetime.now(UTC),
-                        )
+                    await _set_job_row_status(
+                        session,
+                        job_id,
+                        status="failed",
+                        error=err,
+                        completed_at=datetime.now(UTC),
                     )
                     try:
                         _observe_scheduler_job(
-                            job,
+                            SimpleNamespace(job_key=job_key, started_at=now),
                             timeout_s=float(settings.effective_job_action_timeout_seconds()),
                             timed_out=False,
                         )
                     except Exception:  # noqa: BLE001
                         pass
-                    logger.exception("scheduler_job_failed", job=job.job_key)
+                    logger.exception("scheduler_job_failed", job=job_key)
                     await session.commit()
                 finally:
                     try:
@@ -884,6 +927,7 @@ def start_scheduler(settings: Settings | None = None) -> AsyncIOScheduler | None
         id="daily_workflow_dispatch",
         replace_existing=True,
         name="daily_workflow_dispatch",
+        max_instances=1,
     )
     if _universe_refresh_enabled(cfg):
         interval = max(120, int(cfg.universe_refresh_seconds))

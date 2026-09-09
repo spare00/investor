@@ -127,6 +127,29 @@ async def test_static_mode_uses_allowlist(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_paper_collection_includes_full_allowlist(session: AsyncSession) -> None:
+    from app.core.config import TradingMode
+
+    settings = Settings(
+        universe_mode="dynamic",
+        trading_mode=TradingMode.PAPER,
+        live_trading_enabled=False,
+        paper_aggressive_entries=True,
+        trade_allowlist=["SPY", "NVDA", "IONQ"],
+        enabled_venues=["US"],
+        universe_focus_limit=1,
+        universe_manager_enabled=False,
+    )
+    svc = UniverseService(session, settings=settings)
+    await svc.ensure_seeded()
+    await svc.build_focus_without_llm(holdings=["NVDA"])
+    symbols = await svc.collection_universe(holdings=["NVDA"], venue="US")
+    assert "NVDA" in symbols
+    assert "SPY" in symbols
+    assert "IONQ" in symbols
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_inherits_horizon_hold_policy(session: AsyncSession) -> None:
     from app.intraday.monitor import PositionMonitor
     from app.models import WatchlistSymbol

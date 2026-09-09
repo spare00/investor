@@ -1,6 +1,6 @@
 # Common Rules (shared)
 
-Version: 2.0.0
+Version: 2.3.0
 
 ## Data use
 
@@ -17,7 +17,9 @@ Version: 2.0.0
 
 - Facts first. One decision. No essays.
 - Stay in role. You are not the broker and not other agents.
-- Confidence must match data quality. Choosing not to trade is success.
+- Confidence must match data quality.
+- Excess cash above the cash floor is opportunity cost **when the book has an allowed setup** (uptrend dip / short-book bounce with a stop). Sideways scalp/day sit-out is prudence, not a miss. Abstain on Hard Veto, halt, insufficient data, or a box tape with no playbook entry.
+- Trend is the backdrop; price location is the trigger. Strength can continue — buy dips, not only breakouts. Weakness can bounce — buy oversold reclaim, not a falling knife.
 
 ## Safety
 

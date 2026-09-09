@@ -297,6 +297,8 @@ class DailyWorkflowService:
                 meta["collection_symbols"] = collect_symbols
                 meta["venue"] = self.venue.value
                 run.metadata_json = meta
+            from app.universe.outcomes import load_committee_lessons
+
             analysis = await AgentPipeline(settings=self.settings, llm=llm).run_from_collection(
                 collection,
                 portfolio=portfolio,
@@ -308,6 +310,7 @@ class DailyWorkflowService:
                     for s in sorted(entry_universe)
                 ],
                 book=book,
+                recent_lessons=await load_committee_lessons(self.session),
             )
             from app.services.audit import AuditService
 
@@ -701,6 +704,14 @@ class DailyWorkflowService:
         now = now or datetime.now(UTC)
         run = await self._require_run(session_date)
         self._assert_not_blocked(run)
+        if run.current_state in {
+            DailyWorkflowState.CLOSING_WINDOW.value,
+            DailyWorkflowState.MARKET_CLOSED.value,
+            DailyWorkflowState.POSTMARKET_REVIEW.value,
+            DailyWorkflowState.COMPLETED.value,
+        }:
+            # Closing already started — leftover interval evals must skip, not catch-up.
+            raise DailyWorkflowError(f"intraday_not_allowed_from:{run.current_state}")
         if run.current_state not in {
             DailyWorkflowState.INTRADAY.value,
             DailyWorkflowState.MARKET_OPEN.value,

@@ -78,10 +78,21 @@ class RecoveryService:
                 status = self.calendar.get_market_status(now)
                 if status.phase in {"PREMARKET", "BEFORE_PREMARKET"}:
                     actions.append(f"resume_premarket_eligible:{run.session_date}")
-                else:
-                    actions.append(f"missed_premarket_use_no_trade_default:{run.session_date}")
+                elif (
+                    status.phase in {"REGULAR", "CLOSING"}
+                    or status.in_closing_window
+                    or status.in_force_close_window
+                ):
+                    # Restart mid-session: catch-up into INTRADAY. Do not stamp a
+                    # NO_TRADE default — the book is still eligible to trade.
+                    actions.append(f"resume_intraday_eligible:{run.session_date}")
                     meta = dict(run.metadata_json or {})
-                    meta["recovery_note"] = "missed_premarket_after_open"
+                    meta["recovery_note"] = "resume_after_restart"
+                    run.metadata_json = meta
+                else:
+                    actions.append(f"resume_session_eligible:{run.session_date}")
+                    meta = dict(run.metadata_json or {})
+                    meta["recovery_note"] = "resume_after_restart"
                     run.metadata_json = meta
             elif run.current_state == DailyWorkflowState.CLOSING_WINDOW.value:
                 if self.calendar.get_market_status(now).phase in {"POSTMARKET", "AFTER_HOURS"}:

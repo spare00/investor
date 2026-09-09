@@ -28,7 +28,7 @@ from app.services.llm import LLMClient
 class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
     name = AgentName.RISK_MANAGER
     prompt_file = "system_v1.md"
-    prompt_version = "2.0.0"
+    prompt_version = "2.2.0"
 
     def __init__(
         self,
@@ -51,8 +51,14 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
         """Risk Officer hard gate: orders require present-market prices, never stubs."""
         if not payload.live_prices_required:
             return []
-        if payload.price_feed_live and payload.price_providers:
+        if payload.price_feed_live:
             return []
+        from app.market.paper_gates import paper_relaxed_data_gates
+
+        if paper_relaxed_data_gates(self.settings):
+            notes = [str(n) for n in (payload.price_integrity_notes or [])]
+            if any("paper_relaxed" in n for n in notes):
+                return []
         return [VetoCode.NON_LIVE_MARKET_PRICES.value]
 
     def _portfolio_view(self, payload: RiskManagerInput) -> PortfolioRiskView:

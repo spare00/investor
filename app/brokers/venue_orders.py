@@ -13,6 +13,8 @@ from app.brokers.pricing import round_equity_price
 # Through-the-market offset. 0.8% was not enough once the snapshot was delayed
 # or missing; IBKR still collars ~10%, so 2.5% stays inside the band.
 _AU_SLIP_PCT = 0.025
+# Hard-stop / force-close: punch through a falling ASX print. Stay under ~10% collar.
+_AU_FLATTEN_SLIP_PCT = 0.08
 _AU_MIN_SLIP = 0.02
 # IBKR unset / NaN ticks often show up as DBL_MAX or 0.
 _MAX_SANE_EQUITY_PX = 1_000_000.0
@@ -44,11 +46,12 @@ def reference_price(*, side: str, last: float | None, bid: float | None = None, 
     raise ValueError("asx_requires_reference_price")
 
 
-def aggressive_limit_price(*, side: str, last: float) -> float:
+def aggressive_limit_price(*, side: str, last: float, flatten: bool = False) -> float:
     if not is_sane_equity_price(last):
         raise ValueError("last must be a sane positive price")
     px = float(last)
-    slip = max(px * _AU_SLIP_PCT, _AU_MIN_SLIP)
+    pct = _AU_FLATTEN_SLIP_PCT if flatten else _AU_SLIP_PCT
+    slip = max(px * pct, _AU_MIN_SLIP)
     raw = px - slip if str(side).lower() == "sell" else px + slip
     out = round_equity_price(max(0.01, raw))
     if out is None or not is_sane_equity_price(out):
@@ -66,12 +69,13 @@ def apply_marketable_limit(
     last: float | None,
     bid: float | None = None,
     ask: float | None = None,
+    flatten: bool = False,
 ) -> tuple[str, float]:
     """Return (limit, price) for AU/ASX. Never leaves a native market order."""
     if not uses_marketable_limit(venue, exchange):
         raise ValueError("not_a_marketable_limit_venue")
     ref = reference_price(side=side, last=last, bid=bid, ask=ask)
-    want = aggressive_limit_price(side=side, last=ref)
+    want = aggressive_limit_price(side=side, last=ref, flatten=flatten)
     otype = str(order_type or "market").lower()
     existing = float(limit_price) if is_sane_equity_price(limit_price) else None
     if otype in {"limit", "lmt"} and existing is not None:

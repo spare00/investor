@@ -430,3 +430,44 @@ async def test_cio_fallback_flat_risk_on_ignores_soft_prefer_no(stub_llm: StubLL
     out = CIOAgent(llm=stub_llm).fallback_output(payload, reason="test")
     assert out.portfolio_action == PortfolioAction.SCALE_IN
     assert any(a.symbol == "QQQ" for a in out.symbol_actions)
+
+
+def test_devil_fallback_elevated_vol_does_not_block() -> None:
+    from app.schemas.common import (
+        BreadthState,
+        LiquidityState,
+        MomentumState,
+        TrendState,
+        VolatilityState,
+    )
+    from app.schemas.quant_strategist import QuantStrategistOutput
+    from app.schemas.risk_manager import RiskManagerOutput
+
+    quant = QuantStrategistOutput(
+        timestamp=NOW,
+        market_trend_state=TrendState.UP,
+        market_momentum_state=MomentumState.STEADY,
+        market_volatility_state=VolatilityState.ELEVATED,
+        market_breadth_state=BreadthState.MIXED,
+        market_liquidity_state=LiquidityState.NORMAL,
+        data_quality_score=0.8,
+    )
+    risk = RiskManagerOutput(
+        timestamp=NOW,
+        overall_verdict=RiskVerdict.APPROVED,
+        halt_new_trades=False,
+        cash_pct=100.0,
+        gross_exposure_pct=0.0,
+    )
+    out = DevilsAdvocateAgent().fallback_output(
+        DevilsAdvocateInput(as_of=NOW, quant=quant, risk=risk),
+        reason="test",
+    )
+    assert out.prefer_no_trade is False
+
+    extreme = quant.model_copy(update={"market_volatility_state": VolatilityState.EXTREME})
+    blocked = DevilsAdvocateAgent().fallback_output(
+        DevilsAdvocateInput(as_of=NOW, quant=extreme, risk=risk),
+        reason="test",
+    )
+    assert blocked.prefer_no_trade is True

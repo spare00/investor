@@ -187,6 +187,14 @@ class IntradayService:
                         )
                     except Exception:  # noqa: BLE001
                         pass
+            elif (
+                "protection_order_missing" in (result.reasons or [])
+                and self._should_auto_submit_hard_stops(caps)
+            ):
+                submitted = await self._submit_protection_stop(lc)
+                entry["protection_orders_submitted"] = submitted
+                if submitted:
+                    entry["notes"] = ["protection_stop_submitted"]
             if result.verdict == "EMERGENCY_ACTION_REQUIRED":
                 try:
                     from app.alerts.ops import emit_monitor_emergency_alert
@@ -246,6 +254,73 @@ class IntradayService:
         orders = await OrderManager(self.session, settings=self.settings).submit_validated_intents(
             validation
         )
+        return len(orders)
+
+    async def _submit_protection_stop(self, lc: PositionLifecycle) -> int:
+        """Rest a GTC stop on an open long so the next CBA does not wait for a committee."""
+        from app.execution.order_manager import OrderManager, WORKING_ORDER_STATUSES
+        from app.execution.validation import ExecutionValidationResult, ValidatedOrderIntent
+        from app.models import Order
+        from sqlalchemy import select as sa_select
+
+        if not self.controls.is_new_order_allowed():
+            return 0
+        if bool(lc.protection_submitted):
+            return 0
+        qty = abs(float(lc.quantity or 0))
+        stop = lc.stop_price
+        if qty <= 0 or stop is None:
+            return 0
+        side = "sell" if float(lc.quantity or 0) >= 0 else "buy"
+        working = list(
+            (
+                await self.session.execute(
+                    sa_select(Order).where(
+                        Order.symbol == lc.symbol.upper(),
+                        Order.side == side,
+                        Order.status.in_(list(WORKING_ORDER_STATUSES)),
+                    )
+                )
+            ).scalars().all()
+        )
+        if working:
+            lc.protection_submitted = True
+            await self.session.flush()
+            return 0
+        key = f"protect-stop:{lc.id}"
+        validation = ExecutionValidationResult(
+            approved=True,
+            intents=[
+                ValidatedOrderIntent(
+                    symbol=lc.symbol.upper(),
+                    side=side,
+                    quantity=qty,
+                    order_type="stop",
+                    limit_price=None,
+                    stop_price=float(stop),
+                    idempotency_key=key,
+                    decision_id=str(lc.decision_id) if lc.decision_id else str(uuid4()),
+                    thesis="protection_stop",
+                    venue=getattr(lc, "venue", None)
+                    or venue_for_symbol(lc.symbol, self.settings).value,
+                    con_id=int(getattr(lc, "con_id", 0) or 0) or None,
+                    time_in_force="gtc",
+                )
+            ],
+        )
+        orders = await OrderManager(self.session, settings=self.settings).submit_validated_intents(
+            validation
+        )
+        if orders:
+            live = [
+                o
+                for o in orders
+                if str(o.status or "").lower()
+                not in {"rejected", "cancelled", "canceled"}
+            ]
+            if live:
+                lc.protection_submitted = True
+                await self.session.flush()
         return len(orders)
 
     async def _exit_intent(

@@ -19,12 +19,211 @@ from app.schemas.common import (
     TimeHorizon,
     TraceMetadata,
 )
+from app.universe.book_strategy import (
+    horizon_for_symbol,
+    notional_pct_for_risk,
+    playbook_for,
+    portfolio_action_from_symbol_actions,
+    should_propose_entry,
+    tape_from_view,
+)
+from app.universe.caps import horizon_cap_violation
+
+_ENTRY_ACTIONS = {
+    SymbolAction.STRONG_BUY,
+    SymbolAction.BUY,
+    SymbolAction.SCALE_IN,
+}
+
+# Points of cash above the floor that still count as drag (paper learning).
+_CASH_DRAG_BUFFER_PCT = 10.0
+
+
+def cash_target_after_plans(
+    *,
+    current_cash_pct: float,
+    min_cash_pct: float,
+    plans: list,
+) -> float:
+    """Cash target falls when we buy. Never below the floor; never freeze at today's pile."""
+    deployed = 0.0
+    for plan in plans or []:
+        action = getattr(plan, "action", None)
+        if action in _ENTRY_ACTIONS:
+            deployed += float(getattr(plan, "target_position_pct", 0) or 0)
+    return round(
+        max(float(min_cash_pct), min(100.0, float(current_cash_pct) - deployed)),
+        2,
+    )
+
+
+def quant_entry_plans(
+    *,
+    views: list,
+    watchlist: list[dict],
+    held_symbols: list[str],
+    regime: MarketRegime,
+    max_position_pct: float,
+    allowlist: list[str] | None = None,
+    new_counts: dict[str, int] | None = None,
+) -> list[SymbolActionPlan]:
+    """Turn Quant views into SCALE_IN plans (playbook + book caps)."""
+    allow = {s.upper() for s in (allowlist or []) if s} or None
+    held = [s.upper() for s in held_symbols]
+    hz_map = {s: horizon_for_symbol(s, watchlist) for s in held}
+    new_by_book: dict[str, int] = dict(new_counts or {})
+    plans: list[SymbolActionPlan] = []
+    ranked = sorted(
+        views,
+        key=lambda v: float(getattr(v, "probability_estimate", 0) or 0),
+        reverse=True,
+    )
+    for view in ranked:
+        sym = str(getattr(view, "symbol", "") or "").upper()
+        if not sym or sym in held:
+            continue
+        if allow is not None and sym not in allow:
+            continue
+        hz = horizon_for_symbol(sym, watchlist)
+        book = playbook_for(hz)
+        if book is None:
+            continue
+        if not should_propose_entry(
+            horizon=hz,
+            probability=float(view.probability_estimate or 0),
+            trend=view.trend_state,
+            momentum=view.momentum_state,
+            liquidity=view.liquidity_state,
+            volatility=view.volatility_state,
+            rsi=None,
+            regime=regime,
+            **tape_from_view(view),
+        ):
+            continue
+        if view.entry_zone is None or view.stop_or_invalidation is None:
+            continue
+        if new_by_book.get(hz, 0) >= book.max_new_per_cycle:
+            continue
+        cap = horizon_cap_violation(
+            symbol=sym,
+            horizon_by_symbol={**hz_map, sym: hz},
+            held_symbols=held,
+            is_new_symbol=True,
+        )
+        if cap:
+            continue
+        size = notional_pct_for_risk(
+            horizon=hz,
+            entry=float(view.entry_zone.max + view.entry_zone.min) / 2.0,
+            stop=float(view.stop_or_invalidation),
+            max_position_pct=max_position_pct,
+        )
+        plans.append(
+            SymbolActionPlan(
+                symbol=sym,
+                action=SymbolAction.SCALE_IN,
+                confidence=int(float(view.probability_estimate or 0) * 100),
+                target_position_pct=size,
+                order_type=OrderType.LIMIT,
+                entry_zone=PriceZone(min=view.entry_zone.min, max=view.entry_zone.max),
+                stop_loss=view.stop_or_invalidation,
+                take_profit=[],
+                time_horizon=book.cio_time_horizon,
+                thesis=f"{book.label_ko}: {book.summary}"[:80],
+                invalidation="Break below stop_or_invalidation",
+                max_holding_time_minutes=None,
+            )
+        )
+        new_by_book[hz] = new_by_book.get(hz, 0) + 1
+        held.append(sym)
+        hz_map[sym] = hz
+    return plans
+
+
+def ensure_cio_takes_setups(
+    decision: CIODecision,
+    *,
+    quant,
+    watchlist: list[dict] | None,
+    positions: list,
+    allowlist: list[str] | None,
+    risk_ok: bool,
+    regime: MarketRegime,
+    max_position_pct: float,
+    enabled: bool,
+    cash_pct: float = 100.0,
+    min_cash_pct: float = 30.0,
+) -> CIODecision:
+    """If the book sat idle — or stayed cash-heavy after a token buy — take Quant setups."""
+    if not enabled or not risk_ok or not decision.risk_approval:
+        return decision
+    entering = [p for p in decision.symbol_actions if p.action in _ENTRY_ACTIONS]
+    cash_heavy = float(cash_pct) >= float(min_cash_pct) + _CASH_DRAG_BUFFER_PCT
+    if entering and not cash_heavy:
+        return decision
+    watch = watchlist or []
+    held = [
+        str(p.symbol).upper()
+        for p in (positions or [])
+        if abs(getattr(p, "quantity", 0) or 0) > 1e-9
+    ]
+    already = {p.symbol.upper() for p in entering}
+    new_counts: dict[str, int] = {}
+    for plan in entering:
+        hz = horizon_for_symbol(plan.symbol, watch)
+        new_counts[hz] = new_counts.get(hz, 0) + 1
+    extras = quant_entry_plans(
+        views=list(getattr(quant, "symbol_views", None) or []),
+        watchlist=watch,
+        held_symbols=held + list(already),
+        regime=regime,
+        max_position_pct=max_position_pct,
+        allowlist=allowlist,
+        new_counts=new_counts,
+    )
+    if not extras:
+        return decision
+    taken = {p.symbol.upper() for p in extras}
+    kept = [p for p in decision.symbol_actions if p.symbol.upper() not in taken]
+    merged = kept + extras
+    return decision.model_copy(
+        update={
+            "symbol_actions": merged,
+            "portfolio_action": portfolio_action_from_symbol_actions(merged),
+            "reason_not_to_trade": None,
+            "cash_target_pct": cash_target_after_plans(
+                current_cash_pct=cash_pct,
+                min_cash_pct=min_cash_pct,
+                plans=merged,
+            ),
+        }
+    )
+
+
+def reconcile_nameless_entry(decision: CIODecision, *, has_positions: bool) -> CIODecision:
+    """Do not advertise SCALE_IN/BUY when no named entry survived."""
+    entering = [p for p in decision.symbol_actions if p.action in _ENTRY_ACTIONS]
+    if entering:
+        return decision
+    if decision.portfolio_action not in {
+        PortfolioAction.SCALE_IN,
+        PortfolioAction.BUY,
+        PortfolioAction.STRONG_BUY,
+    }:
+        return decision
+    fallback = PortfolioAction.HOLD if has_positions else PortfolioAction.NO_TRADE
+    return decision.model_copy(
+        update={
+            "portfolio_action": fallback,
+            "reason_not_to_trade": decision.reason_not_to_trade or "no named entry after setups",
+        }
+    )
 
 
 class CIOAgent(BaseAgent[CIOInput, CIODecision]):
     name = AgentName.CIO
     prompt_file = "system_v1.md"
-    prompt_version = "2.2.0"
+    prompt_version = "2.7.0"
 
     def output_model(self) -> type[CIODecision]:
         return CIODecision
@@ -94,10 +293,8 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
             horizon_for_symbol,
             playbook_for,
             portfolio_action_from_symbol_actions,
-            should_propose_entry,
             symbol_action_for_exit,
         )
-        from app.universe.caps import horizon_cap_violation
 
         risk_ok = payload.risk.overall_verdict in {
             RiskVerdict.APPROVED,
@@ -107,14 +304,8 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
 
         regime = payload.macro.market_regime
         positions = self._scoped_positions(payload)
-        flat = not positions or all(abs(p.quantity or 0) < 1e-9 for p in positions)
-        soft_prefer_no = bool(payload.devil.prefer_no_trade)
-        if soft_prefer_no and risk_ok and flat and regime in {
-            MarketRegime.RISK_ON,
-            MarketRegime.STRONG_RISK_ON,
-        }:
-            soft_prefer_no = False
-        prefer_no = soft_prefer_no or not risk_ok
+        # Devil is advisory. Only Hard Veto / halt blocks new risk.
+        prefer_no = not risk_ok
 
         views = {str(v.symbol).upper(): v for v in payload.quant.symbol_views if v.symbol}
         watch = payload.watchlist or []
@@ -123,32 +314,13 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
         reason_not = None
 
         if prefer_no:
-            if not risk_ok:
-                portfolio_action = PortfolioAction.STAY_CASH
-                symbol_actions = self._close_plans(
-                    payload, thesis="Fallback CIO: risk blocked — flatten existing positions"
-                )
-            else:
-                for pos in positions:
-                    if abs(pos.quantity or 0) < 1e-9:
-                        continue
-                    hz = horizon_for_symbol(pos.symbol, watch)
-                    book = playbook_for(hz)
-                    label = book.label_ko if book else hz
-                    symbol_actions.append(
-                        self._plan_for_position(
-                            pos,
-                            action=SymbolAction.HOLD,
-                            thesis=f"{label}: hold — devil/risk prefers no new risk",
-                            horizon=hz,
-                        )
-                    )
-                portfolio_action = PortfolioAction.HOLD if symbol_actions else PortfolioAction.NO_TRADE
-            reason_not = payload.devil.prefer_no_trade_rationale or "Risk or Devil prefers no trade"
+            portfolio_action = PortfolioAction.STAY_CASH
+            symbol_actions = self._close_plans(
+                payload, thesis="Fallback CIO: risk blocked — flatten existing positions"
+            )
+            reason_not = "Risk blocked — no new entries"
         else:
             held_syms = [p.symbol.upper() for p in positions if abs(p.quantity or 0) > 1e-9]
-            hz_map = {s: horizon_for_symbol(s, watch) for s in held_syms}
-            new_by_book: dict[str, int] = {}
 
             for pos in positions:
                 if abs(pos.quantity or 0) < 1e-9:
@@ -175,14 +347,20 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
                     liquidity=view.liquidity_state,
                 )
                 action = symbol_action_for_exit(decision)
-                target = 0.0 if action == SymbolAction.SELL else (
-                    abs(pos.weight_pct) * 0.5 if action == SymbolAction.REDUCE else abs(pos.weight_pct)
-                )
+                if action == SymbolAction.SELL:
+                    target = 0.0
+                elif action == SymbolAction.REDUCE:
+                    target = abs(pos.weight_pct) * 0.5
+                else:
+                    target = abs(pos.weight_pct)
                 symbol_actions.append(
                     self._plan_for_position(
                         pos,
                         action=action,
-                        thesis=f"{label}: {decision.value} on {view.trend_state.value}/{view.momentum_state.value}",
+                        thesis=(
+                            f"{label}: {decision.value} on "
+                            f"{view.trend_state.value}/{view.momentum_state.value}"
+                        ),
                         horizon=hz,
                         target_pct=target,
                         stop=view.stop_or_invalidation if action != SymbolAction.HOLD else None,
@@ -191,73 +369,16 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
                 )
 
             if risk_ok:
-                ranked = sorted(
-                    views.values(),
-                    key=lambda v: float(v.probability_estimate or 0),
-                    reverse=True,
-                )
-                for view in ranked:
-                    sym = view.symbol.upper()
-                    if sym in held_syms:
-                        continue
-                    hz = horizon_for_symbol(sym, watch)
-                    book = playbook_for(hz)
-                    if book is None:
-                        continue
-                    if not should_propose_entry(
-                        horizon=hz,
-                        probability=float(view.probability_estimate or 0),
-                        trend=view.trend_state,
-                        momentum=view.momentum_state,
-                        liquidity=view.liquidity_state,
-                        volatility=view.volatility_state,
-                        rsi=None,
-                        regime=regime,
-                    ):
-                        continue
-                    if view.entry_zone is None or view.stop_or_invalidation is None:
-                        continue
-                    if new_by_book.get(hz, 0) >= book.max_new_per_cycle:
-                        continue
-                    cap = horizon_cap_violation(
-                        symbol=sym,
-                        horizon_by_symbol={**hz_map, sym: hz},
+                symbol_actions.extend(
+                    quant_entry_plans(
+                        views=list(views.values()),
+                        watchlist=watch,
                         held_symbols=held_syms,
-                        is_new_symbol=True,
-                    )
-                    if cap:
-                        continue
-                    from app.universe.book_strategy import notional_pct_for_risk
-
-                    size = notional_pct_for_risk(
-                        horizon=hz,
-                        entry=float(view.entry_zone.max + view.entry_zone.min) / 2.0
-                        if view.entry_zone
-                        else float(view.stop_or_invalidation or 0) * 1.02,
-                        stop=float(view.stop_or_invalidation),
+                        regime=regime,
                         max_position_pct=float(self.settings.max_position_pct),
+                        allowlist=payload.allowlist,
                     )
-                    symbol_actions.append(
-                        SymbolActionPlan(
-                            symbol=sym,
-                            action=SymbolAction.SCALE_IN,
-                            confidence=int(view.probability_estimate * 100),
-                            target_position_pct=size,
-                            order_type=OrderType.LIMIT,
-                            entry_zone=PriceZone(
-                                min=view.entry_zone.min, max=view.entry_zone.max
-                            ),
-                            stop_loss=view.stop_or_invalidation,
-                            take_profit=[],
-                            time_horizon=book.cio_time_horizon,
-                            thesis=f"{book.label_ko}: {book.summary}"[:80],
-                            invalidation="Break below stop_or_invalidation",
-                            max_holding_time_minutes=None,
-                        )
-                    )
-                    new_by_book[hz] = new_by_book.get(hz, 0) + 1
-                    held_syms.append(sym)
-                    hz_map[sym] = hz
+                )
 
             portfolio_action = portfolio_action_from_symbol_actions(symbol_actions)
             if not symbol_actions:
@@ -278,8 +399,14 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
             market_regime=regime,
             portfolio_action=portfolio_action,
             symbol_actions=symbol_actions,
-            cash_target_pct=min(
-                100.0, max(payload.portfolio_cash_pct, self.settings.min_cash_pct)
+            cash_target_pct=(
+                100.0
+                if prefer_no
+                else cash_target_after_plans(
+                    current_cash_pct=payload.portfolio_cash_pct,
+                    min_cash_pct=float(self.settings.min_cash_pct),
+                    plans=symbol_actions,
+                )
             ),
             hedge_required=regime in {MarketRegime.RISK_OFF, MarketRegime.STRONG_RISK_OFF},
             risk_approval=risk_ok,

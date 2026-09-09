@@ -229,6 +229,22 @@ async def test_full_flow_with_fake_analysis(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_evaluate_intraday_skips_after_closing(session: AsyncSession) -> None:
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-03")
+    await svc.run_analysis(session_date="2026-08-03", fake_llm=True)
+    now = datetime(2026, 8, 3, 13, 0, tzinfo=UTC)
+    await svc.revalidate(session_date="2026-08-03", now=now)
+    await svc.start_closing(
+        session_date="2026-08-03", positions=[{"symbol": "SPY", "quantity": 1}]
+    )
+    with pytest.raises(DailyWorkflowError, match="intraday_not_allowed_from:CLOSING_WINDOW"):
+        await svc.evaluate_intraday(
+            session_date="2026-08-03", trigger="interval", now=now, fake_llm=True
+        )
+
+
+@pytest.mark.asyncio
 async def test_pause_and_emergency_block_actions(session: AsyncSession) -> None:
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-08-03")
@@ -400,6 +416,27 @@ async def test_recovery_fails_stale_run(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_recovery_resumes_intraday_instead_of_no_trade(session: AsyncSession) -> None:
+    now = datetime(2026, 8, 4, 15, 0, tzinfo=UTC)  # 11:00 ET regular session
+    run = DailyWorkflowRun(
+        id=uuid4(),
+        session_date="2026-08-04",
+        calendar_name="NYSE",
+        current_state=DailyWorkflowState.PREMARKET_PREPARATION.value,
+        status="running",
+        timezone="America/New_York",
+        metadata_json={},
+    )
+    session.add(run)
+    await session.flush()
+    result = await RecoveryService(session).run(now=now)
+    assert any(a.startswith("resume_intraday_eligible:") for a in result["actions"])
+    assert not any("no_trade" in a for a in result["actions"])
+    await session.refresh(run)
+    assert (run.metadata_json or {}).get("recovery_note") == "resume_after_restart"
+
+
+@pytest.mark.asyncio
 async def test_closing_policy_no_broker() -> None:
     eng = ClosingPolicyEngine()
     decision = eng.decide(
@@ -530,12 +567,13 @@ def test_coalesce_keeps_latest_intraday_only() -> None:
     out = _coalesce_due_jobs(jobs)
     assert [j.job_key for j in out] == [
         "premarket_analysis",
-        "intraday_eval_2",
         "closing_window",
     ]
     assert jobs[1].status == "skipped"
     assert jobs[2].status == "skipped"
-    assert jobs[3].status == "planned"
+    assert jobs[3].status == "skipped"
+    assert jobs[3].error == "skipped_after_closing"
+    assert jobs[4].status == "planned"
 
 
 def test_prioritize_open_venue_jobs_runs_live_tape_first() -> None:
@@ -576,7 +614,10 @@ def test_coalesce_before_limit_keeps_closing_with_dense_intraday() -> None:
     coalesced = _coalesce_due_jobs(list(jobs))
     due = coalesced[:20]
     assert any(j.job_key == "US:closing_window" for j in due)
-    assert sum(1 for j in due if "intraday_eval" in j.job_key) == 1
+    assert sum(1 for j in due if "intraday_eval" in j.job_key) == 0
+    assert closing.status == "planned"
+    assert jobs[0].error == "coalesced_stale_intraday"
+    assert jobs[-2].error == "skipped_after_closing"
 
 
 @pytest.mark.asyncio

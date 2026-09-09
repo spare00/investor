@@ -50,6 +50,21 @@ def test_apply_never_leaves_au_market() -> None:
     assert px < 112.68
 
 
+def test_flatten_sell_punches_through_eight_percent() -> None:
+    px = aggressive_limit_price(side="sell", last=100.0, flatten=True)
+    assert px <= 92.5
+    otype, limit = apply_marketable_limit(
+        venue="AU",
+        side="sell",
+        order_type="market",
+        limit_price=None,
+        last=100.0,
+        flatten=True,
+    )
+    assert otype == "limit"
+    assert limit <= 92.5
+
+
 def test_apply_requires_a_tape() -> None:
     with pytest.raises(ValueError, match="asx_requires_reference_price"):
         apply_marketable_limit(

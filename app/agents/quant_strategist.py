@@ -98,7 +98,7 @@ def _momentum(bar: BarSnapshot, horizon: str = "short") -> MomentumState:
     if bar.rsi_14 >= 55:
         return MomentumState.ACCELERATING
     if bar.rsi_14 <= 30:
-        return MomentumState.EXHAUSTED
+        return MomentumState.DECELERATING
     if bar.rsi_14 <= 45:
         return MomentumState.DECELERATING
     return MomentumState.STEADY
@@ -137,11 +137,11 @@ def _probability(trend: TrendState, momentum: MomentumState) -> tuple[float, str
     score = 0.5
     basis = ["base=0.50"]
     if trend in {TrendState.UP, TrendState.STRONG_UP}:
-        score += 0.15
-        basis.append("trend_up=+0.15")
+        score += 0.12
+        basis.append("trend_up=+0.12")
     elif trend in {TrendState.DOWN, TrendState.STRONG_DOWN}:
-        score -= 0.15
-        basis.append("trend_down=-0.15")
+        score -= 0.05
+        basis.append("trend_down=-0.05")
     if momentum == MomentumState.ACCELERATING:
         score += 0.1
         basis.append("mom_acc=+0.10")
@@ -155,7 +155,7 @@ def _probability(trend: TrendState, momentum: MomentumState) -> tuple[float, str
 class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput]):
     name = AgentName.QUANT_STRATEGIST
     prompt_file = "system_v1.md"
-    prompt_version = "2.2.0"
+    prompt_version = "2.6.0"
 
     def output_model(self) -> type[QuantStrategistOutput]:
         return QuantStrategistOutput
@@ -168,6 +168,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
     ) -> QuantStrategistOutput:
         from app.universe.book_strategy import (
             adjust_probability,
+            apply_timing_probability,
             horizon_for_symbol,
             playbook_for,
             structure_allows_entry,
@@ -193,6 +194,18 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                 volume=bar.volume,
                 avg_volume=bar.avg_volume_20d,
             )
+            prob, book_notes, _timing = apply_timing_probability(
+                prob,
+                book_notes,
+                trend=trend,
+                momentum=mom,
+                rsi=bar.rsi_14,
+                last=bar.last,
+                open_=bar.open,
+                high=bar.high,
+                low=bar.low,
+                sma_20=bar.sma_20,
+            )
             book = playbook_for(horizon)
             pol = by_pol.get(bar.symbol.upper())
             stop = suggested_long_stop(
@@ -202,7 +215,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
             )
             zone_pct = book.entry_zone_pct if book else 0.01
             target_pct = book.target_pct if book else 0.02
-            ok, why = structure_allows_entry(
+            _, why = structure_allows_entry(
                 horizon=horizon,
                 trend=trend,
                 momentum=mom,
@@ -217,8 +230,19 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                 low=bar.low,
                 sma_20=bar.sma_20,
             )
+            hard_no_zone = (
+                why
+                in {
+                    "medium_book_ignored",
+                    "vol_extreme",
+                    "falling_knife",
+                    "exhausted",
+                }
+                or why.startswith("liquidity_")
+                or why.startswith("rsi_extreme")
+            )
             entry_zone = None
-            if book is not None and ok:
+            if book is not None and not hard_no_zone:
                 entry_zone = PriceZone(
                     min=round(bar.last * (1 - zone_pct), 4),
                     max=round(bar.last * (1 + zone_pct), 4),

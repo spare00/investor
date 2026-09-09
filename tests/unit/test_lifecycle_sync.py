@@ -75,6 +75,7 @@ async def test_sync_from_broker_positions_upserts_and_closes(session: AsyncSessi
     await session.refresh(rows[0])
     assert rows[0].status == "CLOSED"
     assert rows[0].quantity == 0
+    assert rows[0].realized_pl == pytest.approx(100.0)
 
 
 @pytest.mark.asyncio

@@ -279,3 +279,53 @@ async def test_validation_reject_creates_no_orders(session: AsyncSession) -> Non
     )
     v = ExecutionValidationResult(approved=False, rejections=["hard_veto"])
     assert await om.submit_validated_intents(v) == []
+
+
+@pytest.mark.asyncio
+async def test_replaces_stale_flatten_limit(session: AsyncSession) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.models import Order
+
+    broker = SimulatedBroker()
+    broker.positions["VAS"] = {"symbol": "VAS", "qty": "876", "avg_entry_price": "114"}
+    om = OrderManager(session, broker=broker, controls=TradingControls(), settings=_exec_settings())
+    key = "force-close:vas-lc:close:2026-08-20"
+    stale = datetime.now(UTC) - timedelta(minutes=5)
+    session.add(
+        Order(
+            idempotency_key=key,
+            symbol="VAS",
+            side="sell",
+            qty=876,
+            order_type="limit",
+            limit_price=110.0,
+            status="ACCEPTED",
+            decision_id=uuid4(),
+            submitted_at=stale,
+        )
+    )
+    await session.flush()
+    v = ExecutionValidationResult(
+        approved=True,
+        intents=[
+            ValidatedOrderIntent(
+                symbol="VAS",
+                side="sell",
+                quantity=876,
+                order_type="market",
+                limit_price=None,
+                stop_price=None,
+                idempotency_key=key,
+                decision_id=str(uuid4()),
+                thesis="force_close:leftover",
+                venue="AU",
+            )
+        ],
+    )
+    rows = await om.submit_validated_intents(v)
+    assert len(rows) == 1
+    row = (await session.execute(select(Order).where(Order.idempotency_key == key))).scalar_one()
+    assert row.status.upper() == "FILLED"

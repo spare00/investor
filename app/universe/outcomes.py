@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import PositionLifecycle, WatchlistSymbol
 from app.universe.horizons import UniverseHorizon
+from app.intraday.pnl import lifecycle_pnl
 
 
 def _horizon_from_lifecycle(lc: PositionLifecycle, watchlist_hz: dict[str, str]) -> str:
@@ -56,7 +57,7 @@ async def recent_outcome_stats(
             continue
         sym = str(lc.symbol).upper()
         hz = _horizon_from_lifecycle(lc, watchlist_hz)
-        pnl = float(lc.realized_pl or 0.0)
+        pnl = lifecycle_pnl(lc)
         by_symbol[sym].append(pnl)
         by_horizon[hz].append(pnl)
         symbol_horizon[sym] = hz
@@ -105,7 +106,7 @@ async def recent_outcome_stats(
             continue
         sym = str(lc.symbol).upper()
         src = source_by_sym.get(sym) or "unknown"
-        by_source_pnls[src].append(float(lc.realized_pl or 0.0))
+        by_source_pnls[src].append(lifecycle_pnl(lc))
 
     sources_out = {src: _pack(pnls) for src, pnls in sorted(by_source_pnls.items())}
 
@@ -122,3 +123,42 @@ async def recent_outcome_stats(
             "Prefer pausing or deprioritizing repeated negative-signal names with adequate sample size.",
         ],
     }
+
+
+def committee_lessons(stats: dict[str, Any], *, limit: int = 8) -> list[dict[str, Any]]:
+    """Compact closed-trade rows for CIO/Quant briefs (not a live risk override)."""
+    rows: list[dict[str, Any]] = []
+    for item in stats.get("by_symbol") or []:
+        if not isinstance(item, dict):
+            continue
+        n = int(item.get("trade_count") or 0)
+        if n <= 0:
+            continue
+        symbol = str(item.get("symbol") or "").upper()
+        if not symbol:
+            continue
+        wr = item.get("win_rate")
+        rows.append(
+            {
+                "s": symbol,
+                "h": item.get("horizon"),
+                "n": n,
+                "wr": round(float(wr), 2) if wr is not None else None,
+                "pnl": round(float(item.get("total_pnl") or 0.0), 2),
+                "sig": item.get("signal"),
+            }
+        )
+    rows.sort(key=lambda r: abs(float(r.get("pnl") or 0.0)), reverse=True)
+    return rows[: max(1, min(int(limit or 8), 12))]
+
+
+async def load_committee_lessons(
+    session: AsyncSession,
+    *,
+    lookback_days: int = 90,
+) -> list[dict[str, Any]]:
+    try:
+        stats = await recent_outcome_stats(session, lookback_days=lookback_days)
+        return committee_lessons(stats)
+    except Exception:  # noqa: BLE001
+        return []

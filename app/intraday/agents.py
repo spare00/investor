@@ -174,6 +174,8 @@ class IntradayAgentService:
                 venue=book,
                 allowlist=entry_universe,
             )
+            from app.universe.outcomes import load_committee_lessons
+
             analysis = await pipeline.run_from_collection(
                 collection,
                 portfolio=portfolio,
@@ -185,6 +187,7 @@ class IntradayAgentService:
                     for s in sorted(entry_universe)
                 ],
                 book=book_ctx,
+                recent_lessons=await load_committee_lessons(self.session),
             )
             from app.services.audit import AuditService
 

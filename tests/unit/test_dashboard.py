@@ -144,6 +144,8 @@ def test_dashboard_routes_exist() -> None:
             dash = client.get("/dashboard")
             assert dash.status_code == 200
             assert b"Investor Ops" in dash.content
+            assert b"data-tab=\"picks\"" in dash.content
+            assert b"refreshPicks" in dash.content
             assert b"kpi-grid" in dash.content
             assert b"function kpiFromMetric" in dash.content
             assert b"Raw JSON" in dash.content
@@ -184,9 +186,17 @@ def test_dashboard_routes_exist() -> None:
             assert "overnight_reviews" in body
             assert "session_jobs" in body
             assert "committee_watch" in body
+            picks = client.get("/dashboard/picks")
+            assert picks.status_code == 200, picks.text
+            assert "rows" in picks.json()
+            assert "counts" in picks.json()
             assert "timeout_cap_seconds" in body["committee_watch"]
             assert "workflows_by_venue" in body.get("market_status", {})
             assert "universe" in body
+            picks = client.get("/dashboard/picks")
+            assert picks.status_code == 200, picks.text
+            assert "rows" in picks.json()
+            assert "counts" in picks.json()
             metrics = client.get("/metrics")
             assert metrics.status_code == 200
             assert b"investor_" in metrics.content or b"python_" in metrics.content

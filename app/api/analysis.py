@@ -98,11 +98,14 @@ async def _run_analysis(
         logger.exception("analysis_portfolio_failed", workflow_id=str(workflow_id))
         raise HTTPException(status_code=503, detail=f"portfolio_sync_failed:{exc}") from exc
     try:
+        from app.universe.outcomes import load_committee_lessons
+
         analysis = await AgentPipeline(settings=settings, llm=llm).run_from_collection(
             collection,
             portfolio=portfolio,
             proposed_trades=[],
             workflow_id=workflow_id,
+            recent_lessons=await load_committee_lessons(session),
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("analysis_run_failed", workflow_id=str(workflow_id))

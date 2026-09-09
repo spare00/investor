@@ -199,3 +199,38 @@ async def test_reap_stale_running_jobs(session: AsyncSession) -> None:
     ).scalar_one()
     assert row.status == "failed"
     assert row.error and row.error.startswith("stale_running_reaped")
+
+
+@pytest.mark.asyncio
+async def test_set_job_row_status_after_rollback(session: AsyncSession) -> None:
+    from datetime import UTC, datetime
+
+    from app.core.scheduler import _set_job_row_status
+    from app.models import ScheduledJobRecord
+
+    now = datetime.now(UTC)
+    row = ScheduledJobRecord(
+        job_key="AU:intraday_eval_70",
+        session_date="2026-09-02",
+        planned_at=now,
+        started_at=now,
+        status="running",
+    )
+    session.add(row)
+    await session.flush()
+    job_id = row.id
+    await session.commit()
+    await session.rollback()
+    await _set_job_row_status(
+        session,
+        job_id,
+        status="skipped",
+        error="intraday_not_allowed_from:CLOSING_WINDOW",
+        completed_at=now,
+    )
+    await session.commit()
+    saved = (
+        await session.execute(select(ScheduledJobRecord).where(ScheduledJobRecord.id == job_id))
+    ).scalar_one()
+    assert saved.status == "skipped"
+    assert saved.error and "CLOSING_WINDOW" in saved.error

@@ -92,53 +92,57 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         horizon="scalp",
         label_ko="초단타",
         summary=(
-            "Tape: price + volume acceleration, tight spread, last above sma20. "
-            "RSI is a haircut not a gate. Tight stop, no overnight. Cut on noise — no average-down."
+            "Trend is the backdrop; location is the trigger. "
+            "Buy dips in strength and bounces off weakness. "
+            "Haircut chases; skip falling knives / blow-off / stressed / extreme. "
+            "Tight stop, no overnight."
         ),
-        min_probability=0.58,
+        min_probability=0.50,
         entry_zone_pct=0.0015,
         target_pct=0.008,
         target_size_pct=8.0,
         risk_budget_pct=0.15,
         require_uptrend=False,
         allow_sideways_momentum=True,
-        require_accelerating=True,
-        require_volume_accel=True,
+        require_accelerating=False,
+        require_volume_accel=False,
         volume_accel_mult=1.15,
-        require_short_ma=True,
+        require_short_ma=False,
         require_session_structure=False,
         prefer_rsi_min=52.0,
         prefer_rsi_max=68.0,
         rsi_hard_min=None,
         rsi_hard_max=85.0,
-        reject_liquidity=frozenset({LiquidityState.TIGHT, LiquidityState.STRESSED}),
+        reject_liquidity=frozenset({LiquidityState.STRESSED}),
         sell_if_exhausted=True,
         sell_if_liquidity_stressed=True,
         sell_if_downtrend=True,
         reduce_if_exhausted=False,
-        new_only_regimes=frozenset({MarketRegime.RISK_ON, MarketRegime.STRONG_RISK_ON}),
-        max_new_per_cycle=1,
+        new_only_regimes=frozenset(
+            {MarketRegime.RISK_ON, MarketRegime.STRONG_RISK_ON, MarketRegime.NEUTRAL}
+        ),
+        max_new_per_cycle=3,
         cio_time_horizon=TimeHorizon.INTRADAY,
     ),
     "day": BookPlaybook(
         horizon="day",
         label_ko="단타",
         summary=(
-            "Session structure: last holds above typical price and the open. "
-            "Not a tape-acceleration trade. Flatten before close. 1.5× ATR invalidation."
+            "Session location + trend. Buy pullbacks in an up day; buy bounces "
+            "off session lows. Do not dump a dip. Flatten before close."
         ),
-        min_probability=0.58,
+        min_probability=0.50,
         entry_zone_pct=0.003,
         target_pct=0.015,
         target_size_pct=10.0,
         risk_budget_pct=0.15,
-        require_uptrend=True,
-        allow_sideways_momentum=False,
+        require_uptrend=False,
+        allow_sideways_momentum=True,
         require_accelerating=False,
         require_volume_accel=False,
         volume_accel_mult=1.0,
         require_short_ma=False,
-        require_session_structure=True,
+        require_session_structure=False,
         prefer_rsi_min=45.0,
         prefer_rsi_max=70.0,
         rsi_hard_min=None,
@@ -148,23 +152,26 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         sell_if_liquidity_stressed=True,
         sell_if_downtrend=True,
         reduce_if_exhausted=False,
-        new_only_regimes=frozenset({MarketRegime.RISK_ON, MarketRegime.STRONG_RISK_ON}),
-        max_new_per_cycle=1,
+        new_only_regimes=frozenset(
+            {MarketRegime.RISK_ON, MarketRegime.STRONG_RISK_ON, MarketRegime.NEUTRAL}
+        ),
+        max_new_per_cycle=3,
         cio_time_horizon=TimeHorizon.INTRADAY,
     ),
     "short": BookPlaybook(
         horizon="short",
         label_ko="단기",
         summary=(
-            "Swing: SMA50/200 aligned uptrend; tolerate noise. Reduce on exhaustion, "
-            "sell only if the swing trend actually breaks. Overnight ok. Size from risk budget."
+            "Swing trend is the backdrop. Buy dips toward SMA50 in an uptrend; "
+            "buy oversold bounces in a downtrend. Do not catch a falling knife. "
+            "Overnight ok. Size from risk budget."
         ),
-        min_probability=0.55,
+        min_probability=0.48,
         entry_zone_pct=0.008,
         target_pct=0.03,
         target_size_pct=10.0,
         risk_budget_pct=0.15,
-        require_uptrend=True,
+        require_uptrend=False,
         allow_sideways_momentum=True,
         require_accelerating=False,
         require_volume_accel=False,
@@ -183,7 +190,7 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         new_only_regimes=frozenset(
             {MarketRegime.RISK_ON, MarketRegime.STRONG_RISK_ON, MarketRegime.NEUTRAL}
         ),
-        max_new_per_cycle=1,
+        max_new_per_cycle=3,
         cio_time_horizon=TimeHorizon.SWING,
     ),
 }
@@ -294,9 +301,7 @@ def adjust_probability(
         if rsi > book.prefer_rsi_max:
             score -= 0.05
             notes.append("rsi_hot=-0.05")
-        elif rsi < book.prefer_rsi_min:
-            score -= 0.05
-            notes.append("rsi_cool=-0.05")
+        # rsi_cool is a dip, not a fail — timing_adjust handles the bonus.
     if (
         book.require_volume_accel
         and volume is not None
@@ -307,6 +312,136 @@ def adjust_probability(
         score += 0.05
         notes.append("vol_accel=+0.05")
     return max(0.05, min(0.95, round(score, 2))), notes
+
+
+def _range_loc(last: float | None, high: float | None, low: float | None) -> float | None:
+    try:
+        last_f, high_f, low_f = float(last), float(high), float(low)
+    except (TypeError, ValueError):
+        return None
+    if high_f <= low_f:
+        return None
+    return (last_f - low_f) / (high_f - low_f)
+
+
+def classify_timing(
+    *,
+    trend: TrendState,
+    momentum: MomentumState,
+    rsi: float | None,
+    last: float | None = None,
+    open_: float | None = None,
+    high: float | None = None,
+    low: float | None = None,
+    sma_20: float | None = None,
+) -> str:
+    """dip_buy | continuation | chase | bounce | falling_knife | blowoff."""
+    up = trend in {TrendState.UP, TrendState.STRONG_UP}
+    down = trend in {TrendState.DOWN, TrendState.STRONG_DOWN}
+    loc = _range_loc(last, high, low)
+    oversold = rsi is not None and rsi <= 40.0
+    extended = rsi is not None and rsi >= 72.0
+    near_low = loc is not None and loc <= 0.35
+    near_high = loc is not None and loc >= 0.85
+    at_ma = False
+    if sma_20 is not None and last is not None:
+        try:
+            ma = float(sma_20)
+            px = float(last)
+            at_ma = abs(px - ma) / max(abs(ma), 1e-9) <= 0.008
+        except (TypeError, ValueError):
+            at_ma = False
+    reclaim = False
+    if last is not None:
+        try:
+            px = float(last)
+            if sma_20 is not None and px >= float(sma_20):
+                reclaim = True
+            if open_ is not None and px >= float(open_) and near_low:
+                reclaim = True
+        except (TypeError, ValueError):
+            reclaim = False
+
+    if momentum == MomentumState.EXHAUSTED and (rsi is None or rsi >= 70.0):
+        return "blowoff"
+    if down:
+        if oversold or near_low or reclaim:
+            return "bounce"
+        return "falling_knife"
+    if near_low or oversold or (at_ma and rsi is not None and rsi <= 52.0):
+        return "dip_buy"
+    if extended or (near_high and rsi is not None and rsi >= 68.0):
+        return "chase"
+    if up:
+        return "continuation"
+    return "continuation"
+
+
+def apply_timing_probability(
+    score: float,
+    notes: list[str],
+    *,
+    trend: TrendState,
+    momentum: MomentumState,
+    rsi: float | None,
+    last: float | None = None,
+    open_: float | None = None,
+    high: float | None = None,
+    low: float | None = None,
+    sma_20: float | None = None,
+) -> tuple[float, list[str], str]:
+    label = classify_timing(
+        trend=trend,
+        momentum=momentum,
+        rsi=rsi,
+        last=last,
+        open_=open_,
+        high=high,
+        low=low,
+        sma_20=sma_20,
+    )
+    notes = list(notes) + [f"timing={label}"]
+    delta = {
+        "dip_buy": 0.10,
+        "bounce": 0.18,
+        "continuation": 0.04,
+        "chase": -0.04,
+        "falling_knife": -0.20,
+        "blowoff": -0.20,
+    }.get(label, 0.0)
+    if delta:
+        notes.append(f"{label}={delta:+.2f}")
+    score = max(0.05, min(0.95, round(float(score) + delta, 2)))
+    return score, notes, label
+
+
+def tape_from_view(view: Any) -> dict[str, float | None]:
+    """Best-effort last/high/low from a Quant view so CIO can time entries."""
+    last = None
+    zone = view.get("entry_zone") if isinstance(view, dict) else getattr(view, "entry_zone", None)
+    if isinstance(zone, dict):
+        try:
+            last = (float(zone["min"]) + float(zone["max"])) / 2.0
+        except (KeyError, TypeError, ValueError):
+            last = None
+    elif zone is not None:
+        try:
+            last = (float(zone.min) + float(zone.max)) / 2.0
+        except (TypeError, ValueError, AttributeError):
+            last = None
+    if isinstance(view, dict):
+        high, low = view.get("resistance"), view.get("support")
+    else:
+        high, low = getattr(view, "resistance", None), getattr(view, "support", None)
+    try:
+        high_f = float(high) if high is not None else None
+    except (TypeError, ValueError):
+        high_f = None
+    try:
+        low_f = float(low) if low is not None else None
+    except (TypeError, ValueError):
+        low_f = None
+    return {"last": last, "high": high_f, "low": low_f}
 
 
 def structure_allows_entry(
@@ -332,11 +467,24 @@ def structure_allows_entry(
         return False, f"liquidity_{liquidity.value}"
     if volatility == VolatilityState.EXTREME:
         return False, "vol_extreme"
+    if horizon in {"scalp", "day"} and trend == TrendState.SIDEWAYS:
+        return False, "sideways_stand_down"
     up = trend in {TrendState.UP, TrendState.STRONG_UP}
-    down = trend in {TrendState.DOWN, TrendState.STRONG_DOWN}
-    if down:
-        return False, "trend_down"
-    if book.require_uptrend and not up:
+    timing = classify_timing(
+        trend=trend,
+        momentum=momentum,
+        rsi=rsi,
+        last=last,
+        open_=open_,
+        high=high,
+        low=low,
+        sma_20=sma_20,
+    )
+    if timing == "falling_knife":
+        return False, "falling_knife"
+    if timing == "blowoff":
+        return False, "exhausted"
+    if book.require_uptrend and not up and timing != "bounce":
         if not (
             book.allow_sideways_momentum
             and trend == TrendState.SIDEWAYS
@@ -345,7 +493,11 @@ def structure_allows_entry(
             return False, f"trend_{trend.value}"
     if book.require_accelerating and momentum != MomentumState.ACCELERATING:
         return False, f"mom_{momentum.value}"
-    if momentum == MomentumState.EXHAUSTED and book.sell_if_exhausted:
+    if (
+        momentum == MomentumState.EXHAUSTED
+        and book.sell_if_exhausted
+        and timing not in {"bounce", "dip_buy"}
+    ):
         return False, "exhausted"
     if (
         book.require_volume_accel
@@ -434,6 +586,9 @@ def exit_action(
         return BookExit.HOLD
     down = trend in {TrendState.DOWN, TrendState.STRONG_DOWN}
     if book.sell_if_downtrend and down:
+        # Don't dump a dip/bounce. Sell the falling knife, not the pullback.
+        if momentum == MomentumState.DECELERATING:
+            return BookExit.HOLD
         return BookExit.SELL
     if book.sell_if_liquidity_stressed and liquidity == LiquidityState.STRESSED:
         return BookExit.SELL
@@ -565,6 +720,85 @@ def align_cio_playbook_exits(
     portfolio = portfolio_action_from_symbol_actions(updated)
     return decision.model_copy(
         update={"symbol_actions": updated, "portfolio_action": portfolio}
+    )
+
+
+_ENTRY_ACTIONS = {
+    SymbolAction.STRONG_BUY,
+    SymbolAction.BUY,
+    SymbolAction.SCALE_IN,
+}
+
+
+def drop_blocked_entries(
+    decision: Any,
+    quant: Any,
+    watchlist: list[dict] | None,
+    *,
+    regime: str | MarketRegime | None = None,
+) -> Any:
+    """Drop CIO/paper entries the playbook would not take (sideways scalp/day, no stop)."""
+    if decision is None:
+        return decision
+    views = {
+        str(v.symbol).upper(): v
+        for v in (getattr(quant, "symbol_views", None) or [])
+        if getattr(v, "symbol", None)
+    }
+    updated = []
+    dropped_sideways = False
+    changed = False
+    for plan in decision.symbol_actions:
+        action = plan.action
+        if action not in _ENTRY_ACTIONS:
+            updated.append(plan)
+            continue
+        sym = str(plan.symbol or "").upper()
+        hz = horizon_for_symbol(sym, watchlist)
+        view = views.get(sym)
+        if view is None:
+            if hz in {"scalp", "day"}:
+                changed = True
+                continue
+            if getattr(plan, "stop_loss", None) is None:
+                changed = True
+                continue
+            updated.append(plan)
+            continue
+        if not should_propose_entry(
+            horizon=hz,
+            probability=float(getattr(view, "probability_estimate", 0) or 0),
+            trend=view.trend_state,
+            momentum=view.momentum_state,
+            liquidity=view.liquidity_state,
+            volatility=view.volatility_state,
+            rsi=None,
+            regime=regime,
+            **tape_from_view(view),
+        ):
+            changed = True
+            if hz in {"scalp", "day"} and view.trend_state == TrendState.SIDEWAYS:
+                dropped_sideways = True
+            continue
+        stop = getattr(plan, "stop_loss", None)
+        if stop is None:
+            stop = getattr(view, "stop_or_invalidation", None)
+        if stop is None:
+            changed = True
+            continue
+        updated.append(plan)
+    if not changed:
+        return decision
+    portfolio = portfolio_action_from_symbol_actions(updated)
+    reason = getattr(decision, "reason_not_to_trade", None)
+    if dropped_sideways and portfolio in {PortfolioAction.NO_TRADE, PortfolioAction.HOLD, PortfolioAction.STAY_CASH}:
+        reason = "sideways_stand_down"
+    return decision.model_copy(
+        update={
+            "symbol_actions": updated,
+            "portfolio_action": portfolio,
+            "reason_not_to_trade": reason,
+        }
     )
 
 

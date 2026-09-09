@@ -13,7 +13,7 @@ from app.schemas.devils_advocate import DevilsAdvocateInput, DevilsAdvocateOutpu
 class DevilsAdvocateAgent(BaseAgent[DevilsAdvocateInput, DevilsAdvocateOutput]):
     name = AgentName.DEVILS_ADVOCATE
     prompt_file = "system_v1.md"
-    prompt_version = "2.0.0"
+    prompt_version = "2.2.0"
 
     def output_model(self) -> type[DevilsAdvocateOutput]:
         return DevilsAdvocateOutput
@@ -27,7 +27,7 @@ class DevilsAdvocateAgent(BaseAgent[DevilsAdvocateInput, DevilsAdvocateOutput]):
         prefer_no = False
         if payload.risk and payload.risk.halt_new_trades:
             prefer_no = True
-        if payload.quant and payload.quant.market_volatility_state.value in {"elevated", "extreme"}:
+        if payload.quant and payload.quant.market_volatility_state.value == "extreme":
             prefer_no = True
 
         already_in_price = False
@@ -51,7 +51,7 @@ class DevilsAdvocateAgent(BaseAgent[DevilsAdvocateInput, DevilsAdvocateOutput]):
             opposing_market_scenario="Risk-off fade after open if breadth fails",
             prefer_no_trade=prefer_no,
             prefer_no_trade_rationale=(
-                "Risk halt or elevated volatility favors patience"
+                "Risk halt or extreme volatility favors patience"
                 if prefer_no
                 else "Asymmetry acceptable under fallback heuristics"
             ),

@@ -121,7 +121,7 @@ class PositionMonitor:
                     symbols=[lifecycle.symbol],
                     deduplication_key=f"stop:{lifecycle.id}:{now.strftime('%Y%m%d%H%M')}",
                     position_id=lifecycle.id,
-                    requires_analysis=True,
+                    requires_analysis=False,
                     requires_execution_review=True,
                     bypass_cooldown=True,
                     importance="critical",
@@ -148,7 +148,7 @@ class PositionMonitor:
                 symbols=[lifecycle.symbol],
                 deduplication_key=f"tp:{lifecycle.id}:{now.strftime('%Y%m%d%H%M')}",
                 position_id=lifecycle.id,
-                requires_analysis=True,
+                requires_analysis=False,
                 requires_execution_review=True,
                 importance="high",
                 payload={
@@ -182,8 +182,8 @@ class PositionMonitor:
                     symbols=[lifecycle.symbol],
                     deduplication_key=f"hold:{lifecycle.id}:{now.date().isoformat()}",
                     position_id=lifecycle.id,
-                    requires_analysis=True,
-                    requires_risk_review=True,
+                    requires_analysis=hard_exit is False,
+                    requires_risk_review=not hard_exit,
                     requires_execution_review=hard_exit,
                     bypass_cooldown=hard_exit,
                     importance="high" if hard_exit else "medium",
@@ -438,6 +438,9 @@ class PositionMonitor:
             if key in held:
                 continue
             if lc.status in {"OPEN", "ADDING", "REDUCING", "PENDING_OPEN", "PENDING_CLOSE"}:
+                from app.intraday.pnl import stamp_lifecycle_close_pnl
+
+                stamp_lifecycle_close_pnl(lc)
                 lc.status = "CLOSED"
                 lc.quantity = 0.0
                 lc.closed_at = now

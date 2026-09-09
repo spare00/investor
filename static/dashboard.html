@@ -318,6 +318,15 @@
       background: var(--bg); color: var(--text); border: 1px solid var(--line);
       border-radius: 6px; padding: 0.35rem 0.55rem; font: inherit;
     }
+    .picks-filters button.active {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+    #picksBody td.picks-reason {
+      max-width: 38rem;
+      color: var(--muted);
+      white-space: normal;
+    }
     .briefing-summary {
       margin: 0.35rem 0 1.15rem;
       padding: 0.85rem 1rem;
@@ -500,6 +509,7 @@
   <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="overview">Overview</button>
     <button class="tab" data-tab="briefing">Briefing</button>
+    <button class="tab" data-tab="picks">Picks</button>
     <button class="tab" data-tab="performance">Performance</button>
     <button class="tab" data-tab="agents">Agents</button>
     <button class="tab" data-tab="operations">Operations</button>
@@ -587,6 +597,32 @@
           <span id="briefingMeta" class="muted"></span>
         </div>
         <div id="briefingBody" class="muted">Open this tab to load today’s agent materials for the CIO.</div>
+      </section>
+    </div>
+
+    <div id="panel-picks" class="tab-panel">
+      <section class="full">
+        <h2>Picks</h2>
+        <p class="muted" style="margin:-0.15rem 0 0.75rem">Selected vs rejected names — one line each, not the full briefing.</p>
+        <div class="briefing-toolbar">
+          <label class="muted" for="picksVenue">Book</label>
+          <select id="picksVenue">
+            <option value="auto">Auto (active)</option>
+            <option value="AU">AU</option>
+            <option value="US">US</option>
+          </select>
+          <label class="muted" for="picksDate">Session</label>
+          <input id="picksDate" type="date" />
+          <button type="button" id="btnPicksLoad" onclick="refreshPicks()">Load</button>
+          <span class="picks-filters" style="margin-left:0.35rem">
+            <button type="button" data-picks-filter="all" class="active" onclick="setPicksFilter('all')">All</button>
+            <button type="button" data-picks-filter="selected" onclick="setPicksFilter('selected')">Selected</button>
+            <button type="button" data-picks-filter="hold" onclick="setPicksFilter('hold')">Held</button>
+            <button type="button" data-picks-filter="rejected" onclick="setPicksFilter('rejected')">Rejected</button>
+          </span>
+          <span id="picksMeta" class="muted"></span>
+        </div>
+        <div id="picksBody" class="muted">Open this tab to load the pick ledger.</div>
       </section>
     </div>
 
@@ -787,6 +823,9 @@
       document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === `panel-${name}`));
       if (name === "briefing") {
         refreshBriefing().catch(() => {});
+      }
+      if (name === "picks") {
+        refreshPicks().catch(() => {});
       }
       if (name === "agents") {
         refreshAgentsTab().catch(() => {});
@@ -2636,6 +2675,100 @@
       </article>`;
     }
 
+    let picksFilter = "all";
+    let picksCache = null;
+    let picksError = null;
+
+    function setPicksFilter(name) {
+      picksFilter = name || "all";
+      document.querySelectorAll("[data-picks-filter]").forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-picks-filter") === picksFilter);
+      });
+      renderPicks(picksCache);
+    }
+
+    function renderPicks(data) {
+      const bodyEl = document.getElementById("picksBody");
+      const metaEl = document.getElementById("picksMeta");
+      if (!bodyEl) return;
+      if (picksError) {
+        bodyEl.className = "muted";
+        bodyEl.textContent = picksError;
+        return;
+      }
+      if (!data) {
+        bodyEl.className = "muted";
+        bodyEl.textContent = "Open this tab to load the pick ledger.";
+        return;
+      }
+      const book = data.venue || "US";
+      const counts = data.counts || {};
+      const allRows = data.rows || [];
+      const rows = picksFilter === "all"
+        ? allRows
+        : allRows.filter((r) => r.status === picksFilter);
+      if (metaEl) {
+        metaEl.textContent =
+          `${book}` +
+          (data.session_date ? ` · ${data.session_date}` : " · recent") +
+          ` · ${counts.selected ?? 0} selected · ${counts.hold ?? 0} held · ${counts.rejected ?? 0} rejected` +
+          ` · ${data.decision_count ?? 0} runs`;
+      }
+      const tableRows = rows.length
+        ? rows.map((r) => {
+            const when = r.timestamp
+              ? (fmtBook(r.timestamp, book) || r.display?.us_eastern || r.display?.brisbane || "—")
+              : (r.display?.us_eastern || r.display?.brisbane || "—");
+            const st = r.status || "rejected";
+            const tone = st === "selected" ? "good" : st === "hold" ? "" : "warn";
+            return `<tr>
+              <td class="mono">${esc(when)}</td>
+              <td class="mono">${esc(r.symbol || "—")}</td>
+              <td>${pill(st, tone)}</td>
+              <td>${esc(r.action || "—")}</td>
+              <td class="muted">${esc(r.horizon || "—")}</td>
+              <td class="picks-reason">${esc(r.reason || "—")}</td>
+            </tr>`;
+          }).join("")
+        : "";
+      bodyEl.className = "";
+      bodyEl.innerHTML = dataTable(
+        ["When", "Symbol", "Status", "Action", "Horizon", "Reason"],
+        tableRows,
+        6,
+      );
+    }
+
+    async function refreshPicks() {
+      const dateEl = document.getElementById("picksDate");
+      const venueEl = document.getElementById("picksVenue");
+      const metaEl = document.getElementById("picksMeta");
+      const bodyEl = document.getElementById("picksBody");
+      if (!bodyEl) return;
+      bodyEl.className = "muted";
+      bodyEl.textContent = "Loading picks…";
+      picksError = null;
+      const q = new URLSearchParams();
+      if (dateEl && dateEl.value) q.set("session_date", dateEl.value);
+      if (venueEl && venueEl.value && venueEl.value !== "auto") q.set("venue", venueEl.value);
+      else if (opsClockVenue) q.set("venue", opsClockVenue);
+      const path = `/dashboard/picks${q.toString() ? `?${q}` : ""}`;
+      try {
+        const data = await fetchJson(path);
+        picksCache = data;
+        picksError = null;
+        renderPicks(data);
+      } catch (err) {
+        const msg = String(err.message || err);
+        picksCache = null;
+        picksError = /HTTP 404/.test(msg)
+          ? "Picks API is not in this process yet — restart the app, then open this tab again."
+          : `Picks failed: ${msg}`;
+        if (metaEl) metaEl.textContent = "failed";
+        bodyEl.textContent = picksError;
+      }
+    }
+
     async function refreshBriefing() {
       const dateEl = document.getElementById("briefingDate");
       const venueEl = document.getElementById("briefingVenue");
@@ -2751,6 +2884,12 @@
         refreshAgentsTab(),
         refreshOperations(),
         refreshAudit(),
+        document.querySelector(".tab.active")?.dataset.tab === "picks"
+          ? refreshPicks()
+          : Promise.resolve(),
+        document.querySelector(".tab.active")?.dataset.tab === "briefing"
+          ? refreshBriefing()
+          : Promise.resolve(),
       ]);
       const failed = results.filter((r) => r.status === "rejected");
       if (failed.length === 0) {

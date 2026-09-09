@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -72,3 +73,27 @@ def apply_fill_fifo(
         remaining_lots=remaining,
         conflict_with_broker=conflict,
     )
+
+
+def lifecycle_pnl(lc: Any) -> float:
+    """Closed-trade P&L. Prefer stamped realized; last mark if that was never written."""
+    realized = float(getattr(lc, "realized_pl", None) or 0.0)
+    if abs(realized) > 1e-9:
+        return realized
+    return float(getattr(lc, "unrealized_pl", None) or 0.0)
+
+
+def stamp_lifecycle_close_pnl(lc: Any) -> float:
+    """Write realized_pl before quantity is zeroed on broker-flat close."""
+    existing = float(getattr(lc, "realized_pl", None) or 0.0)
+    if abs(existing) > 1e-9:
+        return existing
+    qty = float(getattr(lc, "quantity", None) or 0.0)
+    entry = float(getattr(lc, "average_entry_price", None) or 0.0)
+    last = float(getattr(lc, "current_price", None) or 0.0)
+    if qty and entry > 0 and last > 0:
+        pnl = (last - entry) * qty
+    else:
+        pnl = float(getattr(lc, "unrealized_pl", None) or 0.0)
+    lc.realized_pl = round(float(pnl), 4)
+    return float(lc.realized_pl)

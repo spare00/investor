@@ -25,7 +25,7 @@ from app.schemas import (
     RiskManagerOutput,
 )
 from app.schemas.cio import CIODecision, CIOInput, SymbolActionPlan
-from app.schemas.common import SymbolAction, TraceMetadata
+from app.schemas.common import RiskVerdict, SymbolAction, TraceMetadata
 from app.schemas.devils_advocate import DevilsAdvocateInput, ProposedThesis
 from app.schemas.macro_strategist import MacroSnapshotInput, MacroStrategistInput
 from app.schemas.market_intelligence import MarketIntelligenceInput, NewsItemInput
@@ -61,14 +61,14 @@ def theses_from_quant(
     entry_universe: list[str] | None,
     regime: str | None,
     watchlist: list[dict] | None = None,
-    limit: int = 5,
+    limit: int = 8,
 ) -> list[ProposedThesis]:
     """Build Devil/CIO challenge targets from book-aware Quant views.
 
     Premarket/intraday often pass no explicit ProposedTrade; without theses Devil
     only sees "No explicit trade proposal" and soft-blocks a flat RISK_ON book.
     """
-    from app.universe.book_strategy import horizon_for_symbol, should_propose_entry
+    from app.universe.book_strategy import horizon_for_symbol, should_propose_entry, tape_from_view
 
     allow = {s.upper() for s in (entry_universe or []) if s} or None
     ranked: list[tuple[float, ProposedThesis]] = []
@@ -90,10 +90,11 @@ def theses_from_quant(
             volatility=view.volatility_state,
             rsi=None,
             regime=regime,
+            **tape_from_view(view),
         ):
             continue
         trend = getattr(view.trend_state, "value", str(view.trend_state or ""))
-        direction = "short" if trend == "down" else "long"
+        direction = "long"
         ez = view.entry_zone
         ranked.append(
             (
@@ -242,6 +243,7 @@ class AgentPipeline:
         watchlist_context: list[dict] | None = None,
         book: VenueBookContext | None = None,
         venue: str | None = None,
+        recent_lessons: list[dict] | None = None,
     ) -> AnalysisBundle:
         wf = workflow_id or collection.workflow_id or uuid4()
         as_of = collection.collected_at
@@ -347,6 +349,7 @@ class AgentPipeline:
             vix=vix,
             market_intelligence_summary=mi_summary_for_downstream(mi_out),
             watchlist=watch_ctx,
+            recent_lessons=list(recent_lessons or []),
             trace=_trace(),
         )
 
@@ -437,6 +440,7 @@ class AgentPipeline:
                 positions=list(portfolio.positions),
                 allowlist=entry_list,
                 watchlist=watch_ctx,
+                recent_lessons=list(recent_lessons or []),
                 trace=_trace(),
             )
         )
@@ -461,6 +465,39 @@ class AgentPipeline:
             latest_prices=prices,
             watchlist_context=watch_ctx,
             atr_by_symbol=atrs,
+        )
+        from app.agents.cio import ensure_cio_takes_setups, reconcile_nameless_entry
+        from app.market.paper_gates import paper_aggressive_entries
+
+        risk_ok = risk_out.overall_verdict in {
+            RiskVerdict.APPROVED,
+            RiskVerdict.CONDITIONAL,
+            RiskVerdict.SIZE_REDUCED,
+        } and not risk_out.halt_new_trades
+        cio_out = ensure_cio_takes_setups(
+            cio_out,
+            quant=quant_out,
+            watchlist=watch_ctx,
+            positions=list(portfolio.positions),
+            allowlist=entry_list,
+            risk_ok=risk_ok,
+            regime=macro_out.market_regime,
+            max_position_pct=float(self.settings.max_position_pct),
+            enabled=paper_aggressive_entries(self.settings),
+            cash_pct=float(portfolio.cash_pct),
+            min_cash_pct=float(self.settings.min_cash_pct),
+        )
+        from app.universe.book_strategy import drop_blocked_entries
+
+        cio_out = drop_blocked_entries(
+            cio_out,
+            quant_out,
+            watch_ctx,
+            regime=macro_out.market_regime,
+        )
+        cio_out = reconcile_nameless_entry(
+            cio_out,
+            has_positions=any(abs(p.quantity or 0) > 1e-9 for p in portfolio.positions),
         )
 
         logger.info(

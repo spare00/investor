@@ -71,6 +71,53 @@ async def test_risk_officer_allows_live_ibkr_feed() -> None:
     assert out.overall_verdict.value == "approved"
 
 
+@pytest.mark.asyncio
+async def test_risk_officer_allows_live_feed_without_provider_labels() -> None:
+    agent = RiskManagerAgent(llm=StubLLMClient())
+    out = await agent.run(
+        RiskManagerInput(
+            as_of=NOW,
+            portfolio=PortfolioStateInput(
+                as_of=NOW,
+                equity=100_000,
+                cash=100_000,
+                cash_pct=100,
+                gross_exposure_pct=0,
+            ),
+            live_prices_required=True,
+            price_feed_live=True,
+            price_providers=[],
+        )
+    )
+    assert VetoCode.NON_LIVE_MARKET_PRICES.value not in out.hard_vetoes
+
+
+@pytest.mark.asyncio
+async def test_paper_still_halts_on_empty_tape() -> None:
+    agent = RiskManagerAgent(
+        llm=StubLLMClient(),
+        settings=Settings(trading_mode=TradingMode.PAPER, live_trading_enabled=False),
+    )
+    out = await agent.run(
+        RiskManagerInput(
+            as_of=NOW,
+            portfolio=PortfolioStateInput(
+                as_of=NOW,
+                equity=100_000,
+                cash=100_000,
+                cash_pct=100,
+                gross_exposure_pct=0,
+            ),
+            live_prices_required=True,
+            price_feed_live=False,
+            price_providers=[],
+            price_integrity_notes=["no_market_quotes"],
+        )
+    )
+    assert VetoCode.NON_LIVE_MARKET_PRICES.value in out.hard_vetoes
+    assert out.halt_new_trades is True
+
+
 def test_assess_collection_price_integrity_flags_stub() -> None:
     live_req, feed_live, providers, notes = assess_collection_price_integrity(
         providers=["stub"],

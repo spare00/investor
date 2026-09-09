@@ -67,6 +67,10 @@ class CIOInput(StrictModel):
         default_factory=list,
         description="Active watchlist rows with horizon for CIO style matching",
     )
+    recent_lessons: list[dict] = Field(
+        default_factory=list,
+        description="Compact closed-trade stats (symbol, horizon, win rate, pnl, signal)",
+    )
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 
 

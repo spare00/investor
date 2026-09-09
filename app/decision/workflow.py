@@ -322,6 +322,8 @@ class WorkflowService:
         if collection.fail_closed:
             notes.append("collection_fail_closed")
 
+        from app.universe.outcomes import load_committee_lessons
+
         analysis = await AgentPipeline(settings=self.settings, llm=self.llm).run_from_collection(
             collection,
             portfolio=port,
@@ -331,6 +333,7 @@ class WorkflowService:
             watchlist_context=[
                 {"symbol": s, "horizon": horizons.get(s, "short")} for s in sorted(entry_universe)
             ],
+            recent_lessons=await load_committee_lessons(self.session),
         )
 
         # After agents: boost theme-aligned names + rebuild focus for rest of session / next cycle.
@@ -572,11 +575,14 @@ class WorkflowService:
         ).collect_premarket(workflow_id=wf)
 
         port = portfolio or self._default_portfolio(started)
+        from app.universe.outcomes import load_committee_lessons
+
         analysis = await AgentPipeline(settings=self.settings, llm=self.llm).run_from_collection(
             collection,
             portfolio=port,
             proposed_trades=[],
             workflow_id=wf,
+            recent_lessons=await load_committee_lessons(self.session),
         )
 
         # Postmarket: do not produce new entry intents — validation with empty actions.

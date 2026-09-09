@@ -50,6 +50,10 @@ class QuantStrategistInput(StrictModel):
         default_factory=list,
         description="Active watchlist rows with horizon/stop policy for per-symbol views",
     )
+    recent_lessons: list[dict] = Field(
+        default_factory=list,
+        description="Compact closed-trade stats for avoiding repeated negative setups",
+    )
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
 
 

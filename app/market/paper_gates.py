@@ -23,6 +23,16 @@ def paper_relaxed_data_gates(settings: Settings | None = None) -> bool:
     )
 
 
+def paper_aggressive_entries(settings: Settings | None = None) -> bool:
+    """Paper-only: take Quant setups instead of sitting in cash. Hard vetoes still block."""
+    cfg = settings or get_settings()
+    return bool(
+        cfg.paper_aggressive_entries
+        and cfg.trading_mode == TradingMode.PAPER
+        and not cfg.live_trading_enabled
+    )
+
+
 def relax_fail_closed_reasons(
     reasons: list[str],
     *,

@@ -25,6 +25,12 @@ def test_shared_prompt_files_exist() -> None:
     assert (PROMPTS / "shared" / "output_contract.md").exists()
 
 
+def test_common_rules_treat_idle_cash_as_opportunity_cost() -> None:
+    rules, _ = load_shared()
+    assert "opportunity cost" in rules.lower()
+    assert "choosing not to trade is success" not in rules.lower()
+
+
 @pytest.mark.parametrize("agent_key", AGENT_PROMPT_KEYS)
 def test_agent_system_v1_exists_and_has_sections(agent_key: str) -> None:
     path = PROMPTS / agent_key / "system_v1.md"

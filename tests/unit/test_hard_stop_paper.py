@@ -433,3 +433,78 @@ async def test_max_holding_overnight_short_reviews_not_flattens(
     assert "max_holding_time" not in (hit["monitor"]["reasons"] or [])
     assert not hit.get("exit_intent_id")
     assert int(hit.get("orders_submitted") or 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_resting_protection_stop_when_not_triggered(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _armed()
+    broker = MockBroker(seed=7, starting_cash=50_000, allow_short=False)
+    broker.prices["SPY"] = 100.0
+    monkeypatch.setattr("app.brokers.factory.get_broker", lambda _s=None: broker)
+    monkeypatch.setattr("app.execution.order_manager.get_broker", lambda _s=None: broker)
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="SPY",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=100,
+            current_price=100,
+            stop_price=98,
+            overnight_allowed=True,
+            exit_policy={"horizon": "short"},
+        )
+    )
+    await session.flush()
+    rows = await IntradayService(session, settings=settings).monitor_all(prices={"SPY": 100.0})
+    hit = next(r for r in rows if r["symbol"] == "SPY")
+    assert "protection_order_missing" in (hit["monitor"]["reasons"] or [])
+    assert hit.get("protection_orders_submitted", 0) >= 1
+    from sqlalchemy import select
+
+    from app.models import Order, PositionLifecycle as LC
+
+    lc = (await session.execute(select(LC).where(LC.symbol == "SPY"))).scalar_one()
+    assert lc.protection_submitted is True
+    orders = list((await session.execute(select(Order))).scalars().all())
+    assert any(str(o.order_type).lower() == "stop" for o in orders)
+
+
+@pytest.mark.asyncio
+async def test_stop_triggered_does_not_queue_committee(session: AsyncSession) -> None:
+    from sqlalchemy import select
+
+    from app.models import IntradayEvent
+
+    settings = Settings(
+        app_env="test",
+        trading_mode=TradingMode.PAPER,
+        enable_intraday_monitoring=True,
+        enable_broker_orders=False,
+        auto_execute_hard_stops=False,
+        intraday_operation_mode="MANUAL_APPROVAL",
+    )
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="BHP",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=64,
+            current_price=62,
+            stop_price=62.66,
+            overnight_allowed=True,
+            venue="AU",
+            exit_policy={"horizon": "short"},
+        )
+    )
+    await session.flush()
+    await IntradayService(session, settings=settings).monitor_all(
+        prices={"BHP": 62.0}, venue="AU"
+    )
+    events = list((await session.execute(select(IntradayEvent))).scalars().all())
+    stops = [e for e in events if e.event_type == "STOP_TRIGGERED"]
+    assert stops
+    assert stops[0].requires_analysis is False

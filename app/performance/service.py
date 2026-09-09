@@ -60,6 +60,7 @@ from app.performance.risk import (
     tracking_error,
 )
 from app.performance.trades import ClosedTrade, compute_trade_metrics, group_trade_metrics_by_horizon
+from app.intraday.pnl import lifecycle_pnl
 from app.performance.types import CALCULATION_VERSION, MetricResult
 from app.performance.valuation import build_portfolio_valuation, positions_from_snapshot_payload
 
@@ -326,7 +327,7 @@ class PerformanceService:
                 continue
             if not (period_start <= lc.closed_at <= period_end):
                 continue
-            pnl = lc.realized_pl or 0.0
+            pnl = lifecycle_pnl(lc)
             holding = 0.0
             if lc.opened_at and lc.closed_at:
                 holding = (lc.closed_at - lc.opened_at).total_seconds() / 60.0

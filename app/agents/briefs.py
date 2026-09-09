@@ -257,8 +257,12 @@ def quant_brief(payload: QuantStrategistInput) -> str:
         "playbooks": playbook_cards(),
         "themes": _clip_obj(payload.market_intelligence_summary),
     }
+    if payload.recent_lessons:
+        data["lessons"] = payload.recent_lessons[:8]
     return _ask(
-        "From these bars only: market trend and per-symbol trend/momentum/stop. Apply the matching book playbook (scalp/day/short). Ignore medium. No invented indicators.",
+        "From these bars only: trend AND location. Dip in strength / bounce in "
+        "weakness. Skip falling knives. Do not keep proposing negative-signal names "
+        "unless location/trend flipped. Apply the book playbook. No invented indicators.",
         data,
         "QuantStrategistOutput. Stop from ATR/horizon policy. p from the numbers. <=12 symbol_views.",
     )
@@ -342,7 +346,8 @@ def devil_brief(payload: DevilsAdvocateInput) -> str:
         "watch": _watch_rows(payload.watchlist, limit=8),
     }
     return _ask(
-        "Is the thesis already priced in? prefer_no_trade true or false. One strongest counterpoint.",
+        "Is the thesis already priced in? prefer_no_trade true only on "
+        "halt/extreme/broken thesis. One strongest counterpoint.",
         data,
         "DevilsAdvocateOutput. Booleans as true/false. Strings <=140 chars.",
     )
@@ -390,8 +395,15 @@ def cio_brief(payload: CIOInput) -> str:
             }
         ),
     }
+    if payload.recent_lessons:
+        data["lessons"] = payload.recent_lessons[:8]
     return _ask(
         "Decide per book. 초단타/단타/단기 follow their own playbook. Ignore medium. "
+        "Paper: excess cash above the 30% floor is opportunity cost only with an allowed setup. "
+        "Scalp/day stand down in sideways. Prefer dip_buy and bounce. Skip falling knives. "
+        "Fill up to 3 new names/book when the tape allows. cash_target falls when you buy. "
+        "Devil is advisory. Do not repeat negative-signal names "
+        "unless the tape is clearly different. "
         "HOLD/NO_TRADE = no new buys; SELL/PARTIAL_SELL/REDUCE still flatten.",
         data,
         "CIODecision. HONOR hard vetoes. Entries need numeric stop_loss. thesis/invalidation <=80 chars.",

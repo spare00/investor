@@ -209,7 +209,7 @@ class UniverseService:
                 else set(self.settings.trade_allowlist)
             )
             base = set(allow)
-            return self._with_index_symbols(sorted({*base, *held, bench}), want)
+            return self._finalize_collection_symbols(sorted({*base, *held, bench}), want)
 
         await self.ensure_seeded()
         active_set = {r.symbol.upper() for r in await self.list_active()}
@@ -224,7 +224,7 @@ class UniverseService:
             # Drop sold / paused names that lingered in an older focus snapshot.
             focus = [str(s).upper() for s in latest.symbols if str(s).upper() in allowed]
             if focus or held_scoped:
-                return self._with_index_symbols(
+                return self._finalize_collection_symbols(
                     await self._filter_collection_symbols(
                         sorted({*focus, *held_scoped, bench}),
                         held=set(held_scoped),
@@ -238,7 +238,7 @@ class UniverseService:
             active = [r for r in active if r.symbol.upper() in book]
         ranked = sorted(active, key=lambda r: (-r.priority, r.symbol))
         focus = [r.symbol.upper() for r in ranked[: self.settings.universe_focus_limit]]
-        return self._with_index_symbols(
+        return self._finalize_collection_symbols(
             await self._filter_collection_symbols(
                 sorted({*focus, *held_scoped, bench}),
                 held=set(held_scoped),
@@ -246,6 +246,17 @@ class UniverseService:
             ),
             want,
         )
+
+    def _finalize_collection_symbols(self, symbols: list[str], venue: Any) -> list[str]:
+        """Index overlays plus, on paper, the full venue allowlist so cash can be deployed."""
+        out = self._with_index_symbols(list(symbols), venue)
+        from app.market.paper_gates import paper_aggressive_entries
+
+        if paper_aggressive_entries(self.settings) and venue is not None:
+            extra = {str(s).upper() for s in self.settings.allowlist_for_venue(venue) if s}
+            if extra:
+                out = self._with_index_symbols(sorted(set(out) | extra), venue)
+        return out
 
     def _with_index_symbols(self, symbols: list[str], venue: Any) -> list[str]:
         if venue is None:

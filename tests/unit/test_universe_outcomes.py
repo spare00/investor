@@ -11,11 +11,20 @@ from app.universe.outcomes import recent_outcome_stats
 
 
 class _LC:
-    def __init__(self, *, symbol: str, pnl: float, closed_at: datetime, horizon: str | None):
+    def __init__(
+        self,
+        *,
+        symbol: str,
+        pnl: float,
+        closed_at: datetime,
+        horizon: str | None,
+        unrealized: float | None = None,
+    ):
         self.symbol = symbol
         self.status = "CLOSED"
         self.closed_at = closed_at
         self.realized_pl = pnl
+        self.unrealized_pl = unrealized
         self.exit_policy = {"horizon": horizon} if horizon else {}
 
 
@@ -70,6 +79,13 @@ async def test_recent_outcome_stats_by_symbol_horizon_source() -> None:
             _LC(symbol="QQQ", pnl=-8, closed_at=now - timedelta(days=3), horizon="scalp"),
             _LC(symbol="MSFT", pnl=40, closed_at=now - timedelta(days=5), horizon="medium"),
             _LC(symbol="OLD", pnl=100, closed_at=now - timedelta(days=200), horizon="day"),
+            _LC(
+                symbol="CBA",
+                pnl=0,
+                closed_at=now - timedelta(days=1),
+                horizon="short",
+                unrealized=-9528.0,
+            ),
         ],
     )
     out = await recent_outcome_stats(session, lookback_days=90, now=now, min_trades_for_signal=3)
@@ -77,7 +93,39 @@ async def test_recent_outcome_stats_by_symbol_horizon_source() -> None:
     assert by_sym["QQQ"]["trade_count"] == 3
     assert by_sym["QQQ"]["signal"] == "negative"
     assert by_sym["MSFT"]["signal"] == "insufficient"
+    assert by_sym["CBA"]["total_pnl"] == pytest.approx(-9528.0)
     assert out["by_horizon"]["scalp"]["trade_count"] == 3
     assert out["by_horizon"]["medium"]["trade_count"] == 1
     assert out["by_source"]["seed"]["trade_count"] == 3
     assert "OLD" not in by_sym
+
+
+def test_committee_lessons_compact_and_ranked() -> None:
+    from app.universe.outcomes import committee_lessons
+
+    rows = committee_lessons(
+        {
+            "by_symbol": [
+                {
+                    "symbol": "QQQ",
+                    "horizon": "scalp",
+                    "trade_count": 3,
+                    "win_rate": 0.333,
+                    "total_pnl": -3.0,
+                    "signal": "negative",
+                },
+                {
+                    "symbol": "MSFT",
+                    "horizon": "medium",
+                    "trade_count": 1,
+                    "win_rate": 1.0,
+                    "total_pnl": 40.0,
+                    "signal": "insufficient",
+                },
+                {"symbol": "SKIP", "trade_count": 0},
+            ]
+        }
+    )
+    assert [r["s"] for r in rows] == ["MSFT", "QQQ"]
+    assert rows[1]["sig"] == "negative"
+    assert rows[1]["wr"] == 0.33

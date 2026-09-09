@@ -65,6 +65,8 @@ _DEAD_ORDER_STATUSES = frozenset(
 
 _FLATTEN_MARKERS = ("force-close:", "hard-stop:", ":sell:SELL", ":buy:BUY")
 _PARTIAL_MARKERS = (":sell:PARTIAL_SELL", ":sell:REDUCE", ":buy:REDUCE")
+_STALE_FLATTEN_SECONDS = 90
+_STOP_ORDER_TYPES = frozenset({"stop", "stp", "stop_limit"})
 
 
 class OrderManager:
@@ -157,7 +159,27 @@ class OrderManager:
     def _is_flatten_intent(self, intent: ValidatedOrderIntent) -> bool:
         key = str(intent.idempotency_key or "")
         thesis = str(intent.thesis or "").lower()
-        return any(m in key for m in _FLATTEN_MARKERS) or thesis.startswith("force_close") or thesis.startswith("hard_stop")
+        return (
+            any(m in key for m in _FLATTEN_MARKERS)
+            or thesis.startswith("force_close")
+            or thesis.startswith("hard_stop")
+            or thesis.startswith("closing:")
+        )
+
+    def _working_age_seconds(self, row: Order) -> float:
+        ts = row.submitted_at or getattr(row, "created_at", None)
+        if ts is None:
+            return 10_000.0
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        return (datetime.now(UTC) - ts).total_seconds()
+
+    def _is_stale_flatten(self, row: Order) -> bool:
+        otype = str(row.order_type or "").lower()
+        age = self._working_age_seconds(row)
+        if otype in {"limit", "lmt"} and age >= _STALE_FLATTEN_SECONDS:
+            return True
+        return age >= 180.0
 
     def _is_partial_exit(self, intent: ValidatedOrderIntent) -> bool:
         key = str(intent.idempotency_key or "")
@@ -219,7 +241,7 @@ class OrderManager:
                 return None
             if working and self._is_flatten_intent(intent):
                 same = [w for w in working if w.idempotency_key == intent.idempotency_key]
-                if same:
+                if same and not any(self._is_stale_flatten(w) for w in same):
                     logger.info(
                         "order_skip_working_flatten",
                         symbol=intent.symbol,
@@ -287,7 +309,8 @@ class OrderManager:
             con_id = intent.con_id or (row.raw_payload or {}).get("con_id")
             from app.brokers.venue_orders import apply_marketable_limit, uses_marketable_limit
 
-            if uses_marketable_limit(str(venue) if venue else None):
+            otype_l = str(order_type or "market").lower()
+            if uses_marketable_limit(str(venue) if venue else None) and otype_l not in _STOP_ORDER_TYPES:
                 from app.market.live_prices import fetch_live_last_prices
 
                 live: dict[str, float] = {}
@@ -308,11 +331,15 @@ class OrderManager:
                             order_type=order_type,
                             limit_price=limit_price,
                             last=last,
+                            flatten=self._is_flatten_intent(intent),
                         )
                     except ValueError:
                         pass
             if order_type in {"limit", "stop_limit"} and limit_price is None:
                 raise BrokerError(f"{intent.symbol}: limit order missing limit_price")
+            tif = (intent.time_in_force or "").strip().lower() or None
+            if not tif:
+                tif = "gtc" if str(order_type).lower() in _STOP_ORDER_TYPES else "day"
             result = await self.broker.submit_order(
                 OrderRequest(
                     symbol=intent.symbol,
@@ -322,6 +349,7 @@ class OrderManager:
                     limit_price=limit_price,
                     stop_price=intent.stop_price,
                     idempotency_key=intent.idempotency_key,
+                    time_in_force=tif,
                     venue=str(venue) if venue else None,
                     con_id=int(con_id) if con_id else None,
                 )
