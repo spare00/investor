@@ -329,6 +329,25 @@
       color: var(--muted);
     }
     .office-stage .wall-board p { margin: 0; font-size: 0.85rem; }
+    .office-stage[data-shift="on"] {
+      background:
+        radial-gradient(ellipse at 50% 0%, rgba(90, 160, 210, 0.22), transparent 55%),
+        linear-gradient(#c9b089 0 46px, transparent 46px),
+        repeating-linear-gradient(#d7c09a 0 18px, #c9ad86 18px 19px);
+    }
+    .office-stage[data-shift="on"] .wall-board {
+      border-color: color-mix(in srgb, var(--good) 55%, var(--line));
+      box-shadow: 0 0 18px color-mix(in srgb, var(--good) 28%, transparent);
+    }
+    .prop.desk[data-lit="1"]::after {
+      background: #7ec8ff;
+      box-shadow: 0 0 16px #7ec8ff, 0 0 4px #fff;
+      animation: office-screen 0.55s ease-in-out infinite;
+    }
+    .prop.desk[data-lit="wait"]::after {
+      background: #3d5a78;
+      box-shadow: 0 0 8px #4a6a88;
+    }
     .prop {
       position: absolute;
       transform: translate(-50%, -50%);
@@ -399,6 +418,15 @@
       border-radius: 50%;
       background: #cbb79a;
     }
+    .prop.coffee span {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translate(-50%, 4px);
+      font-size: 0.62rem;
+      color: #6a5c4e;
+      white-space: nowrap;
+    }
     .prop.table {
       width: 90px;
       height: 48px;
@@ -435,7 +463,23 @@
       text-overflow: ellipsis;
       z-index: 4;
     }
-    .staff .bubble[hidden] { display: none; }
+    .staff .halo {
+      display: none;
+      position: absolute;
+      top: -6px;
+      left: 50%;
+      width: 42px;
+      height: 18px;
+      margin-left: -21px;
+      border-radius: 50%;
+      background: radial-gradient(ellipse, rgba(255, 228, 140, 0.85), transparent 70%);
+      z-index: 5;
+      pointer-events: none;
+    }
+    .staff[data-pose="working"] .halo { display: block; animation: office-halo 0.8s ease-in-out infinite; }
+    .staff[data-pose="working"] { filter: drop-shadow(0 0 8px rgba(110, 210, 140, 0.55)); }
+    .staff .bubble[hidden],
+    .staff[data-moving="1"] .bubble { display: none; }
     .figure {
       position: relative;
       width: 48px;
@@ -530,7 +574,17 @@
     .staff[data-moving="1"] .leg.right { animation: office-step 0.32s ease-in-out infinite reverse; }
     .staff[data-moving="1"] .arm.left { animation: office-arm-swing 0.32s ease-in-out infinite reverse; }
     .staff[data-moving="1"] .arm.right { animation: office-arm-swing 0.32s ease-in-out infinite; }
-    .staff[data-pose="working"][data-moving="0"] .arm.right { animation: office-type 0.32s ease-in-out infinite; }
+    .staff[data-pose="working"][data-moving="1"] .leg.left,
+    .staff[data-pose="working"][data-moving="1"] .leg.right,
+    .staff[data-pose="working"][data-moving="1"] .arm.left,
+    .staff[data-pose="working"][data-moving="1"] .arm.right { animation-duration: 0.16s; }
+    .staff[data-pose="focus"][data-moving="1"] .leg.left,
+    .staff[data-pose="focus"][data-moving="1"] .leg.right { animation-duration: 0.22s; }
+    .staff[data-pose="working"][data-moving="0"] .arm.left { animation: office-type 0.22s ease-in-out infinite reverse; }
+    .staff[data-pose="working"][data-moving="0"] .arm.right { animation: office-type 0.22s ease-in-out infinite; }
+    .staff[data-pose="working"][data-moving="0"] .head { animation: office-nod 0.55s ease-in-out infinite; }
+    .staff[data-pose="focus"][data-moving="0"] .arm.right { animation: office-type 1.15s ease-in-out infinite; }
+    .staff[data-pose="focus"][data-moving="0"] .head { transform: rotate(-6deg); }
     .staff[data-pose="idle"][data-moving="0"] { animation: office-breathe 2.6s ease-in-out infinite; }
     .staff[data-pose="stale"] { opacity: 0.88; }
     .staff[data-pose="stale"][data-moving="0"] .head { transform: rotate(-8deg); }
@@ -555,6 +609,18 @@
     @keyframes office-arm-swing {
       0%, 100% { transform: rotate(18deg); }
       50% { transform: rotate(-22deg); }
+    }
+    @keyframes office-nod {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(2px) rotate(3deg); }
+    }
+    @keyframes office-halo {
+      0%, 100% { opacity: 0.55; transform: scaleX(1); }
+      50% { opacity: 1; transform: scaleX(1.15); }
+    }
+    @keyframes office-screen {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.65; }
     }
     .office-roster {
       display: grid;
@@ -859,7 +925,7 @@
     <div id="panel-office" class="tab-panel">
       <section class="full office-section">
         <h2>The firm</h2>
-        <p class="muted office-lead">One floor. Staff walk the aisle, grab coffee, and sit their desk — faster when their lamp is active.</p>
+        <p class="muted office-lead" id="officeLead">One floor. Between jobs the staff wander; when a schedule fires they sit and work.</p>
         <div class="office-stage" id="officeFloor" aria-label="Agent office floor"></div>
         <div class="office-roster" id="officeRoster"></div>
       </section>
@@ -1044,32 +1110,30 @@
       "risk_manager", "devils_advocate", "cio", "universe_manager",
     ];
     const OFFICE_STAFF = [
-      { id: "cio", short: "CIO", title: "대표", hair: "side", color: "#2c4a7c", home: { x: 16, y: 42 } },
-      { id: "risk_manager", short: "Risk", title: "준법", hair: "crop", color: "#c4922a", home: { x: 42, y: 36 } },
-      { id: "devils_advocate", short: "Devil", title: "반대", hair: "part", color: "#a35a5a", home: { x: 60, y: 36 } },
-      { id: "universe_manager", short: "Univ", title: "유니버스", hair: "bun", color: "#3d8f6e", home: { x: 80, y: 36 } },
-      { id: "market_intelligence", short: "MI", title: "리서치", hair: "short", color: "#3d7ec4", home: { x: 42, y: 70 } },
-      { id: "macro_strategist", short: "Macro", title: "매크로", hair: "wave", color: "#2f8f88", home: { x: 60, y: 70 } },
-      { id: "quant_strategist", short: "Quant", title: "퀀트", hair: "crop", color: "#6b5ea8", home: { x: 80, y: 70 } },
+      { id: "cio", short: "CIO", title: "대표", hair: "side", color: "#2c4a7c", home: { x: 16, y: 48 } },
+      { id: "risk_manager", short: "Risk", title: "준법", hair: "crop", color: "#c4922a", home: { x: 42, y: 44 } },
+      { id: "devils_advocate", short: "Devil", title: "반대", hair: "part", color: "#a35a5a", home: { x: 60, y: 44 } },
+      { id: "universe_manager", short: "Univ", title: "유니버스", hair: "bun", color: "#3d8f6e", home: { x: 80, y: 44 } },
+      { id: "market_intelligence", short: "MI", title: "리서치", hair: "short", color: "#3d7ec4", home: { x: 42, y: 78 } },
+      { id: "macro_strategist", short: "Macro", title: "매크로", hair: "wave", color: "#2f8f88", home: { x: 60, y: 78 } },
+      { id: "quant_strategist", short: "Quant", title: "퀀트", hair: "crop", color: "#6b5ea8", home: { x: 80, y: 78 } },
     ];
     const OFFICE_SPOTS = {
-      cio: { x: 16, y: 42 },
-      risk: { x: 42, y: 36 },
-      devil: { x: 60, y: 36 },
-      univ: { x: 80, y: 36 },
-      mi: { x: 42, y: 70 },
-      macro: { x: 60, y: 70 },
-      quant: { x: 80, y: 70 },
-      coffee: { x: 22, y: 82 },
-      board: { x: 50, y: 22 },
-      aisle: { x: 50, y: 54 },
-      table: { x: 24, y: 58 },
-      window: { x: 90, y: 82 },
+      coffee: { x: 18, y: 86 },
+      coffee2: { x: 28, y: 86 },
+      board: { x: 50, y: 20 },
+      aisle: { x: 50, y: 52 },
+      aisleL: { x: 32, y: 50 },
+      aisleR: { x: 70, y: 50 },
+      table: { x: 24, y: 60 },
+      window: { x: 90, y: 84 },
     };
+    const OFFICE_SPACE = 11;
     let _officeData = null;
     let _officeActors = {};
     let _officeRaf = 0;
     let _officeLast = 0;
+    let _officeShift = false;
 
     function pill(text, cls) {
       return `<span class="pill ${cls || ""}">${text}</span>`;
@@ -1592,12 +1656,43 @@
       }
     }
 
-    function officePose(lamp) {
+    function officeJobLive(job) {
+      if (!job) return false;
+      const st = String(job.status || "").toLowerCase();
+      if (["completed", "failed", "skipped", "cancelled"].includes(st)) return false;
+      if (job.started_at && !job.completed_at) return true;
+      return st === "running" || st === "started";
+    }
+
+    function officeShiftOn(snap) {
+      const lamps = snap?.agent_lamps || [];
+      if (lamps.some((r) => r.lamp === "running" || r.live)) return true;
+      const agents = snap?.agents || {};
+      if (Object.values(agents).some((a) => a && (a.lamp === "running" || a.live))) return true;
+      return (snap?.session_jobs || []).some(officeJobLive);
+    }
+
+    function officeShiftLabel(snap) {
+      const lamps = snap?.agent_lamps || [];
+      const live = lamps.filter((r) => r.lamp === "running" || r.live);
+      if (live.length) {
+        return live.map((r) => r.short_name || r.agent_name).join(" · ") + " running";
+      }
+      const job = (snap?.session_jobs || []).find(officeJobLive);
+      if (job) {
+        const key = String(job.job_key || "job").replace(/^[A-Z]+:/, "");
+        return `${key} in progress`;
+      }
+      return "committee in session";
+    }
+
+    function officePose(lamp, shift) {
       if (lamp === "running") return "working";
-      if (lamp === "ready") return "idle";
-      if (lamp === "stale") return "stale";
       if (lamp === "failed") return "failed";
-      return "silent";
+      if (lamp === "silent") return "silent";
+      if (shift) return "focus";
+      if (lamp === "stale") return "stale";
+      return "idle";
     }
 
     function staffSpeech(name, agent, cio) {
@@ -1615,6 +1710,7 @@
     function staffMarkup(cfg) {
       return `<div class="staff" data-agent="${cfg.id}" data-pose="silent" data-moving="0">
         <div class="bubble" hidden></div>
+        <div class="halo"></div>
         <div class="figure" style="--shirt:${cfg.color}">
           <div class="hair ${cfg.hair}"></div>
           <div class="head"></div>
@@ -1641,43 +1737,96 @@
       return Math.hypot(dx, dy);
     }
 
-    function officePickSpot(actor) {
-      const home = actor.home;
+    function officeSlot(base, actorId) {
+      const i = OFFICE_STAFF.findIndex((s) => s.id === actorId);
+      const ang = ((i < 0 ? 0 : i) / OFFICE_STAFF.length) * Math.PI * 2;
+      return {
+        x: Math.max(8, Math.min(92, base.x + Math.cos(ang) * 6)),
+        y: Math.max(18, Math.min(90, base.y + Math.sin(ang) * 5)),
+      };
+    }
+
+    function officeBusy(pt, exceptId, minD) {
+      const lim = minD || OFFICE_SPACE;
+      return OFFICE_STAFF.some((s) => {
+        if (s.id === exceptId) return false;
+        const o = _officeActors[s.id];
+        if (!o) return false;
+        return officeDist(o, pt) < lim || officeDist({ x: o.tx, y: o.ty }, pt) < lim;
+      });
+    }
+
+    function officeWorkTarget(actor) {
+      if (actor.id === "cio" && actor.pose === "working") {
+        return officeSlot(OFFICE_SPOTS.board, actor.id);
+      }
+      return officeSlot(actor.home, actor.id);
+    }
+
+    function officeCandidates(actor) {
+      const home = officeSlot(actor.home, actor.id);
       const pose = actor.pose;
-      if (pose === "silent" || pose === "failed") return { ...home };
-      const roll = Math.random();
-      if (pose === "working") {
-        if (roll < 0.28) return { ...home };
-        if (roll < 0.45) return { ...OFFICE_SPOTS.board };
-        if (roll < 0.6) return { ...OFFICE_SPOTS.coffee };
-        if (roll < 0.75) return { ...OFFICE_SPOTS.aisle };
-        if (roll < 0.88) return { ...OFFICE_SPOTS.table };
-        const other = OFFICE_STAFF.filter((s) => s.id !== actor.id);
-        const visit = other[Math.floor(Math.random() * other.length)];
-        return { ...visit.home };
-      }
+      if (pose === "silent" || pose === "failed" || pose === "working" || pose === "focus") return [home];
+      const spots = [
+        OFFICE_SPOTS.coffee,
+        OFFICE_SPOTS.coffee2,
+        OFFICE_SPOTS.board,
+        OFFICE_SPOTS.aisle,
+        OFFICE_SPOTS.aisleL,
+        OFFICE_SPOTS.aisleR,
+        OFFICE_SPOTS.table,
+        OFFICE_SPOTS.window,
+      ].map((p) => officeSlot(p, actor.id));
+      const visits = OFFICE_STAFF
+        .filter((s) => s.id !== actor.id)
+        .map((s) => officeSlot({ x: s.home.x + 7, y: s.home.y }, actor.id));
       if (pose === "stale") {
-        if (roll < 0.4) return { ...home };
-        if (roll < 0.65) return { ...OFFICE_SPOTS.window };
-        if (roll < 0.85) return { ...OFFICE_SPOTS.coffee };
-        return { ...OFFICE_SPOTS.aisle };
+        return [home, officeSlot(OFFICE_SPOTS.window, actor.id), officeSlot(OFFICE_SPOTS.coffee, actor.id), officeSlot(OFFICE_SPOTS.aisle, actor.id)];
       }
-      if (roll < 0.55) return { ...home };
-      if (roll < 0.72) return { ...OFFICE_SPOTS.coffee };
-      if (roll < 0.86) return { ...OFFICE_SPOTS.aisle };
-      if (roll < 0.94) return { ...OFFICE_SPOTS.board };
-      return { ...OFFICE_SPOTS.table };
+      return [home, ...spots, ...visits];
+    }
+
+    function officePickSpot(actor) {
+      const home = officeSlot(actor.home, actor.id);
+      const pose = actor.pose;
+      if (pose === "silent" || pose === "failed") return home;
+      if (actor.shift) return officeWorkTarget(actor);
+      const roll = Math.random();
+      const stayHome = actor.id === "cio" ? 0.72 : pose === "stale" ? 0.42 : 0.58;
+      const pool = officeCandidates(actor);
+      const preferred = stayHome > roll ? [home] : pool;
+      const open = preferred.filter((p) => !officeBusy(p, actor.id, OFFICE_SPACE));
+      if (open.length) return open[Math.floor(Math.random() * open.length)];
+      const fallback = pool.filter((p) => !officeBusy(p, actor.id, OFFICE_SPACE * 0.7));
+      return fallback[0] || home;
+    }
+
+    function officeSeparate(actor) {
+      OFFICE_STAFF.forEach((s) => {
+        if (s.id === actor.id) return;
+        const o = _officeActors[s.id];
+        if (!o) return;
+        const d = officeDist(actor, o);
+        if (d >= OFFICE_SPACE || d < 0.05) return;
+        const push = (OFFICE_SPACE - d) * 0.35;
+        actor.x += ((actor.x - o.x) / d) * push;
+        actor.y += ((actor.y - o.y) / d) * push;
+      });
+      actor.x = Math.max(8, Math.min(92, actor.x));
+      actor.y = Math.max(18, Math.min(90, actor.y));
     }
 
     function officeWait(pose) {
-      if (pose === "working") return 0.4 + Math.random() * 1.2;
+      if (pose === "working") return 2.4 + Math.random() * 1.8;
+      if (pose === "focus") return 3.5 + Math.random() * 2.5;
       if (pose === "stale") return 1.6 + Math.random() * 2.5;
       if (pose === "idle") return 2.2 + Math.random() * 4.5;
       return 8;
     }
 
     function officeSpeed(pose) {
-      if (pose === "working") return 22;
+      if (pose === "working") return 38;
+      if (pose === "focus") return 24;
       if (pose === "stale") return 9;
       return 14;
     }
@@ -1698,6 +1847,7 @@
           tx: jitter.x,
           ty: jitter.y,
           pose: "idle",
+          shift: false,
           wait: 0.3 * i,
           faceLeft: false,
         };
@@ -1714,6 +1864,10 @@
         if (a.wait > 0) {
           a.wait -= dt;
           a.el.dataset.moving = "0";
+          if (a.pose !== "working" && a.pose !== "focus") {
+            officeSeparate(a);
+            officePlace(a.el, a.x, a.y, a.faceLeft);
+          }
           return;
         }
         if (a.pose === "silent" || a.pose === "failed") {
@@ -1737,6 +1891,7 @@
         a.faceLeft = a.tx < a.x - 0.15;
         a.x += ((a.tx - a.x) / dist) * step;
         a.y += ((a.ty - a.y) / dist) * step;
+        officeSeparate(a);
         a.el.dataset.moving = "1";
         officePlace(a.el, a.x, a.y, a.faceLeft);
       });
@@ -1767,15 +1922,15 @@
           <h3>게시판</h3>
           <p id="officeBoard" class="muted">Waiting for the committee…</p>
         </div>
-        <div class="prop desk cio" style="left:16%;top:32%"><span>대표</span></div>
-        <div class="prop desk" style="left:42%;top:26%"><span>리스크</span></div>
-        <div class="prop desk" style="left:60%;top:26%"><span>챌린지</span></div>
-        <div class="prop desk" style="left:80%;top:26%"><span>유니버스</span></div>
-        <div class="prop desk" style="left:42%;top:60%"><span>리서치</span></div>
-        <div class="prop desk" style="left:60%;top:60%"><span>매크로</span></div>
-        <div class="prop desk" style="left:80%;top:60%"><span>퀀트</span></div>
+        <div class="prop desk cio" data-desk="cio" style="left:16%;top:32%"><span>대표</span></div>
+        <div class="prop desk" data-desk="risk_manager" style="left:42%;top:26%"><span>리스크</span></div>
+        <div class="prop desk" data-desk="devils_advocate" style="left:60%;top:26%"><span>챌린지</span></div>
+        <div class="prop desk" data-desk="universe_manager" style="left:80%;top:26%"><span>유니버스</span></div>
+        <div class="prop desk" data-desk="market_intelligence" style="left:42%;top:60%"><span>리서치</span></div>
+        <div class="prop desk" data-desk="macro_strategist" style="left:60%;top:60%"><span>매크로</span></div>
+        <div class="prop desk" data-desk="quant_strategist" style="left:80%;top:60%"><span>퀀트</span></div>
         <div class="prop table" style="left:24%;top:52%"></div>
-        <div class="prop coffee" style="left:22%;top:76%"></div>
+        <div class="prop coffee" style="left:22%;top:76%"><span>커피</span></div>
         <div class="prop plant" style="left:8%;top:22%"></div>
         <div class="prop plant" style="left:92%;top:22%"></div>
         <div class="prop plant" style="left:92%;top:88%"></div>
@@ -1794,22 +1949,33 @@
       const agents = snap.agents || {};
       const lamps = {};
       (snap.agent_lamps || []).forEach((r) => { lamps[r.agent_name] = r; });
+      const shift = officeShiftOn(snap);
+      const shiftFlipped = _officeShift !== shift;
+      _officeShift = shift;
+      floor.dataset.shift = shift ? "on" : "off";
       OFFICE_STAFF.forEach((s) => {
         const el = floor.querySelector(`.staff[data-agent="${s.id}"]`);
         const actor = _officeActors[s.id];
         if (!el) return;
         const row = lamps[s.id] || agents[s.id] || {};
         const lamp = row.lamp || "silent";
-        const pose = officePose(lamp);
+        const pose = officePose(lamp, shift);
         if (el.dataset.pose !== pose) el.dataset.pose = pose;
-        if (actor && actor.pose !== pose) {
+        if (actor) {
+          const poseChanged = actor.pose !== pose;
           actor.pose = pose;
-          actor.wait = 0.05;
-        } else if (actor) {
-          actor.pose = pose;
+          actor.shift = shift;
+          if (poseChanged || shiftFlipped) {
+            actor.wait = 0;
+            const next = officePickSpot(actor);
+            actor.tx = next.x;
+            actor.ty = next.y;
+          }
         }
         const bubble = el.querySelector(".bubble");
-        const line = staffSpeech(s.id, agents[s.id], snap.cio);
+        let line = "";
+        if (pose === "working") line = row.lamp_detail || "running now";
+        else if (!shift) line = staffSpeech(s.id, agents[s.id], snap.cio);
         if (bubble) {
           if (line && pose !== "silent") {
             bubble.hidden = false;
@@ -1820,6 +1986,18 @@
         }
         el.title = `${s.title}: ${row.lamp_label || lamp}${row.lamp_detail ? " — " + row.lamp_detail : ""}`;
       });
+      floor.querySelectorAll("[data-desk]").forEach((desk) => {
+        const row = lamps[desk.dataset.desk] || agents[desk.dataset.desk] || {};
+        if (row.lamp === "running" || row.live) desk.dataset.lit = "1";
+        else if (shift) desk.dataset.lit = "wait";
+        else desk.dataset.lit = "0";
+      });
+      const lead = document.getElementById("officeLead");
+      if (lead) {
+        lead.textContent = shift
+          ? `Shift on — ${officeShiftLabel(snap)}. Live staff sprint to the desk and type; the rest wait their turn.`
+          : "Between jobs the floor wanders. When a schedule fires, everyone sits and the live agent works.";
+      }
       const board = document.getElementById("officeBoard");
       if (board) {
         const cio = snap.cio || {};
@@ -1827,12 +2005,13 @@
         const action = cio.portfolio_action || "—";
         const regime = cio.market_regime || "—";
         const cashish = /CASH|NO_TRADE|HOLD/i.test(String(action));
-        board.innerHTML = `${pill(action, cashish ? "warn" : "good")} ${pill(regime, "")} ${pill(`${nPos} open`, "")}`;
+        const session = shift ? pill("IN SESSION", "good") + " " + pill(officeShiftLabel(snap), "") : "";
+        board.innerHTML = `${session}${pill(action, cashish ? "warn" : "good")} ${pill(regime, "")} ${pill(`${nPos} open`, "")}`;
       }
       const roster = document.getElementById("officeRoster");
       if (roster) {
         roster.innerHTML = OFFICE_STAFF.map((s) => {
-          const a = agents[s.id] || {};
+          const a = { ...(agents[s.id] || {}), ...(lamps[s.id] || {}) };
           const lamp = a.lamp || "silent";
           const tone = lamp === "failed" ? "bad" : lamp === "running" ? "good" : (lamp === "stale" ? "warn" : "");
           return `<div class="row">

@@ -150,6 +150,11 @@ def test_dashboard_routes_exist() -> None:
             assert b"office-stage" in dash.content
             assert b"function renderOffice" in dash.content
             assert b"function startOfficeLoop" in dash.content
+            assert b"function officeBusy" in dash.content
+            assert b"function officeSeparate" in dash.content
+            assert b"function officeShiftOn" in dash.content
+            assert b"function officeWorkTarget" in dash.content
+            assert b"data-shift" in dash.content
             assert b"OFFICE_STAFF" in dash.content
             assert b"refreshPicks" in dash.content
             assert b"kpi-grid" in dash.content
