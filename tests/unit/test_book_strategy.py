@@ -24,10 +24,14 @@ from app.schemas.quant_strategist import BarSnapshot, QuantStrategistInput
 from app.schemas.risk_manager import PositionSnapshot, RiskManagerOutput
 from app.universe.book_strategy import (
     align_cio_playbook_exits,
+    ensure_playbook_exits,
+    exit_action,
     filter_strategy_horizons,
     horizon_for_symbol,
+    lock_level,
     notional_pct_for_risk,
     playbook_for,
+    playbook_take_profit,
     portfolio_action_from_symbol_actions,
     risk_mult_for_horizon,
     should_propose_entry,
@@ -757,3 +761,169 @@ def test_drop_blocked_entries_strips_sideways_day_buys() -> None:
     assert out.symbol_actions == []
     assert out.portfolio_action == PortfolioAction.NO_TRADE
     assert out.reason_not_to_trade == "sideways_stand_down"
+
+
+def test_downtrend_deceleration_is_sell_not_hope() -> None:
+    from app.universe.book_strategy import BookExit
+
+    assert (
+        exit_action(
+            horizon="short",
+            trend=TrendState.DOWN,
+            momentum=MomentumState.DECELERATING,
+            liquidity=LiquidityState.NORMAL,
+        )
+        == BookExit.SELL
+    )
+    assert (
+        exit_action(
+            horizon="short",
+            trend=TrendState.SIDEWAYS,
+            momentum=MomentumState.STEADY,
+            liquidity=LiquidityState.NORMAL,
+            last=153.0,
+            entry=155.0,
+        )
+        == BookExit.SELL
+    )
+    assert (
+        exit_action(
+            horizon="short",
+            trend=TrendState.UP,
+            momentum=MomentumState.DECELERATING,
+            liquidity=LiquidityState.NORMAL,
+            last=153.0,
+            entry=155.0,
+        )
+        == BookExit.HOLD
+    )
+
+
+def test_playbook_take_profit_and_lock() -> None:
+    assert playbook_take_profit(entry=100.0, horizon="short") == 103.0
+    assert lock_level(entry=100.0, take_profit=103.0) == 101.5
+
+
+def test_ensure_playbook_exits_sells_sideways_loser() -> None:
+    from app.schemas.cio import CIODecision, SymbolActionPlan
+    from app.schemas.common import BreadthState, OrderType
+    from app.schemas.quant_strategist import QuantStrategistOutput, SymbolQuantView
+    from app.universe.book_strategy import BookExit
+
+    decision = CIODecision(
+        timestamp=NOW,
+        market_regime=MarketRegime.NEUTRAL,
+        portfolio_action=PortfolioAction.HOLD,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="CBA",
+                action=SymbolAction.HOLD,
+                confidence=90,
+                target_position_pct=10,
+                order_type=OrderType.LIMIT,
+                thesis="wait for bounce",
+                invalidation="n/a",
+            )
+        ],
+        cash_target_pct=50,
+        risk_approval=True,
+    )
+    quant = QuantStrategistOutput(
+        timestamp=NOW,
+        market_trend_state=TrendState.SIDEWAYS,
+        market_momentum_state=MomentumState.STEADY,
+        market_volatility_state=VolatilityState.NORMAL,
+        market_breadth_state=BreadthState.MIXED,
+        market_liquidity_state=LiquidityState.NORMAL,
+        symbol_views=[
+            SymbolQuantView(
+                symbol="CBA",
+                trend_state=TrendState.SIDEWAYS,
+                momentum_state=MomentumState.STEADY,
+                volatility_state=VolatilityState.NORMAL,
+                liquidity_state=LiquidityState.NORMAL,
+                probability_estimate=0.5,
+                probability_basis="test",
+            )
+        ],
+        data_quality_score=0.8,
+    )
+    pos = PositionSnapshot(
+        symbol="CBA",
+        quantity=10,
+        market_value=1530,
+        cost_basis=1550,
+        unrealized_pnl=-20,
+        sector="Unknown",
+        weight_pct=10,
+        venue="AU",
+        currency="AUD",
+    )
+    out = ensure_playbook_exits(
+        decision,
+        quant,
+        [{"symbol": "CBA", "horizon": "short"}],
+        positions=[pos],
+    )
+    assert out.symbol_actions[0].action == SymbolAction.SELL
+    assert BookExit.SELL.value in {exit_action(
+        horizon="short",
+        trend=TrendState.SIDEWAYS,
+        momentum=MomentumState.STEADY,
+        liquidity=LiquidityState.NORMAL,
+        last=153,
+        entry=155,
+    ).value}
+
+
+def test_align_honors_short_sell() -> None:
+    from app.schemas.cio import CIODecision, SymbolActionPlan
+    from app.schemas.common import BreadthState, OrderType
+    from app.schemas.quant_strategist import QuantStrategistOutput, SymbolQuantView
+
+    decision = CIODecision(
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.REDUCE,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="AAPL",
+                action=SymbolAction.SELL,
+                confidence=70,
+                target_position_pct=0,
+                order_type=OrderType.MARKET,
+                thesis="take the 3%",
+                invalidation="n/a",
+            )
+        ],
+        cash_target_pct=80,
+        risk_approval=True,
+    )
+    quant = QuantStrategistOutput(
+        timestamp=NOW,
+        market_trend_state=TrendState.UP,
+        market_momentum_state=MomentumState.STEADY,
+        market_volatility_state=VolatilityState.NORMAL,
+        market_breadth_state=BreadthState.MIXED,
+        market_liquidity_state=LiquidityState.NORMAL,
+        symbol_views=[
+            SymbolQuantView(
+                symbol="AAPL",
+                trend_state=TrendState.UP,
+                momentum_state=MomentumState.STEADY,
+                volatility_state=VolatilityState.NORMAL,
+                liquidity_state=LiquidityState.NORMAL,
+                probability_estimate=0.6,
+                probability_basis="test",
+            )
+        ],
+        data_quality_score=0.8,
+    )
+    out = align_cio_playbook_exits(
+        decision,
+        quant,
+        [{"symbol": "AAPL", "horizon": "short"}],
+        held_symbols=["AAPL"],
+    )
+    assert out.symbol_actions[0].action == SymbolAction.SELL
+

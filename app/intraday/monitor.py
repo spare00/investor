@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -157,6 +157,59 @@ class PositionMonitor:
                     "venue": getattr(lifecycle, "venue", None) or "US",
                 },
             )
+
+        # Once a trade has been a real winner, it may not close as a loss.
+        hz = str((lifecycle.exit_policy or {}).get("horizon") or "") or None
+        peak = await self._remember_peak_price(lifecycle, price=price)
+        lock = None
+        if entry > 0:
+            from app.universe.book_strategy import lock_level
+
+            lock = lock_level(entry=entry, take_profit=tp, horizon=hz)
+        if (
+            qty > 0
+            and entry > 0
+            and peak is not None
+            and lock is not None
+            and peak >= lock
+            and price < entry
+            and "take_profit_triggered" not in reasons
+        ):
+            verdict = EXIT_INTENT_REQUIRED if verdict != EMERGENCY_ACTION_REQUIRED else verdict
+            reasons.append("giveback_to_loss")
+            await self.bus.publish(
+                event_type="TAKE_PROFIT_TRIGGERED",
+                source="position_monitor",
+                symbols=[lifecycle.symbol],
+                deduplication_key=f"giveback:{lifecycle.id}:{now.date().isoformat()}",
+                position_id=lifecycle.id,
+                requires_analysis=False,
+                requires_execution_review=True,
+                bypass_cooldown=True,
+                importance="high",
+                payload={
+                    "peak": peak,
+                    "lock": lock,
+                    "entry": entry,
+                    "price": price,
+                    "venue": getattr(lifecycle, "venue", None) or "US",
+                },
+            )
+        elif (
+            qty > 0
+            and entry > 0
+            and lock is not None
+            and price >= lock
+            and stop is not None
+            and float(stop) < entry
+        ):
+            lifecycle.stop_price = round(float(entry), 4)
+            policy = dict(lifecycle.exit_policy or {})
+            policy["stop_loss"] = lifecycle.stop_price
+            policy["stop_source"] = "breakeven_trail"
+            lifecycle.exit_policy = policy
+            if bool(lifecycle.protection_submitted):
+                lifecycle.protection_submitted = False
 
         # Max holding: scalp/day flatten; short/medium overnight is a review, not a stop.
         if lifecycle.opened_at and lifecycle.max_holding_minutes:
@@ -455,6 +508,59 @@ class PositionMonitor:
             "closed": closed,
             "held": [f"{s}:{v}" for s, v in sorted(held.keys())],
         }
+
+    async def stamp_horizon_take_profit_if_missing(
+        self, lifecycle: PositionLifecycle
+    ) -> float | None:
+        """Attach the book's target as take_profit_price when the row has none."""
+        if lifecycle.take_profit_price is not None:
+            return float(lifecycle.take_profit_price)
+        ref = float(lifecycle.average_entry_price or 0)
+        if ref <= 0:
+            return None
+        from app.universe.book_strategy import horizon_for_symbol, playbook_take_profit
+
+        hz = await self._watchlist_horizon(lifecycle.symbol) or horizon_for_symbol(
+            lifecycle.symbol
+        )
+        tp = playbook_take_profit(entry=ref, horizon=hz)
+        if tp is None:
+            return None
+        lifecycle.take_profit_price = tp
+        policy = dict(lifecycle.exit_policy or {})
+        policy["take_profit"] = tp
+        policy["horizon"] = hz
+        lifecycle.exit_policy = policy
+        await self.session.flush()
+        return float(tp)
+
+    async def _remember_peak_price(
+        self, lifecycle: PositionLifecycle, *, price: float
+    ) -> float | None:
+        policy = dict(lifecycle.exit_policy or {})
+        cached = policy.get("peak_price")
+        peak = float(price or 0)
+        if cached is not None:
+            try:
+                peak = max(peak, float(cached))
+            except (TypeError, ValueError):
+                pass
+        elif lifecycle.id is not None:
+            hist = (
+                await self.session.execute(
+                    select(func.max(PositionSnapshotRecord.current_price)).where(
+                        PositionSnapshotRecord.position_lifecycle_id == lifecycle.id
+                    )
+                )
+            ).scalar_one_or_none()
+            if hist is not None:
+                peak = max(peak, float(hist))
+        if peak <= 0:
+            return None
+        if cached is None or float(cached) < peak:
+            policy["peak_price"] = peak
+            lifecycle.exit_policy = policy
+        return peak
 
     async def stamp_horizon_stop_if_missing(
         self, lifecycle: PositionLifecycle

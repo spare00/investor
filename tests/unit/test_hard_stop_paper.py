@@ -404,7 +404,7 @@ async def test_max_holding_overnight_short_reviews_not_flattens(
 
     settings = _armed()
     broker = MockBroker(seed=7, starting_cash=50_000, allow_short=False)
-    broker.prices["BHP"] = 67.4
+    broker.prices["BHP"] = 63.5
     monkeypatch.setattr("app.brokers.factory.get_broker", lambda _s=None: broker)
     monkeypatch.setattr("app.execution.order_manager.get_broker", lambda _s=None: broker)
     session.add(
@@ -414,7 +414,7 @@ async def test_max_holding_overnight_short_reviews_not_flattens(
             status="OPEN",
             quantity=1575,
             average_entry_price=63.0,
-            current_price=67.4,
+            current_price=63.5,
             stop_price=61.581,
             overnight_allowed=True,
             max_holding_minutes=10 * 24 * 60,
@@ -425,7 +425,7 @@ async def test_max_holding_overnight_short_reviews_not_flattens(
     )
     await session.flush()
     rows = await IntradayService(session, settings=settings).monitor_all(
-        prices={"BHP": 67.4}, venue="AU"
+        prices={"BHP": 63.5}, venue="AU"
     )
     hit = next(r for r in rows if r["symbol"] == "BHP")
     assert hit["monitor"]["verdict"] == "RISK_REVIEW_REQUIRED"
@@ -508,3 +508,105 @@ async def test_stop_triggered_does_not_queue_committee(session: AsyncSession) ->
     stops = [e for e in events if e.event_type == "STOP_TRIGGERED"]
     assert stops
     assert stops[0].requires_analysis is False
+
+
+@pytest.mark.asyncio
+async def test_stamps_take_profit_and_flattens_at_target(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _armed()
+    broker = MockBroker(seed=7, starting_cash=50_000, allow_short=False)
+    broker.prices["AAPL"] = 104.0
+    monkeypatch.setattr("app.brokers.factory.get_broker", lambda _s=None: broker)
+    monkeypatch.setattr("app.execution.order_manager.get_broker", lambda _s=None: broker)
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="AAPL",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=100,
+            current_price=104,
+            stop_price=97,
+            overnight_allowed=True,
+            exit_policy={"horizon": "short"},
+        )
+    )
+    await session.flush()
+    rows = await IntradayService(session, settings=settings).monitor_all(
+        prices={"AAPL": 104.0}
+    )
+    hit = next(r for r in rows if r["symbol"] == "AAPL")
+    assert "take_profit_triggered" in (hit["monitor"]["reasons"] or [])
+    assert hit.get("exit_intent_id") or int(hit.get("orders_submitted") or 0) >= 1
+    from sqlalchemy import select
+
+    from app.models import PositionLifecycle as LC
+
+    lc = (await session.execute(select(LC).where(LC.symbol == "AAPL"))).scalar_one()
+    assert lc.take_profit_price == 103.0
+
+
+@pytest.mark.asyncio
+async def test_giveback_to_loss_flattens_after_lock(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _armed()
+    broker = MockBroker(seed=7, starting_cash=50_000, allow_short=False)
+    broker.prices["CBA"] = 99.0
+    monkeypatch.setattr("app.brokers.factory.get_broker", lambda _s=None: broker)
+    monkeypatch.setattr("app.execution.order_manager.get_broker", lambda _s=None: broker)
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="CBA",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=100,
+            current_price=99,
+            stop_price=97,
+            overnight_allowed=True,
+            exit_policy={"horizon": "short", "peak_price": 102.0},
+        )
+    )
+    await session.flush()
+    rows = await IntradayService(session, settings=settings).monitor_all(
+        prices={"CBA": 99.0}
+    )
+    hit = next(r for r in rows if r["symbol"] == "CBA")
+    assert "giveback_to_loss" in (hit["monitor"]["reasons"] or [])
+    assert hit.get("exit_intent_id") or int(hit.get("orders_submitted") or 0) >= 1
+
+
+@pytest.mark.asyncio
+async def test_trail_stop_to_breakeven_after_lock(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _armed()
+    broker = MockBroker(seed=7, starting_cash=50_000, allow_short=False)
+    broker.prices["BHP"] = 102.0
+    monkeypatch.setattr("app.brokers.factory.get_broker", lambda _s=None: broker)
+    monkeypatch.setattr("app.execution.order_manager.get_broker", lambda _s=None: broker)
+    session.add(
+        PositionLifecycle(
+            id=uuid4(),
+            symbol="BHP",
+            status="OPEN",
+            quantity=10,
+            average_entry_price=100,
+            current_price=102,
+            stop_price=97,
+            overnight_allowed=True,
+            exit_policy={"horizon": "short"},
+        )
+    )
+    await session.flush()
+    await IntradayService(session, settings=settings).monitor_all(prices={"BHP": 102.0})
+    from sqlalchemy import select
+
+    from app.models import PositionLifecycle as LC
+
+    lc = (await session.execute(select(LC).where(LC.symbol == "BHP"))).scalar_one()
+    assert lc.take_profit_price == 103.0
+    assert lc.stop_price == 100.0
+

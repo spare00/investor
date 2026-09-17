@@ -402,6 +402,7 @@ def cio_brief(payload: CIOInput) -> str:
         "Paper: excess cash above the 30% floor is opportunity cost only with an allowed setup. "
         "Scalp/day stand down in sideways. Prefer dip_buy and bounce. Skip falling knives. "
         "Fill up to 3 new names/book when the tape allows. cash_target falls when you buy. "
+        "Take the book target; do not hold a loser hoping for a bounce. "
         "Devil is advisory. Do not repeat negative-signal names "
         "unless the tape is clearly different. "
         "HOLD/NO_TRADE = no new buys; SELL/PARTIAL_SELL/REDUCE still flatten.",

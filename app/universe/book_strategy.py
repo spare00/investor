@@ -574,21 +574,51 @@ def should_propose_entry(
     return True
 
 
+def playbook_take_profit(*, entry: float, horizon: str | None) -> float | None:
+    """Absolute long take-profit from the book's target_pct."""
+    book = playbook_for(horizon)
+    if book is None or entry <= 0:
+        return None
+    return round(float(entry) * (1.0 + float(book.target_pct)), 4)
+
+
+def lock_level(*, entry: float, take_profit: float | None, horizon: str | None = None) -> float | None:
+    """Price that must print before the trade is not allowed to close as a loss."""
+    if entry <= 0:
+        return None
+    tp = take_profit
+    if tp is None:
+        tp = playbook_take_profit(entry=entry, horizon=horizon)
+    if tp is None or tp <= entry:
+        return None
+    return round(float(entry) + 0.5 * (float(tp) - float(entry)), 4)
+
+
 def exit_action(
     *,
     horizon: str,
     trend: TrendState,
     momentum: MomentumState,
     liquidity: LiquidityState,
+    last: float | None = None,
+    entry: float | None = None,
 ) -> BookExit:
     book = playbook_for(horizon)
     if book is None:
         return BookExit.HOLD
+    up = trend in {TrendState.UP, TrendState.STRONG_UP}
     down = trend in {TrendState.DOWN, TrendState.STRONG_DOWN}
     if book.sell_if_downtrend and down:
-        # Don't dump a dip/bounce. Sell the falling knife, not the pullback.
-        if momentum == MomentumState.DECELERATING:
-            return BookExit.HOLD
+        # A downtrend "deceleration" is hope of a bounce, not a dip. Dump it.
+        return BookExit.SELL
+    underwater = (
+        last is not None
+        and entry is not None
+        and float(entry) > 0
+        and float(last) < float(entry)
+    )
+    if underwater and not up:
+        # Sideways loser waiting for a reversal is the same hope trade.
         return BookExit.SELL
     if book.sell_if_liquidity_stressed and liquidity == LiquidityState.STRESSED:
         return BookExit.SELL
@@ -691,7 +721,12 @@ def align_cio_playbook_exits(
             liquidity=view.liquidity_state,
         )
         want = symbol_action_for_exit(allowed)
-        if want == SymbolAction.HOLD:
+        if (
+            want == SymbolAction.HOLD
+            and action in {SymbolAction.REDUCE, SymbolAction.PARTIAL_SELL}
+            and hz == "short"
+        ):
+            # Noise trim on a quiet swing. Honor SELL — taking profit / cutting hope.
             changed = True
             updated.append(
                 plan.model_copy(
@@ -720,6 +755,95 @@ def align_cio_playbook_exits(
     portfolio = portfolio_action_from_symbol_actions(updated)
     return decision.model_copy(
         update={"symbol_actions": updated, "portfolio_action": portfolio}
+    )
+
+
+def _position_entry_last(pos: Any) -> tuple[float | None, float | None]:
+    qty = abs(float(getattr(pos, "quantity", 0) or 0))
+    if qty < 1e-9:
+        return None, None
+    cost = getattr(pos, "cost_basis", None)
+    mv = getattr(pos, "market_value", None)
+    entry = (float(cost) / qty) if cost else None
+    last = (float(mv) / qty) if mv else None
+    return entry, last
+
+
+def ensure_playbook_exits(
+    decision: Any,
+    quant: Any,
+    watchlist: list[dict] | None,
+    *,
+    positions: Iterable[Any] | None = None,
+) -> Any:
+    """Insert SELL when the book says dump — CIO HOLD cannot wait for a bounce."""
+    if decision is None:
+        return decision
+    from app.schemas.cio import SymbolActionPlan
+    from app.schemas.common import OrderType
+
+    views = {
+        str(v.symbol).upper(): v
+        for v in (getattr(quant, "symbol_views", None) or [])
+        if getattr(v, "symbol", None)
+    }
+    existing = {
+        str(p.symbol).upper(): p
+        for p in (getattr(decision, "symbol_actions", None) or [])
+        if getattr(p, "symbol", None)
+    }
+    updated = list(getattr(decision, "symbol_actions", None) or [])
+    changed = False
+    for pos in positions or []:
+        if abs(float(getattr(pos, "quantity", 0) or 0)) < 1e-9:
+            continue
+        sym = str(pos.symbol or "").upper()
+        view = views.get(sym)
+        if view is None:
+            continue
+        hz = horizon_for_symbol(sym, watchlist)
+        entry, last = _position_entry_last(pos)
+        allowed = exit_action(
+            horizon=hz,
+            trend=view.trend_state,
+            momentum=view.momentum_state,
+            liquidity=view.liquidity_state,
+            last=last,
+            entry=entry,
+        )
+        want = symbol_action_for_exit(allowed)
+        if want not in {SymbolAction.SELL, SymbolAction.REDUCE}:
+            continue
+        cur = existing.get(sym)
+        if cur is not None and cur.action in {
+            SymbolAction.SELL,
+            SymbolAction.PARTIAL_SELL,
+            SymbolAction.REDUCE,
+        }:
+            continue
+        plan = SymbolActionPlan(
+            symbol=sym,
+            action=want,
+            confidence=70,
+            target_position_pct=0.0 if want == SymbolAction.SELL else abs(float(pos.weight_pct or 0)) * 0.5,
+            order_type=OrderType.MARKET,
+            thesis=f"{hz}: {allowed.value} — do not wait for a reversal",
+            invalidation="n/a",
+            time_horizon=policy_time_horizon(hz),
+        )
+        if cur is None:
+            updated.append(plan)
+        else:
+            updated = [plan if str(p.symbol).upper() == sym else p for p in updated]
+        existing[sym] = plan
+        changed = True
+    if not changed:
+        return decision
+    return decision.model_copy(
+        update={
+            "symbol_actions": updated,
+            "portfolio_action": portfolio_action_from_symbol_actions(updated),
+        }
     )
 
 

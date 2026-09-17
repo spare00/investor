@@ -93,6 +93,7 @@ class IntradayService:
         out: list[dict[str, Any]] = []
         for lc in await self.monitor.list_lifecycles(venue=book):
             stamped = await self.monitor.stamp_horizon_stop_if_missing(lc)
+            await self.monitor.stamp_horizon_take_profit_if_missing(lc)
             result = await self.monitor.evaluate(
                 lc,
                 current_price=prices.get(lc.symbol),
@@ -123,7 +124,13 @@ class IntradayService:
             protective_exit = stop.triggered or (
                 result.verdict == "EXIT_INTENT_REQUIRED"
                 and any(
-                    r in {"stop_triggered", "take_profit_triggered", "max_holding_time"}
+                    r
+                    in {
+                        "stop_triggered",
+                        "take_profit_triggered",
+                        "max_holding_time",
+                        "giveback_to_loss",
+                    }
                     for r in (result.reasons or [])
                 )
             )
@@ -138,6 +145,7 @@ class IntradayService:
                                 "max_holding_time",
                                 "take_profit_triggered",
                                 "stop_triggered",
+                                "giveback_to_loss",
                             }
                         ),
                         "monitor_exit",

@@ -223,7 +223,7 @@ def reconcile_nameless_entry(decision: CIODecision, *, has_positions: bool) -> C
 class CIOAgent(BaseAgent[CIOInput, CIODecision]):
     name = AgentName.CIO
     prompt_file = "system_v1.md"
-    prompt_version = "2.7.0"
+    prompt_version = "2.8.0"
 
     def output_model(self) -> type[CIODecision]:
         return CIODecision
@@ -340,11 +340,16 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
                         )
                     )
                     continue
+                qty = abs(float(pos.quantity or 0))
+                last = (float(pos.market_value) / qty) if qty and pos.market_value else None
+                entry = (float(pos.cost_basis) / qty) if qty and pos.cost_basis else None
                 decision = exit_action(
                     horizon=hz,
                     trend=view.trend_state,
                     momentum=view.momentum_state,
                     liquidity=view.liquidity_state,
+                    last=last,
+                    entry=entry,
                 )
                 action = symbol_action_for_exit(decision)
                 if action == SymbolAction.SELL:
