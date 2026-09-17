@@ -52,6 +52,7 @@ from app.models import (
 from app.services.briefing import BriefingService
 from app.services.llm_budget import snapshot_llm_budget
 from app.services.picks import PicksService
+from app.office.gossip import next_office_gossip
 from app.universe.reeval import effective_max_intraday_reanalyses
 from app.workflow.daily import DailyWorkflowService
 
@@ -306,6 +307,12 @@ async def list_events(
 # Throttle dashboard broker order sync so it doesn't compete with scheduled recon.
 _LAST_DASHBOARD_ORDER_SYNC: datetime | None = None
 _DASHBOARD_ORDER_SYNC_MIN_SECONDS = 90
+
+
+@router.get("/dashboard/office-gossip")
+async def office_gossip() -> dict[str, Any]:
+    """Short idle-floor lines. Local LLM, skipped when the committee holds the GPU."""
+    return await next_office_gossip()
 
 
 @router.get("/dashboard/summary")

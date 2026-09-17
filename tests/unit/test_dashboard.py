@@ -154,6 +154,7 @@ def test_dashboard_routes_exist() -> None:
             assert b"function officeSeparate" in dash.content
             assert b"function officeShiftOn" in dash.content
             assert b"function officeWorkTarget" in dash.content
+            assert b"function refreshOfficeGossip" in dash.content
             assert b"data-shift" in dash.content
             assert b"OFFICE_STAFF" in dash.content
             assert b"refreshPicks" in dash.content
@@ -202,6 +203,11 @@ def test_dashboard_routes_exist() -> None:
             assert "rows" in picks.json()
             assert "counts" in picks.json()
             assert "timeout_cap_seconds" in body["committee_watch"]
+            gossip = client.get("/dashboard/office-gossip")
+            assert gossip.status_code == 200, gossip.text
+            gbody = gossip.json()
+            assert gbody.get("lines")
+            assert gbody.get("source") in {"fallback", "skipped", "cache", "llm"}
             assert "workflows_by_venue" in body.get("market_status", {})
             assert "universe" in body
             picks = client.get("/dashboard/picks")

@@ -480,6 +480,11 @@
     .staff[data-pose="working"] { filter: drop-shadow(0 0 8px rgba(110, 210, 140, 0.55)); }
     .staff .bubble[hidden],
     .staff[data-moving="1"] .bubble { display: none; }
+    .staff[data-gossip="1"] .bubble {
+      background: #fff3d6;
+      border-color: #e0c48a;
+      font-style: italic;
+    }
     .figure {
       position: relative;
       width: 48px;
@@ -1134,6 +1139,9 @@
     let _officeRaf = 0;
     let _officeLast = 0;
     let _officeShift = false;
+    let _gossipQueue = [];
+    let _gossipFetchAt = 0;
+    let _gossipAcc = 0;
 
     function pill(text, cls) {
       return `<span class="pill ${cls || ""}">${text}</span>`;
@@ -1212,6 +1220,7 @@
       if (name === "office") {
         if (_officeData) renderOffice(_officeData);
         startOfficeLoop();
+        refreshOfficeGossip().catch(() => {});
       }
       if (name === "agents") {
         refreshAgentsTab().catch(() => {});
@@ -1707,6 +1716,116 @@
       return line;
     }
 
+    function officeSpeechLine(id, pose, shift, row, agent, cio) {
+      if (pose === "working") return row?.lamp_detail || "running now";
+      if (shift || pose === "silent") return "";
+      return staffSpeech(id, agent, cio);
+    }
+
+    function officeGossipFallback() {
+      return [
+        "커피 또 내렸어.",
+        "게시판 안 바뀌네.",
+        "누가 머그 놓고 감.",
+        "창가 좀 춥다.",
+        "점심 뭐 먹지.",
+        "화분에 물 줘야지.",
+        "복도 조용하다.",
+        "모니터 깜빡이네.",
+      ];
+    }
+
+    async function refreshOfficeGossip() {
+      if (document.querySelector(".tab.active")?.dataset.tab !== "office") return;
+      if (_officeShift) return;
+      if (_gossipQueue.length >= 4) return;
+      const now = Date.now();
+      if (now - _gossipFetchAt < 80000) return;
+      _gossipFetchAt = now;
+      try {
+        const data = await fetchJson("/dashboard/office-gossip");
+        const lines = (data && data.lines) || [];
+        if (lines.length) {
+          lines.forEach((ln) => {
+            const t = String(ln || "").trim();
+            if (t) _gossipQueue.push(t);
+          });
+        } else {
+          _gossipQueue.push(...officeGossipFallback());
+        }
+      } catch (_) {
+        if (!_gossipQueue.length) _gossipQueue.push(...officeGossipFallback());
+      }
+      if (_gossipQueue.length > 20) _gossipQueue = _gossipQueue.slice(-10);
+    }
+
+    function officeApplyBubble(actor) {
+      const el = actor.el;
+      if (!el) return;
+      const bubble = el.querySelector(".bubble");
+      if (!bubble) return;
+      if (actor.gossipT > 0 && actor.gossip && el.dataset.moving !== "1" && actor.pose !== "working") {
+        bubble.hidden = false;
+        bubble.textContent = actor.gossip;
+        el.dataset.gossip = "1";
+        return;
+      }
+      el.dataset.gossip = "0";
+      const snap = _officeData || {};
+      const agents = snap.agents || {};
+      const lamps = {};
+      (snap.agent_lamps || []).forEach((r) => { lamps[r.agent_name] = r; });
+      const row = lamps[actor.id] || agents[actor.id] || {};
+      const line = officeSpeechLine(actor.id, actor.pose, !!actor.shift, row, agents[actor.id], snap.cio);
+      if (line && actor.pose !== "silent") {
+        bubble.hidden = false;
+        bubble.textContent = line;
+      } else {
+        bubble.hidden = true;
+      }
+    }
+
+    function tickOfficeGossip(dt) {
+      OFFICE_STAFF.forEach((s) => {
+        const a = _officeActors[s.id];
+        if (!a) return;
+        if (a.shift || a.pose === "working" || a.pose === "failed" || a.pose === "silent") {
+          if (a.gossipT > 0) {
+            a.gossipT = 0;
+            a.gossip = "";
+            officeApplyBubble(a);
+          }
+          return;
+        }
+        if (a.gossipT > 0) {
+          a.gossipT -= dt;
+          if (a.gossipT <= 0) {
+            a.gossip = "";
+            a.gossipT = 0;
+            officeApplyBubble(a);
+          }
+        }
+      });
+      _gossipAcc += dt;
+      if (_gossipAcc < 1) return;
+      _gossipAcc = 0;
+      if (_officeShift) return;
+      const showing = OFFICE_STAFF.filter((s) => ((_officeActors[s.id] || {}).gossipT || 0) > 0).length;
+      if (showing >= 1) return;
+      if (!_gossipQueue.length) return;
+      if (Math.random() > 0.05) return;
+      const idle = OFFICE_STAFF.map((s) => _officeActors[s.id]).filter((a) => (
+        a && a.el && a.el.dataset.moving !== "1"
+        && (a.pose === "idle" || a.pose === "stale")
+        && !a.gossipT
+      ));
+      if (!idle.length) return;
+      const actor = idle[Math.floor(Math.random() * idle.length)];
+      actor.gossip = _gossipQueue.shift();
+      actor.gossipT = 4 + Math.random() * 3;
+      officeApplyBubble(actor);
+    }
+
     function staffMarkup(cfg) {
       return `<div class="staff" data-agent="${cfg.id}" data-pose="silent" data-moving="0">
         <div class="bubble" hidden></div>
@@ -1848,6 +1967,8 @@
           ty: jitter.y,
           pose: "idle",
           shift: false,
+          gossip: "",
+          gossipT: 0,
           wait: 0.3 * i,
           faceLeft: false,
         };
@@ -1895,6 +2016,7 @@
         a.el.dataset.moving = "1";
         officePlace(a.el, a.x, a.y, a.faceLeft);
       });
+      tickOfficeGossip(dt);
     }
 
     function startOfficeLoop() {
@@ -1952,6 +2074,12 @@
       const shift = officeShiftOn(snap);
       const shiftFlipped = _officeShift !== shift;
       _officeShift = shift;
+      if (shiftFlipped && shift) {
+        Object.values(_officeActors).forEach((a) => {
+          a.gossip = "";
+          a.gossipT = 0;
+        });
+      }
       floor.dataset.shift = shift ? "on" : "off";
       OFFICE_STAFF.forEach((s) => {
         const el = floor.querySelector(`.staff[data-agent="${s.id}"]`);
@@ -1973,15 +2101,17 @@
           }
         }
         const bubble = el.querySelector(".bubble");
-        let line = "";
-        if (pose === "working") line = row.lamp_detail || "running now";
-        else if (!shift) line = staffSpeech(s.id, agents[s.id], snap.cio);
-        if (bubble) {
+        if (actor && actor.gossipT > 0 && actor.gossip) {
+          officeApplyBubble(actor);
+        } else if (bubble) {
+          const line = officeSpeechLine(s.id, pose, shift, row, agents[s.id], snap.cio);
           if (line && pose !== "silent") {
             bubble.hidden = false;
             bubble.textContent = line;
+            el.dataset.gossip = "0";
           } else {
             bubble.hidden = true;
+            el.dataset.gossip = "0";
           }
         }
         el.title = `${s.title}: ${row.lamp_label || lamp}${row.lamp_detail ? " — " + row.lamp_detail : ""}`;
@@ -3776,6 +3906,7 @@
     setInterval(() => {
       if (document.querySelector(".tab.active")?.dataset.tab === "office") {
         refreshOverview().catch(() => {});
+        refreshOfficeGossip().catch(() => {});
       }
     }, 5000);
   </script>
