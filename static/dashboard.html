@@ -296,6 +296,283 @@
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.45; transform: scale(0.85); }
     }
+    section.office-section { padding: 1rem 1rem 1.15rem; }
+    .office-lead { margin: -0.25rem 0 0.75rem; font-size: 0.85rem; }
+    .office-stage {
+      position: relative;
+      height: min(68vh, 620px);
+      min-height: 420px;
+      overflow: hidden;
+      border: 1px solid #cbb79a;
+      border-radius: 12px;
+      background:
+        linear-gradient(#d9c4a0 0 46px, transparent 46px),
+        repeating-linear-gradient(#e4d2b3 0 18px, #d7c09a 18px 19px);
+    }
+    .office-stage .wall-board {
+      position: absolute;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(72%, 520px);
+      padding: 0.4rem 0.7rem;
+      border-radius: 8px;
+      background: #1c2630;
+      border: 1px solid var(--line);
+      z-index: 2;
+    }
+    .office-stage .wall-board h3 {
+      margin: 0 0 0.2rem;
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .office-stage .wall-board p { margin: 0; font-size: 0.85rem; }
+    .prop {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .prop.desk {
+      width: 78px;
+      height: 36px;
+      border-radius: 6px;
+      background: #8a6233;
+      border: 1px solid #6d4b24;
+    }
+    .prop.desk.cio { width: 108px; height: 44px; background: #7a4e24; }
+    .prop.desk::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: -14px;
+      width: 30px;
+      height: 18px;
+      margin-left: -15px;
+      border-radius: 3px;
+      background: #2a3340;
+      border: 1px solid #1a222c;
+    }
+    .prop.desk span {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 8px;
+      text-align: center;
+      font-size: 0.62rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #f0e2cc;
+    }
+    .prop.plant {
+      width: 18px;
+      height: 28px;
+      border-radius: 8px 8px 4px 4px;
+      background: #3d8f6e;
+    }
+    .prop.plant::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -8px;
+      width: 14px;
+      height: 10px;
+      margin-left: -7px;
+      border-radius: 2px;
+      background: #8a6233;
+    }
+    .prop.coffee {
+      width: 34px;
+      height: 28px;
+      border-radius: 4px;
+      background: #4a3a32;
+      border: 1px solid #2c241c;
+    }
+    .prop.coffee::after {
+      content: "";
+      position: absolute;
+      top: -8px;
+      left: 8px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #cbb79a;
+    }
+    .prop.table {
+      width: 90px;
+      height: 48px;
+      border-radius: 50%;
+      background: #a07848;
+      border: 1px solid #7a562c;
+    }
+    .staff {
+      position: absolute;
+      width: 56px;
+      margin-left: -28px;
+      margin-top: -92px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      transform-origin: 50% 100%;
+      pointer-events: none;
+    }
+    .staff .bubble {
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translate(-50%, -6px);
+      max-width: 140px;
+      padding: 0.22rem 0.45rem;
+      border-radius: 8px;
+      background: #fffaf2;
+      color: #3a3128;
+      font-size: 0.68rem;
+      line-height: 1.25;
+      border: 1px solid #d7c4a6;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      z-index: 4;
+    }
+    .staff .bubble[hidden] { display: none; }
+    .figure {
+      position: relative;
+      width: 48px;
+      height: 84px;
+    }
+    .staff.face-left .figure { transform: scaleX(-1); }
+    .figure .hair {
+      position: absolute;
+      top: 8px;
+      left: 12px;
+      width: 24px;
+      height: 14px;
+      background: #3b2a1d;
+      z-index: 4;
+    }
+    .figure .hair.short { border-radius: 10px 10px 3px 3px; }
+    .figure .hair.part { border-radius: 12px 8px 2px 10px; background: #5a3a22; }
+    .figure .hair.side { border-radius: 4px 14px 8px 2px; width: 26px; background: #2c241c; }
+    .figure .hair.bun { border-radius: 12px; height: 16px; }
+    .figure .hair.bun::after {
+      content: "";
+      position: absolute;
+      top: -6px;
+      right: 4px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: inherit;
+    }
+    .figure .hair.crop { border-radius: 8px 8px 0 0; height: 10px; background: #1f1a16; }
+    .figure .hair.wave { border-radius: 14px 10px 0 8px; background: #7a4a28; }
+    .figure .head {
+      position: absolute;
+      top: 14px;
+      left: 13px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #f2d2b0;
+      z-index: 3;
+    }
+    .figure .torso {
+      position: absolute;
+      top: 34px;
+      left: 11px;
+      width: 26px;
+      height: 26px;
+      border-radius: 10px 10px 8px 8px;
+      background: var(--shirt, #4a6fa5);
+      z-index: 2;
+    }
+    .figure .arm {
+      position: absolute;
+      top: 36px;
+      width: 7px;
+      height: 20px;
+      border-radius: 4px;
+      background: var(--shirt, #4a6fa5);
+      transform-origin: top center;
+      z-index: 1;
+    }
+    .figure .arm.left { left: 6px; }
+    .figure .arm.right { right: 6px; }
+    .figure .leg {
+      position: absolute;
+      top: 58px;
+      width: 8px;
+      height: 24px;
+      border-radius: 4px;
+      background: #3d4250;
+      transform-origin: top center;
+    }
+    .figure .leg.left { left: 14px; }
+    .figure .leg.right { left: 26px; }
+    .staff .badge {
+      margin-top: 2px;
+      text-align: center;
+      line-height: 1.15;
+    }
+    .staff .badge strong {
+      display: block;
+      font-size: 0.72rem;
+      color: #2d261c;
+      font-family: "IBM Plex Mono", monospace;
+    }
+    .staff .badge span {
+      display: block;
+      font-size: 0.62rem;
+      color: #6d5c45;
+    }
+    .staff[data-moving="1"] .leg.left { animation: office-step 0.32s ease-in-out infinite; }
+    .staff[data-moving="1"] .leg.right { animation: office-step 0.32s ease-in-out infinite reverse; }
+    .staff[data-moving="1"] .arm.left { animation: office-arm-swing 0.32s ease-in-out infinite reverse; }
+    .staff[data-moving="1"] .arm.right { animation: office-arm-swing 0.32s ease-in-out infinite; }
+    .staff[data-pose="working"][data-moving="0"] .arm.right { animation: office-type 0.32s ease-in-out infinite; }
+    .staff[data-pose="idle"][data-moving="0"] { animation: office-breathe 2.6s ease-in-out infinite; }
+    .staff[data-pose="stale"] { opacity: 0.88; }
+    .staff[data-pose="stale"][data-moving="0"] .head { transform: rotate(-8deg); }
+    .staff[data-pose="failed"] .figure { transform: rotate(12deg); }
+    .staff[data-pose="failed"] .arm.left { transform: rotate(28deg); }
+    .staff[data-pose="failed"] .arm.right { transform: rotate(-34deg); }
+    .staff[data-pose="failed"] .torso { background: #a35a5a; }
+    .staff[data-pose="silent"] { opacity: 0.42; filter: grayscale(0.7); }
+    .staff[data-pose="silent"] .leg { height: 16px; top: 62px; }
+    @keyframes office-breathe {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-3px); }
+    }
+    @keyframes office-type {
+      0%, 100% { transform: rotate(12deg); }
+      50% { transform: rotate(-18deg); }
+    }
+    @keyframes office-step {
+      0%, 100% { transform: rotate(-16deg); }
+      50% { transform: rotate(16deg); }
+    }
+    @keyframes office-arm-swing {
+      0%, 100% { transform: rotate(18deg); }
+      50% { transform: rotate(-22deg); }
+    }
+    .office-roster {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 0.5rem;
+      margin-top: 0.85rem;
+    }
+    .office-roster .row {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.45rem 0.55rem;
+      background: #121820;
+      font-size: 0.78rem;
+    }
+    .office-roster .row .muted { font-size: 0.72rem; }
+    @media (max-width: 720px) {
+      .office-stage { min-height: 360px; height: 70vh; }
+    }
     .agent-card-head {
       display: flex;
       align-items: center;
@@ -508,6 +785,7 @@
   </div>
   <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="office">Office</button>
     <button class="tab" data-tab="briefing">Briefing</button>
     <button class="tab" data-tab="picks">Picks</button>
     <button class="tab" data-tab="performance">Performance</button>
@@ -575,6 +853,15 @@
       <section class="full">
         <h2>Six Agents — Latest Opinions</h2>
         <div class="agent-grid" id="agents"></div>
+      </section>
+    </div>
+
+    <div id="panel-office" class="tab-panel">
+      <section class="full office-section">
+        <h2>The firm</h2>
+        <p class="muted office-lead">One floor. Staff walk the aisle, grab coffee, and sit their desk — faster when their lamp is active.</p>
+        <div class="office-stage" id="officeFloor" aria-label="Agent office floor"></div>
+        <div class="office-roster" id="officeRoster"></div>
       </section>
     </div>
 
@@ -756,6 +1043,33 @@
       "market_intelligence", "macro_strategist", "quant_strategist",
       "risk_manager", "devils_advocate", "cio", "universe_manager",
     ];
+    const OFFICE_STAFF = [
+      { id: "cio", short: "CIO", title: "대표", hair: "side", color: "#2c4a7c", home: { x: 16, y: 42 } },
+      { id: "risk_manager", short: "Risk", title: "준법", hair: "crop", color: "#c4922a", home: { x: 42, y: 36 } },
+      { id: "devils_advocate", short: "Devil", title: "반대", hair: "part", color: "#a35a5a", home: { x: 60, y: 36 } },
+      { id: "universe_manager", short: "Univ", title: "유니버스", hair: "bun", color: "#3d8f6e", home: { x: 80, y: 36 } },
+      { id: "market_intelligence", short: "MI", title: "리서치", hair: "short", color: "#3d7ec4", home: { x: 42, y: 70 } },
+      { id: "macro_strategist", short: "Macro", title: "매크로", hair: "wave", color: "#2f8f88", home: { x: 60, y: 70 } },
+      { id: "quant_strategist", short: "Quant", title: "퀀트", hair: "crop", color: "#6b5ea8", home: { x: 80, y: 70 } },
+    ];
+    const OFFICE_SPOTS = {
+      cio: { x: 16, y: 42 },
+      risk: { x: 42, y: 36 },
+      devil: { x: 60, y: 36 },
+      univ: { x: 80, y: 36 },
+      mi: { x: 42, y: 70 },
+      macro: { x: 60, y: 70 },
+      quant: { x: 80, y: 70 },
+      coffee: { x: 22, y: 82 },
+      board: { x: 50, y: 22 },
+      aisle: { x: 50, y: 54 },
+      table: { x: 24, y: 58 },
+      window: { x: 90, y: 82 },
+    };
+    let _officeData = null;
+    let _officeActors = {};
+    let _officeRaf = 0;
+    let _officeLast = 0;
 
     function pill(text, cls) {
       return `<span class="pill ${cls || ""}">${text}</span>`;
@@ -769,6 +1083,10 @@
       if (name === "devils_advocate") return `NoTrade ${payload.prefer_no_trade} · challenge ${payload.challenge_score}`;
       if (name === "cio") return `${payload.portfolio_action || "?"} · risk ${payload.risk_approval}`;
       if (name === "market_intelligence") return `Events ${(payload.market_events || []).length} · q ${payload.data_quality_score}`;
+      if (name === "universe_manager") {
+        const n = (payload.watchlist || payload.symbols || []).length;
+        return payload.mode || payload.status || (n ? `${n} names` : "watchlist");
+      }
       return "OK";
     }
 
@@ -826,6 +1144,10 @@
       }
       if (name === "picks") {
         refreshPicks().catch(() => {});
+      }
+      if (name === "office") {
+        if (_officeData) renderOffice(_officeData);
+        startOfficeLoop();
       }
       if (name === "agents") {
         refreshAgentsTab().catch(() => {});
@@ -1268,6 +1590,258 @@
           auMetaEl.textContent = bits.join(" · ") || "No ASX session detail";
         }
       }
+    }
+
+    function officePose(lamp) {
+      if (lamp === "running") return "working";
+      if (lamp === "ready") return "idle";
+      if (lamp === "stale") return "stale";
+      if (lamp === "failed") return "failed";
+      return "silent";
+    }
+
+    function staffSpeech(name, agent, cio) {
+      if (name === "cio") {
+        const action = cio?.portfolio_action || agent?.payload?.portfolio_action;
+        return action ? String(action) : "";
+      }
+      const payload = agent?.payload;
+      if (!payload) return "";
+      const line = summarizeAgent(name, payload);
+      if (!line || line === "No data" || line === "OK") return "";
+      return line;
+    }
+
+    function staffMarkup(cfg) {
+      return `<div class="staff" data-agent="${cfg.id}" data-pose="silent" data-moving="0">
+        <div class="bubble" hidden></div>
+        <div class="figure" style="--shirt:${cfg.color}">
+          <div class="hair ${cfg.hair}"></div>
+          <div class="head"></div>
+          <div class="arm left"></div>
+          <div class="torso"></div>
+          <div class="arm right"></div>
+          <div class="leg left"></div>
+          <div class="leg right"></div>
+        </div>
+        <div class="badge"><strong>${esc(cfg.short)}</strong><span>${esc(cfg.title)}</span></div>
+      </div>`;
+    }
+
+    function officePlace(el, x, y, faceLeft) {
+      el.style.left = `${x}%`;
+      el.style.top = `${y}%`;
+      el.style.zIndex = String(20 + Math.round(y));
+      el.classList.toggle("face-left", !!faceLeft);
+    }
+
+    function officeDist(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      return Math.hypot(dx, dy);
+    }
+
+    function officePickSpot(actor) {
+      const home = actor.home;
+      const pose = actor.pose;
+      if (pose === "silent" || pose === "failed") return { ...home };
+      const roll = Math.random();
+      if (pose === "working") {
+        if (roll < 0.28) return { ...home };
+        if (roll < 0.45) return { ...OFFICE_SPOTS.board };
+        if (roll < 0.6) return { ...OFFICE_SPOTS.coffee };
+        if (roll < 0.75) return { ...OFFICE_SPOTS.aisle };
+        if (roll < 0.88) return { ...OFFICE_SPOTS.table };
+        const other = OFFICE_STAFF.filter((s) => s.id !== actor.id);
+        const visit = other[Math.floor(Math.random() * other.length)];
+        return { ...visit.home };
+      }
+      if (pose === "stale") {
+        if (roll < 0.4) return { ...home };
+        if (roll < 0.65) return { ...OFFICE_SPOTS.window };
+        if (roll < 0.85) return { ...OFFICE_SPOTS.coffee };
+        return { ...OFFICE_SPOTS.aisle };
+      }
+      if (roll < 0.55) return { ...home };
+      if (roll < 0.72) return { ...OFFICE_SPOTS.coffee };
+      if (roll < 0.86) return { ...OFFICE_SPOTS.aisle };
+      if (roll < 0.94) return { ...OFFICE_SPOTS.board };
+      return { ...OFFICE_SPOTS.table };
+    }
+
+    function officeWait(pose) {
+      if (pose === "working") return 0.4 + Math.random() * 1.2;
+      if (pose === "stale") return 1.6 + Math.random() * 2.5;
+      if (pose === "idle") return 2.2 + Math.random() * 4.5;
+      return 8;
+    }
+
+    function officeSpeed(pose) {
+      if (pose === "working") return 22;
+      if (pose === "stale") return 9;
+      return 14;
+    }
+
+    function ensureOfficeActors(floor) {
+      OFFICE_STAFF.forEach((s, i) => {
+        const el = floor.querySelector(`.staff[data-agent="${s.id}"]`);
+        const prev = _officeActors[s.id];
+        const home = { ...s.home };
+        if (prev && prev.el === el) return;
+        const jitter = { x: home.x + (i - 3) * 0.4, y: home.y };
+        _officeActors[s.id] = {
+          id: s.id,
+          el,
+          home,
+          x: jitter.x,
+          y: jitter.y,
+          tx: jitter.x,
+          ty: jitter.y,
+          pose: "idle",
+          wait: 0.3 * i,
+          faceLeft: false,
+        };
+        if (el) officePlace(el, jitter.x, jitter.y, false);
+      });
+    }
+
+    function tickOffice(dt) {
+      const floor = document.getElementById("officeFloor");
+      if (!floor || floor.dataset.ready !== "1") return;
+      OFFICE_STAFF.forEach((s) => {
+        const a = _officeActors[s.id];
+        if (!a || !a.el) return;
+        if (a.wait > 0) {
+          a.wait -= dt;
+          a.el.dataset.moving = "0";
+          return;
+        }
+        if (a.pose === "silent" || a.pose === "failed") {
+          a.tx = a.home.x;
+          a.ty = a.home.y;
+        }
+        const dist = officeDist(a, { x: a.tx, y: a.ty });
+        if (dist < 0.7) {
+          a.x = a.tx;
+          a.y = a.ty;
+          a.el.dataset.moving = "0";
+          officePlace(a.el, a.x, a.y, a.faceLeft);
+          a.wait = officeWait(a.pose);
+          const next = officePickSpot(a);
+          a.tx = next.x;
+          a.ty = next.y;
+          return;
+        }
+        const sp = officeSpeed(a.pose) * dt;
+        const step = Math.min(sp, dist);
+        a.faceLeft = a.tx < a.x - 0.15;
+        a.x += ((a.tx - a.x) / dist) * step;
+        a.y += ((a.ty - a.y) / dist) * step;
+        a.el.dataset.moving = "1";
+        officePlace(a.el, a.x, a.y, a.faceLeft);
+      });
+    }
+
+    function startOfficeLoop() {
+      if (_officeRaf) return;
+      _officeLast = 0;
+      const step = (t) => {
+        if (document.querySelector(".tab.active")?.dataset.tab !== "office") {
+          _officeRaf = 0;
+          return;
+        }
+        const dt = _officeLast ? Math.min(0.05, (t - _officeLast) / 1000) : 0.016;
+        _officeLast = t;
+        tickOffice(dt);
+        _officeRaf = requestAnimationFrame(step);
+      };
+      _officeRaf = requestAnimationFrame(step);
+    }
+
+    function ensureOfficeDom() {
+      const floor = document.getElementById("officeFloor");
+      if (!floor) return null;
+      if (floor.dataset.ready === "1") return floor;
+      floor.innerHTML = `
+        <div class="wall-board">
+          <h3>게시판</h3>
+          <p id="officeBoard" class="muted">Waiting for the committee…</p>
+        </div>
+        <div class="prop desk cio" style="left:16%;top:32%"><span>대표</span></div>
+        <div class="prop desk" style="left:42%;top:26%"><span>리스크</span></div>
+        <div class="prop desk" style="left:60%;top:26%"><span>챌린지</span></div>
+        <div class="prop desk" style="left:80%;top:26%"><span>유니버스</span></div>
+        <div class="prop desk" style="left:42%;top:60%"><span>리서치</span></div>
+        <div class="prop desk" style="left:60%;top:60%"><span>매크로</span></div>
+        <div class="prop desk" style="left:80%;top:60%"><span>퀀트</span></div>
+        <div class="prop table" style="left:24%;top:52%"></div>
+        <div class="prop coffee" style="left:22%;top:76%"></div>
+        <div class="prop plant" style="left:8%;top:22%"></div>
+        <div class="prop plant" style="left:92%;top:22%"></div>
+        <div class="prop plant" style="left:92%;top:88%"></div>
+        ${OFFICE_STAFF.map((s) => staffMarkup(s)).join("")}`;
+      floor.dataset.ready = "1";
+      ensureOfficeActors(floor);
+      return floor;
+    }
+
+    function renderOffice(data) {
+      if (data) _officeData = data;
+      const snap = _officeData;
+      const floor = ensureOfficeDom();
+      if (!floor || !snap) return;
+      ensureOfficeActors(floor);
+      const agents = snap.agents || {};
+      const lamps = {};
+      (snap.agent_lamps || []).forEach((r) => { lamps[r.agent_name] = r; });
+      OFFICE_STAFF.forEach((s) => {
+        const el = floor.querySelector(`.staff[data-agent="${s.id}"]`);
+        const actor = _officeActors[s.id];
+        if (!el) return;
+        const row = lamps[s.id] || agents[s.id] || {};
+        const lamp = row.lamp || "silent";
+        const pose = officePose(lamp);
+        if (el.dataset.pose !== pose) el.dataset.pose = pose;
+        if (actor && actor.pose !== pose) {
+          actor.pose = pose;
+          actor.wait = 0.05;
+        } else if (actor) {
+          actor.pose = pose;
+        }
+        const bubble = el.querySelector(".bubble");
+        const line = staffSpeech(s.id, agents[s.id], snap.cio);
+        if (bubble) {
+          if (line && pose !== "silent") {
+            bubble.hidden = false;
+            bubble.textContent = line;
+          } else {
+            bubble.hidden = true;
+          }
+        }
+        el.title = `${s.title}: ${row.lamp_label || lamp}${row.lamp_detail ? " — " + row.lamp_detail : ""}`;
+      });
+      const board = document.getElementById("officeBoard");
+      if (board) {
+        const cio = snap.cio || {};
+        const nPos = (snap.positions || []).length;
+        const action = cio.portfolio_action || "—";
+        const regime = cio.market_regime || "—";
+        const cashish = /CASH|NO_TRADE|HOLD/i.test(String(action));
+        board.innerHTML = `${pill(action, cashish ? "warn" : "good")} ${pill(regime, "")} ${pill(`${nPos} open`, "")}`;
+      }
+      const roster = document.getElementById("officeRoster");
+      if (roster) {
+        roster.innerHTML = OFFICE_STAFF.map((s) => {
+          const a = agents[s.id] || {};
+          const lamp = a.lamp || "silent";
+          const tone = lamp === "failed" ? "bad" : lamp === "running" ? "good" : (lamp === "stale" ? "warn" : "");
+          return `<div class="row">
+            <div>${esc(s.short)} · ${esc(s.title)} ${pill(a.lamp_label || lamp, tone)}</div>
+            <div class="muted">${esc(a.lamp_detail || summarizeAgent(s.id, a.payload))}</div>
+          </div>`;
+        }).join("");
+      }
+      if (document.querySelector(".tab.active")?.dataset.tab === "office") startOfficeLoop();
     }
 
     function renderAgentLamps(lamps, agents) {
@@ -2063,6 +2637,7 @@
       renderLlmUsage(data.llm_budget);
       renderLlmBudgetPanel(data.llm_budget);
       renderAgentLamps(data.agent_lamps, data.agents);
+      renderOffice(data);
       renderUsSession(data.market_status);
       updateOpsVenueButtons(data.market_status);
       const wfSession = (data.market_status && data.market_status.workflow && data.market_status.workflow.session_date) || null;
@@ -3019,6 +3594,11 @@
     refreshAll().catch((err) => setBusy(false, `Load failed: ${err.message || err}`));
     setInterval(() => { refreshStrip().catch(() => {}); }, 15000);
     setInterval(() => { refreshAll().catch(() => {}); }, 60000);
+    setInterval(() => {
+      if (document.querySelector(".tab.active")?.dataset.tab === "office") {
+        refreshOverview().catch(() => {});
+      }
+    }, 5000);
   </script>
 </body>
 </html>

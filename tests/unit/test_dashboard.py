@@ -145,6 +145,12 @@ def test_dashboard_routes_exist() -> None:
             assert dash.status_code == 200
             assert b"Investor Ops" in dash.content
             assert b"data-tab=\"picks\"" in dash.content
+            assert b"data-tab=\"office\"" in dash.content
+            assert b"officeFloor" in dash.content
+            assert b"office-stage" in dash.content
+            assert b"function renderOffice" in dash.content
+            assert b"function startOfficeLoop" in dash.content
+            assert b"OFFICE_STAFF" in dash.content
             assert b"refreshPicks" in dash.content
             assert b"kpi-grid" in dash.content
             assert b"function kpiFromMetric" in dash.content
