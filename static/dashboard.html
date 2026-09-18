@@ -319,7 +319,8 @@
       border-radius: 8px;
       background: #1c2630;
       border: 1px solid var(--line);
-      z-index: 2;
+      z-index: 3;
+      pointer-events: none;
     }
     .office-stage .wall-board h3 {
       margin: 0 0 0.2rem;
@@ -450,7 +451,7 @@
       bottom: 100%;
       left: 50%;
       transform: translate(-50%, -6px);
-      max-width: 140px;
+      max-width: 160px;
       padding: 0.22rem 0.45rem;
       border-radius: 8px;
       background: #fffaf2;
@@ -461,7 +462,23 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      z-index: 4;
+      z-index: 6;
+    }
+    .staff.bubble-down .bubble {
+      top: calc(100% + 2px);
+      bottom: auto;
+      transform: translate(-50%, 0);
+    }
+    .staff[data-gossip="1"] .bubble {
+      background: #fff3d6;
+      border-color: #e0c48a;
+      font-style: italic;
+      max-width: 220px;
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      text-overflow: ellipsis;
     }
     .staff .halo {
       display: none;
@@ -480,11 +497,6 @@
     .staff[data-pose="working"] { filter: drop-shadow(0 0 8px rgba(110, 210, 140, 0.55)); }
     .staff .bubble[hidden],
     .staff[data-moving="1"] .bubble { display: none; }
-    .staff[data-gossip="1"] .bubble {
-      background: #fff3d6;
-      border-color: #e0c48a;
-      font-style: italic;
-    }
     .figure {
       position: relative;
       width: 48px;
@@ -1126,7 +1138,7 @@
     const OFFICE_SPOTS = {
       coffee: { x: 18, y: 86 },
       coffee2: { x: 28, y: 86 },
-      board: { x: 50, y: 20 },
+      board: { x: 50, y: 32 },
       aisle: { x: 50, y: 52 },
       aisleL: { x: 32, y: 50 },
       aisleR: { x: 70, y: 50 },
@@ -1140,6 +1152,7 @@
     let _officeLast = 0;
     let _officeShift = false;
     let _gossipQueue = [];
+    let _thoughtsById = {};
     let _gossipFetchAt = 0;
     let _gossipAcc = 0;
 
@@ -1738,23 +1751,23 @@
     async function refreshOfficeGossip() {
       if (document.querySelector(".tab.active")?.dataset.tab !== "office") return;
       if (_officeShift) return;
-      if (_gossipQueue.length >= 4) return;
       const now = Date.now();
       if (now - _gossipFetchAt < 80000) return;
       _gossipFetchAt = now;
       try {
         const data = await fetchJson("/dashboard/office-gossip");
-        const lines = (data && data.lines) || [];
-        if (lines.length) {
-          lines.forEach((ln) => {
-            const t = String(ln || "").trim();
-            if (t) _gossipQueue.push(t);
-          });
-        } else {
-          _gossipQueue.push(...officeGossipFallback());
-        }
+        const thoughts = (data && data.thoughts) || {};
+        OFFICE_STAFF.forEach((s) => {
+          const raw = thoughts[s.id];
+          if (!raw) return;
+          const list = (Array.isArray(raw) ? raw : [raw]).map((ln) => String(ln || "").trim()).filter(Boolean);
+          if (list.length) _thoughtsById[s.id] = list;
+        });
       } catch (_) {
-        if (!_gossipQueue.length) _gossipQueue.push(...officeGossipFallback());
+        /* canned fallback below */
+      }
+      if (!Object.keys(_thoughtsById).length && !_gossipQueue.length) {
+        _gossipQueue.push(...officeGossipFallback());
       }
       if (_gossipQueue.length > 20) _gossipQueue = _gossipQueue.slice(-10);
     }
@@ -1812,17 +1825,25 @@
       if (_officeShift) return;
       const showing = OFFICE_STAFF.filter((s) => ((_officeActors[s.id] || {}).gossipT || 0) > 0).length;
       if (showing >= 1) return;
-      if (!_gossipQueue.length) return;
-      if (Math.random() > 0.05) return;
+      if (Math.random() > 0.06) return;
       const idle = OFFICE_STAFF.map((s) => _officeActors[s.id]).filter((a) => (
         a && a.el && a.el.dataset.moving !== "1"
         && (a.pose === "idle" || a.pose === "stale")
         && !a.gossipT
       ));
       if (!idle.length) return;
-      const actor = idle[Math.floor(Math.random() * idle.length)];
-      actor.gossip = _gossipQueue.shift();
-      actor.gossipT = 4 + Math.random() * 3;
+      const withThought = idle.filter((a) => (_thoughtsById[a.id] || []).length);
+      const actor = (withThought.length ? withThought : idle)[Math.floor(Math.random() * (withThought.length ? withThought.length : idle.length))];
+      const mine = _thoughtsById[actor.id] || [];
+      if (mine.length) {
+        actor.gossip = mine[0];
+        mine.push(mine.shift());
+      } else if (_gossipQueue.length) {
+        actor.gossip = _gossipQueue.shift();
+      } else {
+        return;
+      }
+      actor.gossipT = 6 + Math.random() * 3;
       officeApplyBubble(actor);
     }
 
@@ -1848,6 +1869,7 @@
       el.style.top = `${y}%`;
       el.style.zIndex = String(20 + Math.round(y));
       el.classList.toggle("face-left", !!faceLeft);
+      el.classList.toggle("bubble-down", y < 40);
     }
 
     function officeDist(a, b) {
@@ -1861,7 +1883,7 @@
       const ang = ((i < 0 ? 0 : i) / OFFICE_STAFF.length) * Math.PI * 2;
       return {
         x: Math.max(8, Math.min(92, base.x + Math.cos(ang) * 6)),
-        y: Math.max(18, Math.min(90, base.y + Math.sin(ang) * 5)),
+        y: Math.max(28, Math.min(90, base.y + Math.sin(ang) * 5)),
       };
     }
 
@@ -1932,7 +1954,7 @@
         actor.y += ((actor.y - o.y) / d) * push;
       });
       actor.x = Math.max(8, Math.min(92, actor.x));
-      actor.y = Math.max(18, Math.min(90, actor.y));
+      actor.y = Math.max(28, Math.min(90, actor.y));
     }
 
     function officeWait(pose) {

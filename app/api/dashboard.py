@@ -52,7 +52,7 @@ from app.models import (
 from app.services.briefing import BriefingService
 from app.services.llm_budget import snapshot_llm_budget
 from app.services.picks import PicksService
-from app.office.gossip import next_office_gossip
+from app.office.gossip import desk_facts_from_summary, next_office_gossip, remember_office_desk
 from app.universe.reeval import effective_max_intraday_reanalyses
 from app.workflow.daily import DailyWorkflowService
 
@@ -910,7 +910,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     except Exception:  # noqa: BLE001
         hard_stop_intents = []
 
-    return {
+    payload = {
         "as_of": dual_timezone_labels(now),
         "market_status": {
             "trading_state": controls.state.value,
@@ -1013,3 +1013,5 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
         "committee_watch": committee_watch,
         "llm_budget": snapshot_llm_budget().to_dict(),
     }
+    remember_office_desk(desk_facts_from_summary(payload))
+    return payload

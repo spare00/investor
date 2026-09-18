@@ -1,4 +1,4 @@
-"""Short idle-floor gossip for the Office tab.
+"""Short idle-floor talk for the Office tab.
 
 Local LLM only, never on the committee path:
 - skip when any agent is running (or just finished)
@@ -6,6 +6,10 @@ Local LLM only, never on the committee path:
 - tiny prompt, hard HTTP timeout, no retries
 - GET returns immediately; refill is a background task
 - cache lines for minutes so the GPU is barely touched
+
+Idle speech is role-thoughts grounded in the last dashboard book
+(CIO worries about losses, Devil objects to buying a bad tape, …).
+Coffee-chat is only the last resort when no desk facts exist.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from typing import Any
 
 import httpx
 
-from app.agents.activity import snapshot_agent_activity
+from app.agents.activity import AGENT_ORDER, AGENT_SHORT, snapshot_agent_activity
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 
@@ -35,42 +39,199 @@ FALLBACK_LINES: tuple[str, ...] = (
     "화분에 물 줘야지.",
     "복도 조용하다.",
     "모니터 깜빡이네.",
-    "회의는 아닌 듯.",
-    "프린터가 또야.",
-    "오늘 바닥 미끄럽네.",
-    "커피머신 줄 섰어.",
 )
 
-_CACHE_TTL_SECONDS = 15 * 60
+_BUYISH = frozenset({"BUY", "STRONG_BUY", "SCALE_IN"})
+_CASHISH = frozenset({"NO_TRADE", "HOLD", "STAY_CASH", "CASH", "REDUCE", "SCALE_OUT"})
+_CACHE_TTL_SECONDS = 12 * 60
 _MIN_ATTEMPT_SECONDS = 2 * 60
 _COMMITTEE_GRACE_SECONDS = 45
-_HTTP_TIMEOUT_SECONDS = 8.0
-_MAX_LINE = 32
+_HTTP_TIMEOUT_SECONDS = 10.0
+_MAX_LINE = 52
 _JSON_BLOB = re.compile(r"\{.*\}", re.DOTALL)
 
-_cache_lines: list[str] = []
+_KEY_ALIASES = {
+    **{name: name for name in AGENT_ORDER},
+    **{short.lower(): name for name, short in AGENT_SHORT.items()},
+    "devil": "devils_advocate",
+    "risk": "risk_manager",
+    "macro": "macro_strategist",
+    "quant": "quant_strategist",
+    "mi": "market_intelligence",
+    "univ": "universe_manager",
+    "대표": "cio",
+    "반대": "devils_advocate",
+    "준법": "risk_manager",
+}
+
+_cache_thoughts: dict[str, str] = {}
 _cache_at = 0.0
 _last_attempt = 0.0
 _generating = False
+_desk: dict[str, Any] = {}
+_desk_fp = ""
 
 
 def reset_office_gossip_for_tests() -> None:
-    global _cache_lines, _cache_at, _last_attempt, _generating
-    _cache_lines = []
+    global _cache_thoughts, _cache_at, _last_attempt, _generating, _desk, _desk_fp
+    _cache_thoughts = {}
     _cache_at = 0.0
     _last_attempt = 0.0
     _generating = False
+    _desk = {}
+    _desk_fp = ""
+
+
+def remember_office_desk(facts: dict[str, Any] | None) -> None:
+    """Keep a tiny book snapshot from /dashboard/summary — no extra queries."""
+    global _desk, _desk_fp, _cache_at
+    _desk = dict(facts or {})
+    fp = json.dumps(_desk, sort_keys=True, default=str)[:2500]
+    if fp != _desk_fp:
+        _desk_fp = fp
+        _cache_at = 0.0
+
+
+def desk_facts_from_summary(snap: dict[str, Any] | None) -> dict[str, Any]:
+    data = snap or {}
+    port = data.get("portfolio") or {}
+    cio = data.get("cio") or {}
+    agents = data.get("agents") or {}
+    positions = data.get("positions") or []
+    universe = data.get("universe") or {}
+    losers = [
+        p
+        for p in positions
+        if isinstance(p, dict) and _num(p.get("unrealized_pnl")) is not None and _num(p.get("unrealized_pnl")) < 0
+    ]
+    losers.sort(key=lambda p: _num(p.get("unrealized_pnl")) or 0)
+    worst = str((losers[0] or {}).get("symbol") or "") if losers else ""
+    focus = universe.get("focus") if isinstance(universe, dict) else {}
+    focus_n = len((focus or {}).get("symbols") or []) if isinstance(focus, dict) else 0
+    return {
+        "book": {
+            "pnl_pct": _num(port.get("daily_pnl_pct")),
+            "dd_pct": _num(port.get("drawdown_pct")),
+            "cash_pct": _num(port.get("cash_pct")),
+            "n_pos": len(positions) or int(port.get("open_positions") or 0),
+            "action": str(cio.get("portfolio_action") or ""),
+            "regime": str(cio.get("market_regime") or ""),
+            "worst": worst,
+            "focus_n": focus_n,
+        },
+        "agents": {
+            "cio": _cio_slice(cio, agents.get("cio") or {}),
+            "devils_advocate": _devil_slice(agents.get("devils_advocate") or {}),
+            "risk_manager": _risk_slice(agents.get("risk_manager") or {}),
+            "macro_strategist": _macro_slice(agents.get("macro_strategist") or {}),
+            "quant_strategist": _quant_slice(agents.get("quant_strategist") or {}),
+            "market_intelligence": _mi_slice(agents.get("market_intelligence") or {}),
+            "universe_manager": _univ_slice(agents.get("universe_manager") or {}, focus_n),
+        },
+    }
+
+
+def role_thoughts_from_facts(facts: dict[str, Any] | None) -> dict[str, str]:
+    """Deterministic one-liners from the live book — useful even when the LLM is skipped."""
+    data = facts or {}
+    book = data.get("book") or {}
+    agents = data.get("agents") or {}
+    action = str(book.get("action") or "")
+    regime = str(book.get("regime") or "")
+    pnl = _num(book.get("pnl_pct"))
+    cash = _num(book.get("cash_pct"))
+    n_pos = int(book.get("n_pos") or 0)
+    worst = str(book.get("worst") or "")
+    out: dict[str, str] = {}
+
+    cio = agents.get("cio") or {}
+    if pnl is not None and pnl < 0 and action in _BUYISH:
+        out["cio"] = f"손실 {_pct(pnl)}인데 {action}이라 걱정돼."
+    elif pnl is not None and pnl < 0 and action in _CASHISH:
+        out["cio"] = f"손실 {_pct(pnl)}. {action} 유지."
+    elif pnl is not None and pnl < 0:
+        tail = f" {worst}부터." if worst else ""
+        out["cio"] = f"오늘 {_pct(pnl)}.{tail}"
+    elif action in _CASHISH:
+        cash_s = f" 현금 {_pct(cash, False)}." if cash is not None else ""
+        out["cio"] = f"{action} 유지.{cash_s}"
+    elif action:
+        out["cio"] = f"{action} · {regime or cio.get('regime') or '장'} 보고 있어."
+
+    devil = agents.get("devils_advocate") or {}
+    rec = str(devil.get("recommendation") or "")
+    if devil.get("prefer_no_trade") and action in _BUYISH:
+        out["devils_advocate"] = f"{regime or '이 장'}인데 왜 {action}이야."
+    elif rec in {"NO_TRADE", "WAIT"} and action in _BUYISH:
+        out["devils_advocate"] = f"난 {rec}인데 왜 또 사자고 해."
+    elif _num(devil.get("challenge")) is not None and (_num(devil.get("challenge")) or 0) >= 0.55:
+        out["devils_advocate"] = _clip(devil.get("why") or f"반론 {(_num(devil.get('challenge')) or 0):.2f}.", 48)
+    elif devil.get("prefer_no_trade"):
+        out["devils_advocate"] = "오늘은 안 사는 게 맞아."
+
+    risk = agents.get("risk_manager") or {}
+    verdict = str(risk.get("verdict") or "")
+    if risk.get("halt") or "halt" in verdict.lower():
+        out["risk_manager"] = "신규 매수 멈춰야 해."
+    elif risk.get("veto"):
+        out["risk_manager"] = _clip(f"비토: {risk.get('veto')}", 48)
+    elif "REJECT" in verdict.upper() or verdict == "DENIED":
+        out["risk_manager"] = f"판결 {verdict}. 사이즈 줄여."
+    elif action in _BUYISH and pnl is not None and pnl < 0:
+        out["risk_manager"] = "승인했어도 손실이 계속이야."
+    elif verdict:
+        out["risk_manager"] = f"판결 {verdict} · 현금 {_pct(cash, False) if cash is not None else '?'}."
+
+    macro = agents.get("macro_strategist") or {}
+    mreg = str(macro.get("regime") or regime)
+    if "OFF" in mreg.upper() and action in _BUYISH:
+        out["macro_strategist"] = f"{mreg}인데 왜 사나."
+    elif mreg:
+        conf = _num(macro.get("confidence"))
+        conf_s = f" · 확신 {conf:.2f}" if conf is not None else ""
+        out["macro_strategist"] = f"레짐 {mreg}{conf_s}."
+
+    quant = agents.get("quant_strategist") or {}
+    trend = str(quant.get("trend") or "")
+    if trend.upper() in {"SIDEWAYS", "RANGE", "CHOP"}:
+        out["quant_strategist"] = "횡보인데 스캘프 그만하자."
+    elif trend.upper() in {"DOWNTREND", "DOWN"}:
+        out["quant_strategist"] = "추세가 아래야. 롱 조심."
+    elif trend:
+        out["quant_strategist"] = f"추세 {trend} · 변동 {quant.get('vol') or '?'}."
+
+    mi = agents.get("market_intelligence") or {}
+    n_ev = int(mi.get("events") or 0)
+    theme = str(mi.get("theme") or "")
+    if n_ev == 0:
+        out["market_intelligence"] = "오늘은 뉴스 비었어."
+    elif theme:
+        out["market_intelligence"] = _clip(f"테마 {theme}", 48)
+    else:
+        out["market_intelligence"] = f"이벤트 {n_ev}건 · q {mi.get('quality') or '?'}."
+
+    univ = agents.get("universe_manager") or {}
+    focus_n = int(univ.get("focus_n") or book.get("focus_n") or 0)
+    if n_pos == 0 and action in _CASHISH:
+        out["universe_manager"] = "워치만 있고 자리는 비었어."
+    elif focus_n:
+        out["universe_manager"] = f"포커스 {focus_n}개. 이름은 맞나."
+    else:
+        out["universe_manager"] = "유니버스 다시 봐야 해."
+
+    return {k: v for k, v in out.items() if _clean_line(v)}
 
 
 def parse_gossip_lines(raw: str, *, limit: int = 10) -> list[str]:
+    thoughts = parse_gossip_thoughts(raw)
+    if thoughts:
+        return list(thoughts.values())[:limit]
     text = (raw or "").strip()
     if not text:
         return []
-    blob = text
-    match = _JSON_BLOB.search(text)
-    if match:
-        blob = match.group(0)
     items: list[Any] = []
+    match = _JSON_BLOB.search(text)
+    blob = match.group(0) if match else text
     try:
         parsed = json.loads(blob)
         if isinstance(parsed, dict):
@@ -78,8 +239,6 @@ def parse_gossip_lines(raw: str, *, limit: int = 10) -> list[str]:
         elif isinstance(parsed, list):
             items = parsed
     except json.JSONDecodeError:
-        items = []
-    if not items:
         items = [ln for ln in text.splitlines() if ln.strip()]
     out: list[str] = []
     seen: set[str] = set()
@@ -91,6 +250,37 @@ def parse_gossip_lines(raw: str, *, limit: int = 10) -> list[str]:
         out.append(line)
         if len(out) >= limit:
             break
+    return out
+
+
+def parse_gossip_thoughts(raw: str) -> dict[str, str]:
+    text = (raw or "").strip()
+    if not text:
+        return {}
+    match = _JSON_BLOB.search(text)
+    blob = match.group(0) if match else text
+    try:
+        parsed = json.loads(blob)
+    except json.JSONDecodeError:
+        return _thoughts_from_labeled_lines(text)
+    if not isinstance(parsed, dict):
+        return {}
+    block = parsed.get("thoughts") or parsed.get("speech") or parsed
+    out: dict[str, str] = {}
+    if isinstance(block, dict):
+        for key, value in block.items():
+            agent = _agent_key(key)
+            line = _clean_line(value)
+            if agent and line:
+                out[agent] = line
+    elif isinstance(block, list):
+        for item in block:
+            if not isinstance(item, dict):
+                continue
+            agent = _agent_key(item.get("id") or item.get("who") or item.get("agent"))
+            line = _clean_line(item.get("text") or item.get("line"))
+            if agent and line:
+                out[agent] = line
     return out
 
 
@@ -128,6 +318,28 @@ def _as_dt(value: Any) -> datetime | None:
     return ts.astimezone(UTC)
 
 
+def _num(value: Any) -> float | None:
+    if value is None or value is False:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pct(value: float, signed: bool = True) -> str:
+    if signed:
+        return f"{value:+.1f}%"
+    return f"{value:.0f}%"
+
+
+def _clip(value: Any, n: int) -> str:
+    line = " ".join(str(value or "").split())
+    if len(line) <= n:
+        return line
+    return line[: n - 1].rstrip() + "…"
+
+
 def _clean_line(item: Any) -> str:
     if not isinstance(item, str):
         return ""
@@ -139,29 +351,124 @@ def _clean_line(item: Any) -> str:
     if line.startswith("{") or line.startswith("["):
         return ""
     lowered = line.lower()
-    if any(tok in lowered for tok in ("http://", "https://", "buy ", "sell ", "ticker")):
+    if "http://" in lowered or "https://" in lowered:
         return ""
     if len(line) > _MAX_LINE:
         line = line[: _MAX_LINE - 1].rstrip() + "…"
     return line
 
 
+def _agent_key(raw: Any) -> str | None:
+    token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return _KEY_ALIASES.get(token)
+
+
+def _thoughts_from_labeled_lines(text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for raw in text.splitlines():
+        if ":" not in raw:
+            continue
+        who, _, rest = raw.partition(":")
+        agent = _agent_key(who)
+        line = _clean_line(rest)
+        if agent and line:
+            out[agent] = line
+    return out
+
+
+def _cio_slice(cio: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    payload = agent.get("payload") if isinstance(agent.get("payload"), dict) else {}
+    return {
+        "action": cio.get("portfolio_action") or payload.get("portfolio_action"),
+        "regime": cio.get("market_regime") or payload.get("market_regime"),
+        "risk": cio.get("risk_approval"),
+    }
+
+
+def _devil_slice(agent: dict[str, Any]) -> dict[str, Any]:
+    p = agent.get("payload") if isinstance(agent.get("payload"), dict) else {}
+    why = p.get("prefer_no_trade_rationale") or p.get("strongest_reason_thesis_is_wrong") or ""
+    return {
+        "prefer_no_trade": bool(p.get("prefer_no_trade")),
+        "challenge": _num(p.get("challenge_score")),
+        "recommendation": p.get("recommendation"),
+        "why": _clip(why, 72),
+    }
+
+
+def _risk_slice(agent: dict[str, Any]) -> dict[str, Any]:
+    p = agent.get("payload") if isinstance(agent.get("payload"), dict) else {}
+    vetoes = p.get("hard_vetoes") or []
+    veto = vetoes[0] if isinstance(vetoes, list) and vetoes else ""
+    return {
+        "verdict": p.get("overall_verdict"),
+        "halt": bool(p.get("halt_new_trades")),
+        "veto": _clip(veto, 48) if veto else "",
+        "cash": _num(p.get("cash_pct")),
+    }
+
+
+def _macro_slice(agent: dict[str, Any]) -> dict[str, Any]:
+    p = agent.get("payload") if isinstance(agent.get("payload"), dict) else {}
+    return {"regime": p.get("market_regime"), "confidence": _num(p.get("confidence"))}
+
+
+def _quant_slice(agent: dict[str, Any]) -> dict[str, Any]:
+    p = agent.get("payload") if isinstance(agent.get("payload"), dict) else {}
+    return {
+        "trend": p.get("market_trend_state"),
+        "vol": p.get("market_volatility_state"),
+    }
+
+
+def _mi_slice(agent: dict[str, Any]) -> dict[str, Any]:
+    p = agent.get("payload") if isinstance(agent.get("payload"), dict) else {}
+    events = p.get("market_events") or []
+    themes = p.get("top_market_themes") or []
+    theme = themes[0] if isinstance(themes, list) and themes else ""
+    return {
+        "events": len(events) if isinstance(events, list) else 0,
+        "theme": _clip(theme, 40),
+        "quality": _num(p.get("data_quality_score")),
+    }
+
+
+def _univ_slice(agent: dict[str, Any], focus_n: int) -> dict[str, Any]:
+    p = agent.get("payload") if isinstance(agent.get("payload"), dict) else {}
+    n = focus_n or len(p.get("focus_symbols") or p.get("watchlist") or p.get("symbols") or [])
+    return {"focus_n": n, "note": _clip(p.get("focus_rationale") or p.get("mode") or "", 48)}
+
+
 def _payload(
-    lines: list[str] | tuple[str, ...],
+    thoughts: dict[str, str],
     source: str,
     reason: str | None,
     *,
     enabled: bool = True,
 ) -> dict[str, Any]:
-    cleaned = [ln for ln in (_clean_line(x) for x in lines) if ln][:8]
+    cleaned = {k: _clean_line(v) for k, v in thoughts.items() if _agent_key(k) and _clean_line(v)}
+    cleaned = {_agent_key(k) or k: v for k, v in cleaned.items()}
+    lines = list(cleaned.values()) or list(FALLBACK_LINES[:8])
     if not cleaned:
-        cleaned = list(FALLBACK_LINES[:8])
+        cleaned = {}
     return {
         "enabled": enabled,
         "source": source,
         "reason": reason,
-        "lines": cleaned,
+        "thoughts": cleaned,
+        "lines": lines,
     }
+
+
+def _merged_thoughts(llm: dict[str, str] | None = None) -> dict[str, str]:
+    base = role_thoughts_from_facts(_desk) if _desk else {}
+    if llm:
+        for key, value in llm.items():
+            agent = _agent_key(key)
+            line = _clean_line(value)
+            if agent and line:
+                base[agent] = line
+    return base
 
 
 def _in_automated_test(settings: Settings) -> bool:
@@ -173,25 +480,29 @@ def _in_automated_test(settings: Settings) -> bool:
 
 
 async def next_office_gossip(settings: Settings | None = None) -> dict[str, Any]:
-    """Return a handful of short lines. Never blocks on the local model."""
+    """Return per-staff thoughts. Never blocks on the local model."""
     cfg = settings or get_settings()
     if committee_holding_gpu():
-        return _payload(FALLBACK_LINES, "skipped", "committee_busy")
+        return _payload(_merged_thoughts(), "skipped", "committee_busy")
     if _in_automated_test(cfg):
-        return _payload(FALLBACK_LINES, "fallback", "test")
+        return _payload(_merged_thoughts(), "fallback", "test")
     if not cfg.llm_is_local():
-        return _payload(FALLBACK_LINES, "fallback", "not_local")
+        return _payload(_merged_thoughts(), "fallback", "not_local")
 
     now = time.monotonic()
-    if _cache_lines and now - _cache_at < _CACHE_TTL_SECONDS:
-        return _payload(_cache_lines, "cache", None)
+    if _cache_thoughts and now - _cache_at < _CACHE_TTL_SECONDS:
+        return _payload(_merged_thoughts(_cache_thoughts), "cache", None)
     if _generating:
-        return _payload(_cache_lines or FALLBACK_LINES, "skipped", "inflight")
-    if now - _last_attempt < _MIN_ATTEMPT_SECONDS and _cache_lines:
-        return _payload(_cache_lines, "cache", "backoff")
-    if now - _last_attempt >= _MIN_ATTEMPT_SECONDS:
+        return _payload(_merged_thoughts(_cache_thoughts), "skipped", "inflight")
+    if now - _last_attempt < _MIN_ATTEMPT_SECONDS and _cache_thoughts:
+        return _payload(_merged_thoughts(_cache_thoughts), "cache", "backoff")
+    if _desk and now - _last_attempt >= _MIN_ATTEMPT_SECONDS:
         _schedule_fill(cfg)
-    return _payload(_cache_lines or FALLBACK_LINES, "fallback" if not _cache_lines else "cache", "pending")
+    return _payload(
+        _merged_thoughts(_cache_thoughts),
+        "fallback" if not _cache_thoughts else "cache",
+        "pending" if _desk else "no_desk",
+    )
 
 
 def _schedule_fill(settings: Settings) -> None:
@@ -207,17 +518,17 @@ def _schedule_fill(settings: Settings) -> None:
 
 
 async def _fill_cache(settings: Settings) -> None:
-    global _cache_lines, _cache_at, _generating
+    global _cache_thoughts, _cache_at, _generating
     try:
-        if committee_holding_gpu():
-            logger.info("office_gossip_abort", reason="committee_busy")
+        if committee_holding_gpu() or not _desk:
+            logger.info("office_gossip_abort", reason="committee_or_no_desk")
             return
-        raw = await _complete_local_gossip(settings)
-        lines = parse_gossip_lines(raw)
-        if lines:
-            _cache_lines = lines
+        raw = await _complete_local_gossip(settings, _desk)
+        thoughts = parse_gossip_thoughts(raw)
+        if thoughts:
+            _cache_thoughts = thoughts
             _cache_at = time.monotonic()
-            logger.info("office_gossip_filled", n=len(lines), model=_gossip_model(settings))
+            logger.info("office_gossip_filled", n=len(thoughts), model=_gossip_model(settings))
         else:
             logger.info("office_gossip_empty")
     except Exception as exc:  # noqa: BLE001 — floor toy must not raise into the loop
@@ -231,7 +542,22 @@ def _gossip_model(settings: Settings) -> str:
     return fast or settings.llm_model
 
 
-async def _complete_local_gossip(settings: Settings) -> str:
+def _desk_prompt(facts: dict[str, Any]) -> str:
+    book = facts.get("book") or {}
+    agents = facts.get("agents") or {}
+    bits = [
+        f"Book pnl={book.get('pnl_pct')} dd={book.get('dd_pct')} cash={book.get('cash_pct')} "
+        f"open={book.get('n_pos')} action={book.get('action')} regime={book.get('regime')} "
+        f"worst={book.get('worst') or '-'}",
+    ]
+    for name in AGENT_ORDER:
+        row = agents.get(name) or {}
+        compact = ", ".join(f"{k}={v}" for k, v in row.items() if v not in (None, "", False, []))
+        bits.append(f"{name}: {compact or 'n/a'}")
+    return "\n".join(bits)[:1200]
+
+
+async def _complete_local_gossip(settings: Settings, facts: dict[str, Any]) -> str:
     api_key = "local"
     if settings.llm_api_key is not None:
         raw_key = settings.llm_api_key.get_secret_value().strip()
@@ -240,29 +566,29 @@ async def _complete_local_gossip(settings: Settings) -> str:
     url = settings.llm_base_url.rstrip("/") + "/chat/completions"
     payload: dict[str, Any] = {
         "model": _gossip_model(settings),
-        "temperature": 0.9,
-        "max_tokens": 80,
+        "temperature": 0.7,
+        "max_tokens": 180,
         "messages": [
             {
                 "role": "system",
                 "content": (
-                    "Write tiny water-cooler gossip for a six-person trading office. "
-                    "Casual Korean 반말. No advice, no tickers, no secrets. "
-                    "Each line under 18 Korean characters."
+                    "Each staff member says one short worry about THEIR job from the facts. "
+                    "Casual Korean 반말. Do not invent numbers. Do not issue new orders. "
+                    "Max 28 Korean characters. JSON only."
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    "Staff nicknames: 대표 CIO, 준법 Risk, 반대 Devil, 유니버스 Univ, "
-                    "리서치 MI, 매크로 Macro, 퀀트 Quant. "
-                    'JSON only: {"lines":["...","..."]} with 8 lines about coffee, '
-                    "the board, weather, mugs, or the quiet floor."
+                    "Keys: cio, risk_manager, devils_advocate, universe_manager, "
+                    "market_intelligence, macro_strategist, quant_strategist.\n"
+                    + _desk_prompt(facts)
+                    + '\nJSON: {"thoughts":{"cio":"...","devils_advocate":"..."}}'
                 ),
             },
         ],
-        "num_ctx": 512,
-        "options": {"num_ctx": 512, "num_predict": 64},
+        "num_ctx": 1024,
+        "options": {"num_ctx": 1024, "num_predict": 160},
     }
     timeout = httpx.Timeout(_HTTP_TIMEOUT_SECONDS, connect=2.0)
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}

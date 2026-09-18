@@ -1,4 +1,4 @@
-"""Office gossip: local-only, skip when the committee holds the GPU."""
+"""Office gossip: role-thoughts from the book, skip when the committee holds the GPU."""
 
 from __future__ import annotations
 
@@ -11,9 +11,13 @@ from app.core.config import Settings
 from app.office.gossip import (
     FALLBACK_LINES,
     committee_holding_gpu,
+    desk_facts_from_summary,
     next_office_gossip,
     parse_gossip_lines,
+    parse_gossip_thoughts,
+    remember_office_desk,
     reset_office_gossip_for_tests,
+    role_thoughts_from_facts,
 )
 
 
@@ -34,11 +38,17 @@ def test_parse_gossip_json_blob() -> None:
     assert "who left a mug" in lines
 
 
-def test_parse_gossip_strips_bullets_and_rejects_advice() -> None:
+def test_parse_gossip_thoughts_keyed() -> None:
+    raw = '{"thoughts":{"cio":"손실인데 SCALE_IN이라 걱정돼.","devils_advocate":"왜 또 사자고 해."}}'
+    thoughts = parse_gossip_thoughts(raw)
+    assert thoughts["cio"].startswith("손실")
+    assert "사자고" in thoughts["devils_advocate"]
+
+
+def test_parse_gossip_strips_bullets_and_rejects_urls() -> None:
     raw = "\n".join(
         [
             "1. 창가 좀 춥다.",
-            "- buy AAPL now",
             "http://evil.example",
             "짧",
             "점심 뭐 먹지.",
@@ -47,8 +57,38 @@ def test_parse_gossip_strips_bullets_and_rejects_advice() -> None:
     lines = parse_gossip_lines(raw)
     assert "창가 좀 춥다." in lines
     assert "점심 뭐 먹지." in lines
-    assert all("buy" not in ln.lower() for ln in lines)
     assert all("http" not in ln.lower() for ln in lines)
+
+
+def test_devil_and_cio_speak_from_the_book() -> None:
+    facts = desk_facts_from_summary(
+        {
+            "portfolio": {"daily_pnl_pct": -4.3, "cash_pct": 70, "drawdown_pct": 4.3},
+            "cio": {"portfolio_action": "SCALE_IN", "market_regime": "RISK_OFF"},
+            "positions": [{"symbol": "CBA", "unrealized_pnl": -1200}],
+            "agents": {
+                "devils_advocate": {
+                    "payload": {
+                        "prefer_no_trade": True,
+                        "challenge_score": 0.8,
+                        "recommendation": "NO_TRADE",
+                    }
+                },
+                "quant_strategist": {
+                    "payload": {
+                        "market_trend_state": "SIDEWAYS",
+                        "market_volatility_state": "NORMAL",
+                    }
+                },
+            },
+        }
+    )
+    thoughts = role_thoughts_from_facts(facts)
+    assert "SCALE_IN" in thoughts["cio"]
+    assert "손실" in thoughts["cio"]
+    assert "devils_advocate" in thoughts
+    assert "SCALE_IN" in thoughts["devils_advocate"] or "사자고" in thoughts["devils_advocate"]
+    assert "횡보" in thoughts["quant_strategist"]
 
 
 def test_committee_holding_gpu_while_running() -> None:
@@ -92,8 +132,32 @@ async def test_next_office_gossip_fallback_in_pytest() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fill_cache_uses_local_http_and_stores_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_next_office_gossip_uses_desk_thoughts_in_pytest() -> None:
+    remember_office_desk(
+        desk_facts_from_summary(
+            {
+                "portfolio": {"daily_pnl_pct": -2.0, "cash_pct": 80},
+                "cio": {"portfolio_action": "STAY_CASH", "market_regime": "NEUTRAL"},
+            }
+        )
+    )
+    out = await next_office_gossip(Settings(llm_runtime="local", llm_api_key=None))
+    assert out["thoughts"]["cio"]
+    assert "STAY_CASH" in out["thoughts"]["cio"] or "현금" in out["thoughts"]["cio"]
+
+
+@pytest.mark.asyncio
+async def test_fill_cache_uses_local_http_and_stores_thoughts(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.office import gossip as mod
+
+    remember_office_desk(
+        desk_facts_from_summary(
+            {
+                "portfolio": {"daily_pnl_pct": -1.0, "cash_pct": 60},
+                "cio": {"portfolio_action": "SCALE_IN", "market_regime": "NEUTRAL"},
+            }
+        )
+    )
 
     class _Resp:
         status_code = 200
@@ -103,7 +167,7 @@ async def test_fill_cache_uses_local_http_and_stores_lines(monkeypatch: pytest.M
                 "choices": [
                     {
                         "message": {
-                            "content": '{"lines":["커피 한 잔 더.","복도 조용하다."]}'
+                            "content": '{"thoughts":{"cio":"손실 중인데 왜 사나.","devils_advocate":"반대다."}}'
                         }
                     }
                 ]
@@ -121,7 +185,7 @@ async def test_fill_cache_uses_local_http_and_stores_lines(monkeypatch: pytest.M
 
         async def post(self, url, headers=None, json=None):
             assert "/chat/completions" in url
-            assert json["max_tokens"] <= 80
+            assert json["max_tokens"] <= 180
             return _Resp()
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", _Client)
@@ -129,5 +193,5 @@ async def test_fill_cache_uses_local_http_and_stores_lines(monkeypatch: pytest.M
         llm_runtime="local", llm_api_key=None, llm_local_fast_model="qwen2.5:7b"
     )
     await mod._fill_cache(settings)
-    assert "커피 한 잔 더." in mod._cache_lines
-    assert "복도 조용하다." in mod._cache_lines
+    assert "cio" in mod._cache_thoughts
+    assert "손실" in mod._cache_thoughts["cio"]

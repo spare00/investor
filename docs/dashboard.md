@@ -10,7 +10,7 @@
 | Tab | Data sources | UI |
 |-----|----------------|-----|
 | Overview | `/dashboard/summary` | Session, portfolio, risk, CIO, positions/orders, jobs, compact universe + ops strip (hard/force/alerts) |
-| Office | `/dashboard/summary`, `GET /dashboard/office-gossip` | Idle wander vs live-job sit/type. Occasional short gossip from the local LLM (skipped while the committee holds the GPU; canned fallback otherwise) |
+| Office | `/dashboard/summary`, `GET /dashboard/office-gossip` | Idle wander vs live-job sit/type. Staff speak short role-thoughts from the live book (local LLM, skipped while the committee holds the GPU; deterministic fallback otherwise) |
 | Performance | `/performance/*` | Portfolio / returns / risk / drawdown / trades |
 | Agents | `/performance/agents`, `/calibration`, `/decisions` | Attribution KPIs, horizon/agent slices, decision evals with `summary.by_horizon` |
 | Operations | `/dashboard/summary` + `/operations/*` | Monitor, force-close, settlement/recon/overnight, recovery, alerts, LLM budget, universe horizons, ops KPIs |
