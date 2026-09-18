@@ -156,6 +156,9 @@ def test_dashboard_routes_exist() -> None:
             assert b"function officeWorkTarget" in dash.content
             assert b"function refreshOfficeGossip" in dash.content
             assert b"bubble-down" in dash.content
+            assert b"word-break: keep-all" in dash.content
+            assert b"width: max-content" in dash.content
+            assert b'if (actor.id === "cio" && actor.pose === "working")' not in dash.content
             assert b"data-shift" in dash.content
             assert b"OFFICE_STAFF" in dash.content
             assert b"refreshPicks" in dash.content

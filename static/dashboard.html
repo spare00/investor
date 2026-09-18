@@ -451,13 +451,14 @@
       bottom: 100%;
       left: 50%;
       transform: translate(-50%, -6px);
-      max-width: 160px;
-      padding: 0.22rem 0.45rem;
+      width: max-content;
+      max-width: 14rem;
+      padding: 0.22rem 0.5rem;
       border-radius: 8px;
       background: #fffaf2;
       color: #3a3128;
-      font-size: 0.68rem;
-      line-height: 1.25;
+      font-size: 0.72rem;
+      line-height: 1.35;
       border: 1px solid #d7c4a6;
       white-space: nowrap;
       overflow: hidden;
@@ -473,12 +474,11 @@
       background: #fff3d6;
       border-color: #e0c48a;
       font-style: italic;
-      max-width: 220px;
       white-space: normal;
-      display: -webkit-box;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 2;
-      text-overflow: ellipsis;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+      line-height: 1.4;
+      max-height: calc(1.4em * 2 + 0.2rem);
     }
     .staff .halo {
       display: none;
@@ -1138,7 +1138,7 @@
     const OFFICE_SPOTS = {
       coffee: { x: 18, y: 86 },
       coffee2: { x: 28, y: 86 },
-      board: { x: 50, y: 32 },
+      board: { x: 50, y: 46 },
       aisle: { x: 50, y: 52 },
       aisleL: { x: 32, y: 50 },
       aisleR: { x: 70, y: 50 },
@@ -1869,7 +1869,7 @@
       el.style.top = `${y}%`;
       el.style.zIndex = String(20 + Math.round(y));
       el.classList.toggle("face-left", !!faceLeft);
-      el.classList.toggle("bubble-down", y < 40);
+      el.classList.toggle("bubble-down", y < 36);
     }
 
     function officeDist(a, b) {
@@ -1883,7 +1883,7 @@
       const ang = ((i < 0 ? 0 : i) / OFFICE_STAFF.length) * Math.PI * 2;
       return {
         x: Math.max(8, Math.min(92, base.x + Math.cos(ang) * 6)),
-        y: Math.max(28, Math.min(90, base.y + Math.sin(ang) * 5)),
+        y: Math.max(38, Math.min(90, base.y + Math.sin(ang) * 5)),
       };
     }
 
@@ -1898,9 +1898,6 @@
     }
 
     function officeWorkTarget(actor) {
-      if (actor.id === "cio" && actor.pose === "working") {
-        return officeSlot(OFFICE_SPOTS.board, actor.id);
-      }
       return officeSlot(actor.home, actor.id);
     }
 
@@ -1954,7 +1951,7 @@
         actor.y += ((actor.y - o.y) / d) * push;
       });
       actor.x = Math.max(8, Math.min(92, actor.x));
-      actor.y = Math.max(28, Math.min(90, actor.y));
+      actor.y = Math.max(38, Math.min(90, actor.y));
     }
 
     function officeWait(pose) {
