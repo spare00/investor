@@ -53,6 +53,7 @@ class ValidatedOrderIntent:
     venue: str | None = None  # US | AU
     con_id: int | None = None  # IBKR Contract ID when known
     time_in_force: str | None = None
+    attribution: dict[str, str] | None = None
 
 
 @dataclass(slots=True)
@@ -350,6 +351,7 @@ class ExecutionValidator:
                 return f"{symbol}:limit_too_far_from_last:{drift_bps:.0f}bps"
 
         from app.brokers.pricing import round_equity_price
+        from app.universe.entry_attribution import attribution_from_plan
 
         if limit_price is not None:
             limit_price = round_equity_price(float(limit_price))
@@ -363,6 +365,7 @@ class ExecutionValidator:
         if key in seen:
             return f"{symbol}:duplicate_idempotency_key"
 
+        attr = attribution_from_plan(plan)
         return ValidatedOrderIntent(
             symbol=symbol,
             side=side,
@@ -373,6 +376,7 @@ class ExecutionValidator:
             idempotency_key=key,
             decision_id=str(decision.decision_id),
             thesis=plan.thesis,
+            attribution=attr or None,
             venue=venue or venue_for_symbol(symbol, self.settings).value,
             con_id=next(
                 (

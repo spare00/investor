@@ -37,6 +37,9 @@ class SymbolActionPlan(StrictModel):
     thesis: str
     invalidation: str
     max_holding_time_minutes: int | None = None
+    entry_timing: str | None = None
+    entry_source: str | None = None
+    trend_at_entry: str | None = None
 
     @model_validator(mode="after")
     def _require_exit_for_entries(self) -> SymbolActionPlan:

@@ -3186,6 +3186,45 @@
           });
           return cards.length ? kpiGrid(cards) : `<div class="muted">No closed trades in period</div>`;
         })()}
+        <div class="muted" style="margin:0.85rem 0 0.35rem">By entry reason (gate expectancy after costs)</div>
+        ${(() => {
+          const reasons = trades.by_entry_reason || {};
+          const order = ["uptrend_dip", "oversold_bounce", "chase", "aggressive_injected"];
+          const headers = ["Gate", "N", "Win%", "avg MFE", "avg MAE", "TP%", "Stop%", "Giveback%", "Flatten%", "E after cost"];
+          const rowFor = (key, label, row) => {
+            const r = row || {};
+            const n = r.n || 0;
+            if (!n) {
+              return `<tr><td>${esc(label)}</td><td>0</td><td colspan="8" class="muted">no tagged closes</td></tr>`;
+            }
+            return `<tr>
+              <td>${esc(label)}</td>
+              <td>${fmtNum(n, 0)}</td>
+              <td>${fmtPct(r.win_pct)}</td>
+              <td>${fmtPct(r.avg_mfe)}</td>
+              <td>${fmtPct(r.avg_mae)}</td>
+              <td>${fmtPct(r.tp_pct)}</td>
+              <td>${fmtPct(r.stop_pct)}</td>
+              <td>${fmtPct(r.giveback_exit_pct)}</td>
+              <td>${fmtPct(r.session_flatten_pct)}</td>
+              <td>${fmtMoney(r.expectancy_after_costs)}</td>
+            </tr>`;
+          };
+          const reasonRows = order.map((k) => rowFor(k, k, reasons[k])).join("");
+          const cohorts = trades.cohorts || {};
+          const cohortRows = [
+            ["aggressive_injected × SIDEWAYS", "aggressive_injected_sideways"],
+            ["short × oversold_bounce", "short_oversold_bounce"],
+            ["scalp × session_flatten", "scalp_session_flatten"],
+          ].map(([label, key]) => rowFor(key, label, cohorts[key])).join("");
+          const note = trades.cost_note
+            ? `<div class="muted" style="margin-top:0.35rem">${esc(trades.cost_note)} untagged=${fmtNum(trades.untagged, 0)}</div>`
+            : "";
+          return dataTable(headers, reasonRows) +
+            `<div class="muted" style="margin:0.85rem 0 0.35rem">Policy cohorts</div>` +
+            dataTable(headers, cohortRows) +
+            note;
+        })()}
         ${rawBlock(trades)}`);
 
       renderMount("perfExecution", `

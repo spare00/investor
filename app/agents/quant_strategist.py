@@ -276,6 +276,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                     probability_estimate=prob,
                     probability_basis=basis + " | " + ",".join(book_notes),
                     notes=notes,
+                    entry_timing=_timing,
                 )
             )
 

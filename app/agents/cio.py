@@ -118,22 +118,23 @@ def quant_entry_plans(
             stop=float(view.stop_or_invalidation),
             max_position_pct=max_position_pct,
         )
-        plans.append(
-            SymbolActionPlan(
-                symbol=sym,
-                action=SymbolAction.SCALE_IN,
-                confidence=int(float(view.probability_estimate or 0) * 100),
-                target_position_pct=size,
-                order_type=OrderType.LIMIT,
-                entry_zone=PriceZone(min=view.entry_zone.min, max=view.entry_zone.max),
-                stop_loss=view.stop_or_invalidation,
-                take_profit=[],
-                time_horizon=book.cio_time_horizon,
-                thesis=f"{book.label_ko}: {book.summary}"[:80],
-                invalidation="Break below stop_or_invalidation",
-                max_holding_time_minutes=None,
-            )
+        from app.universe.entry_attribution import SOURCE_INJECTED, stamp_plan
+
+        plan = SymbolActionPlan(
+            symbol=sym,
+            action=SymbolAction.SCALE_IN,
+            confidence=int(float(view.probability_estimate or 0) * 100),
+            target_position_pct=size,
+            order_type=OrderType.LIMIT,
+            entry_zone=PriceZone(min=view.entry_zone.min, max=view.entry_zone.max),
+            stop_loss=view.stop_or_invalidation,
+            take_profit=[],
+            time_horizon=book.cio_time_horizon,
+            thesis=f"{book.label_ko}: {book.summary}"[:80],
+            invalidation="Break below stop_or_invalidation",
+            max_holding_time_minutes=None,
         )
+        plans.append(stamp_plan(plan, view=view, source=SOURCE_INJECTED))
         new_by_book[hz] = new_by_book.get(hz, 0) + 1
         held.append(sym)
         hz_map[sym] = hz

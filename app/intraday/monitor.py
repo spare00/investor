@@ -161,6 +161,7 @@ class PositionMonitor:
         # Once a trade has been a real winner, it may not close as a loss.
         hz = str((lifecycle.exit_policy or {}).get("horizon") or "") or None
         peak = await self._remember_peak_price(lifecycle, price=price)
+        await self._remember_trough_price(lifecycle, price=price)
         lock = None
         if entry > 0:
             from app.universe.book_strategy import lock_level
@@ -401,6 +402,7 @@ class PositionMonitor:
             if existing.stop_price is None:
                 await self.stamp_horizon_stop_if_missing(existing)
             await self.session.flush()
+            await self._attach_entry_attribution(existing)
             return existing
         holding = await self._default_max_holding(symbol)
         overnight = await self._overnight_allowed(symbol)
@@ -438,6 +440,7 @@ class PositionMonitor:
         await self.session.flush()
         if row.stop_price is None:
             await self.stamp_horizon_stop_if_missing(row)
+        await self._attach_entry_attribution(row)
         return row
 
     async def sync_from_broker_positions(
@@ -501,6 +504,13 @@ class PositionMonitor:
                 meta["closed_by"] = "broker_position_sync"
                 meta["closed_at"] = now.isoformat()
                 lc.metadata_json = meta
+                from app.universe.entry_attribution import stamp_lifecycle_exit_reason
+
+                stamp_lifecycle_exit_reason(
+                    lc,
+                    raw=str(meta.get("exit_reason_raw") or meta.get("closed_by") or ""),
+                    thesis=str((meta.get("exit_draft") or {}).get("reason") or ""),
+                )
                 closed += 1
         await self.session.flush()
         return {
@@ -561,6 +571,40 @@ class PositionMonitor:
             policy["peak_price"] = peak
             lifecycle.exit_policy = policy
         return peak
+
+    async def _remember_trough_price(
+        self, lifecycle: PositionLifecycle, *, price: float
+    ) -> float | None:
+        policy = dict(lifecycle.exit_policy or {})
+        cached = policy.get("trough_price")
+        trough = float(price or 0)
+        if trough <= 0:
+            return None
+        if cached is not None:
+            try:
+                trough = min(trough, float(cached))
+            except (TypeError, ValueError):
+                pass
+        elif lifecycle.id is not None:
+            hist = (
+                await self.session.execute(
+                    select(func.min(PositionSnapshotRecord.current_price)).where(
+                        PositionSnapshotRecord.position_lifecycle_id == lifecycle.id
+                    )
+                )
+            ).scalar_one_or_none()
+            if hist is not None and float(hist) > 0:
+                trough = min(trough, float(hist))
+        if cached is None or float(cached) > trough:
+            policy["trough_price"] = trough
+            lifecycle.exit_policy = policy
+        return trough
+
+    async def _attach_entry_attribution(self, lifecycle: PositionLifecycle) -> None:
+        from app.universe.entry_attribution import copy_entry_attribution_to_lifecycle
+
+        await copy_entry_attribution_to_lifecycle(self.session, lifecycle)
+        await self.session.flush()
 
     async def stamp_horizon_stop_if_missing(
         self, lifecycle: PositionLifecycle

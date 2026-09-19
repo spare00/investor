@@ -154,6 +154,9 @@ class ClosingService:
                     "at": datetime.now(UTC).isoformat(),
                 }
                 lc.metadata_json = meta
+                from app.universe.entry_attribution import stamp_lifecycle_exit_reason
+
+                stamp_lifecycle_exit_reason(lc, raw=f"closing:{plan.rationale}")
                 if plan.action == "close":
                     lc.status = "PENDING_CLOSE"
                 elif plan.action == "reduce":
@@ -267,6 +270,9 @@ class ClosingService:
         )
         self.session.add(intent)
         await self.session.flush()
+        from app.universe.entry_attribution import stamp_lifecycle_exit_reason
+
+        stamp_lifecycle_exit_reason(lc, raw=f"closing:{rationale}", thesis=f"closing:{rationale}")
         return intent
 
     async def _submit_close_intents(

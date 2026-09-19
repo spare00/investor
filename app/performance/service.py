@@ -60,7 +60,9 @@ from app.performance.risk import (
     tracking_error,
 )
 from app.performance.trades import ClosedTrade, compute_trade_metrics, group_trade_metrics_by_horizon
+from app.performance.entry_expectancy import compute_entry_reason_expectancy
 from app.intraday.pnl import lifecycle_pnl
+from app.universe.entry_attribution import classify_exit_reason, read_attribution
 from app.performance.types import CALCULATION_VERSION, MetricResult
 from app.performance.valuation import build_portfolio_valuation, positions_from_snapshot_payload
 
@@ -331,9 +333,36 @@ class PerformanceService:
             holding = 0.0
             if lc.opened_at and lc.closed_at:
                 holding = (lc.closed_at - lc.opened_at).total_seconds() / 60.0
+            policy = dict(lc.exit_policy or {})
+            meta = dict(lc.metadata_json or {})
+            attr = read_attribution(lc)
+            entry = float(lc.average_entry_price or 0)
+            qty = abs(float(meta.get("opened_quantity") or lc.quantity or 0))
             risk = None
-            if lc.average_entry_price and lc.stop_price:
-                risk = abs(lc.average_entry_price - lc.stop_price) * abs(lc.quantity)
+            if entry > 0 and lc.stop_price and qty > 0:
+                risk = abs(entry - float(lc.stop_price)) * qty
+            notional = entry * qty if entry > 0 and qty > 0 else None
+            mfe_pct = None
+            mae_pct = None
+            if entry > 0:
+                try:
+                    peak = float(policy["peak_price"]) if policy.get("peak_price") is not None else None
+                except (TypeError, ValueError):
+                    peak = None
+                try:
+                    trough = float(policy["trough_price"]) if policy.get("trough_price") is not None else None
+                except (TypeError, ValueError):
+                    trough = None
+                if peak is not None:
+                    mfe_pct = max(0.0, (peak - entry) / entry)
+                if trough is not None:
+                    mae_pct = max(0.0, (entry - trough) / entry)
+            exit_reason = classify_exit_reason(
+                reason=str(meta.get("exit_reason") or ""),
+                thesis=str((meta.get("exit_draft") or {}).get("reason") or ""),
+                metadata=meta,
+                horizon=_resolve_horizon(lc),
+            )
             trades.append(
                 ClosedTrade(
                     pnl=pnl,
@@ -341,6 +370,13 @@ class PerformanceService:
                     risk_amount=risk,
                     symbol=str(lc.symbol).upper(),
                     horizon=_resolve_horizon(lc),
+                    entry_timing=attr.get("entry_timing"),
+                    entry_source=attr.get("entry_source"),
+                    trend_at_entry=attr.get("trend_at_entry"),
+                    exit_reason=exit_reason,
+                    mfe_pct=mfe_pct,
+                    mae_pct=mae_pct,
+                    notional=notional,
                 )
             )
 
@@ -358,6 +394,7 @@ class PerformanceService:
                 )
         firm = compute_trade_metrics(trades)
         firm["by_horizon"] = group_trade_metrics_by_horizon(trades)
+        firm.update(compute_entry_reason_expectancy(trades))
         firm["unit"] = "position_lifecycle"
         firm["horizon_note"] = (
             "by_horizon uses lifecycle exit_policy.horizon with watchlist fallback"

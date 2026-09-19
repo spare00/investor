@@ -167,6 +167,7 @@ class ExecutionService:
                     "horizon": hz,
                     "venue": v.venue,
                     "con_id": v.con_id,
+                    **(dict(v.attribution or {})),
                 },
             )
             self.session.add(intent)

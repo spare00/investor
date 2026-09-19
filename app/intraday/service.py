@@ -346,6 +346,9 @@ class IntradayService:
             meta = dict(lc.metadata_json or {})
             meta["exit_draft"] = {"reason": reason, "qty": exit_qty, "at": datetime.now(UTC).isoformat()}
             lc.metadata_json = meta
+            from app.universe.entry_attribution import stamp_lifecycle_exit_reason
+
+            stamp_lifecycle_exit_reason(lc, raw=reason)
             await self.session.flush()
             return None
         intent = OrderIntent(
@@ -374,6 +377,9 @@ class IntradayService:
             intent.status = IntentStatus.PENDING_APPROVAL.value
         self.session.add(intent)
         lc.status = "PENDING_CLOSE" if reduce_fraction is None else "REDUCING"
+        from app.universe.entry_attribution import stamp_lifecycle_exit_reason
+
+        stamp_lifecycle_exit_reason(lc, raw=reason, thesis=reason)
         await self.session.flush()
         return intent
 

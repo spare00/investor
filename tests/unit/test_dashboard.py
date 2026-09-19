@@ -184,6 +184,8 @@ def test_dashboard_routes_exist() -> None:
             assert b"renderOverviewOpsStrip" in dash.content
             assert b"agentPerfNote" in dash.content
             assert b"Horizon book" in dash.content
+            assert b"By entry reason (gate expectancy after costs)" in dash.content
+            assert b"Policy cohorts" in dash.content
             assert b"Startup / Intraday Recovery" in dash.content
             assert b"Active Alerts" in dash.content
             assert b"Position Monitor / Hard Stops" in dash.content

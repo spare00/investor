@@ -73,6 +73,7 @@ class SymbolQuantView(StrictModel):
     probability_estimate: float = Field(ge=0.0, le=1.0)
     probability_basis: str
     notes: list[str] = Field(default_factory=list)
+    entry_timing: str | None = None
 
     @field_validator("probability_estimate")
     @classmethod

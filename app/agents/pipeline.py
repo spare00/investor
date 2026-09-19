@@ -502,6 +502,9 @@ class AgentPipeline:
             watch_ctx,
             regime=macro_out.market_regime,
         )
+        from app.universe.entry_attribution import stamp_cio_entry_attribution
+
+        cio_out = stamp_cio_entry_attribution(cio_out, quant_out)
         cio_out = reconcile_nameless_entry(
             cio_out,
             has_positions=any(abs(p.quantity or 0) > 1e-9 for p in portfolio.positions),

@@ -63,6 +63,7 @@ from app.performance.risk import (
 )
 from app.performance.service import PerformanceService
 from app.performance.trades import ClosedTrade, compute_trade_metrics, group_trade_metrics_by_horizon
+from app.performance.entry_expectancy import compute_entry_reason_expectancy
 from app.performance.types import (
     ANNUALIZATION_FACTOR,
     CALCULATION_VERSION,
@@ -110,6 +111,7 @@ __all__ = [
     "compute_mae_mfe",
     "compute_provider_reliability",
     "compute_trade_metrics",
+    "compute_entry_reason_expectancy",
     "group_trade_metrics_by_horizon",
     "cumulative_return",
     "current_drawdown",

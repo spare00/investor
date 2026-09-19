@@ -22,6 +22,13 @@ class ClosedTrade:
     fees: float = 0.0
     symbol: str | None = None
     horizon: str | None = None
+    entry_timing: str | None = None
+    entry_source: str | None = None
+    trend_at_entry: str | None = None
+    exit_reason: str | None = None
+    mfe_pct: float | None = None
+    mae_pct: float | None = None
+    notional: float | None = None
 
 
 def _status_for_empty(name: str) -> MetricResult:
