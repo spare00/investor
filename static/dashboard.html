@@ -435,6 +435,229 @@
       background: #a07848;
       border: 1px solid #7a562c;
     }
+    .office-stage[data-scene="camp"] {
+      background:
+        linear-gradient(#8ec8e8 0 26%, #3d8fb5 26% 36%, #e6d3a4 36% 52%, #6f8f4e 52% 100%);
+    }
+    .office-stage[data-scene="camp"] .wall-board {
+      background: #5a3d22;
+      border: 1px solid #3d2916;
+    }
+    .office-stage[data-scene="camp"] .staff[data-lamp="silent"] {
+      opacity: 1;
+      filter: none;
+    }
+    .prop.sun {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: #f2c14e;
+    }
+    .prop.water {
+      width: 140%;
+      height: 22%;
+      background: #2f86ab;
+      overflow: hidden;
+    }
+    .prop.water::before,
+    .prop.water::after {
+      content: "";
+      position: absolute;
+      left: -20%;
+      width: 140%;
+      height: 18px;
+      border-radius: 50%;
+      background: #4aa3c4;
+      animation: camp-wave 7s linear infinite;
+    }
+    .prop.water::after {
+      top: 28px;
+      background: #67bdd4;
+      animation-duration: 11s;
+      animation-direction: reverse;
+    }
+    .prop.jetty {
+      width: 86px;
+      height: 14px;
+      background: #8a6233;
+      border: 1px solid #6d4b24;
+      transform: translate(-50%, -50%) rotate(-8deg);
+    }
+    .prop.jetty::after {
+      content: "";
+      position: absolute;
+      left: 8px;
+      top: 12px;
+      width: 8px;
+      height: 22px;
+      background: #6d4b24;
+    }
+    .prop.tent {
+      width: 0;
+      height: 0;
+      border-left: 38px solid transparent;
+      border-right: 38px solid transparent;
+      border-bottom: 52px solid #c45c4a;
+    }
+    .prop.tent::after {
+      content: "";
+      position: absolute;
+      left: -10px;
+      top: 22px;
+      width: 20px;
+      height: 30px;
+      background: #9a4034;
+    }
+    .prop.tent.small {
+      border-left-width: 24px;
+      border-right-width: 24px;
+      border-bottom-width: 34px;
+      border-bottom-color: #3d7ec4;
+    }
+    .prop.tent.small::after { background: #2c5f96; left: -7px; width: 14px; height: 20px; top: 14px; }
+    .prop.fire {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #c45c2a;
+      animation: camp-flicker 0.45s ease-in-out infinite;
+    }
+    .prop.fire::before {
+      content: "";
+      position: absolute;
+      left: 4px;
+      top: -10px;
+      width: 14px;
+      height: 18px;
+      border-radius: 50% 50% 20% 20%;
+      background: #e8a23a;
+    }
+    .prop.log {
+      width: 54px;
+      height: 10px;
+      border-radius: 6px;
+      background: #6d4b24;
+    }
+    .prop.cooler {
+      width: 40px;
+      height: 26px;
+      border-radius: 4px;
+      background: #3d7ec4;
+      border: 1px solid #2c5f96;
+    }
+    .prop.pine {
+      width: 0;
+      height: 0;
+      border-left: 16px solid transparent;
+      border-right: 16px solid transparent;
+      border-bottom: 36px solid #2f6a48;
+    }
+    .prop.pine::after {
+      content: "";
+      position: absolute;
+      left: -4px;
+      top: 28px;
+      width: 8px;
+      height: 12px;
+      background: #6d4b24;
+    }
+    .prop.kayak {
+      width: 64px;
+      height: 16px;
+      border-radius: 50%;
+      background: #c45c4a;
+      transform: translate(-50%, -50%) rotate(-18deg);
+    }
+    .prop.ball {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #e8e4dc;
+      border: 2px solid #3d4250;
+      z-index: 8;
+    }
+    .prop.gull {
+      width: 16px;
+      height: 6px;
+      border-radius: 50%;
+      background: #f4f0e8;
+      animation: camp-gull 14s linear infinite;
+    }
+    .prop.gull::before,
+    .prop.gull::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      width: 10px;
+      height: 3px;
+      background: #f4f0e8;
+    }
+    .prop.gull::before { left: -6px; transform: rotate(-22deg); }
+    .prop.gull::after { right: -6px; transform: rotate(22deg); }
+    .office-stage[data-scene="camp"] .staff[data-activity="read"][data-moving="0"] .leg,
+    .office-stage[data-scene="camp"] .staff[data-activity="fish"][data-moving="0"] .leg,
+    .office-stage[data-scene="camp"] .staff[data-activity="fire"][data-moving="0"] .leg,
+    .office-stage[data-scene="camp"] .staff[data-activity="wave"][data-moving="0"] .leg {
+      height: 16px;
+      top: 62px;
+    }
+    .office-stage[data-scene="camp"] .staff[data-activity="fish"][data-moving="0"] .arm.right {
+      height: 34px;
+      transform: rotate(-48deg);
+    }
+    .office-stage[data-scene="camp"] .staff[data-activity="fish"][data-moving="0"] .arm.right::after {
+      content: "";
+      position: absolute;
+      top: 30px;
+      left: 2px;
+      width: 2px;
+      height: 38px;
+      background: #2a3340;
+      transform: rotate(28deg);
+    }
+    .office-stage[data-scene="camp"] .staff[data-activity="read"][data-moving="0"] .arm.left { transform: rotate(42deg); }
+    .office-stage[data-scene="camp"] .staff[data-activity="read"][data-moving="0"] .arm.right { transform: rotate(-42deg); }
+    .office-stage[data-scene="camp"] .staff[data-activity="read"] .torso::after {
+      content: "";
+      position: absolute;
+      left: 4px;
+      top: 10px;
+      width: 16px;
+      height: 11px;
+      background: #c45c4a;
+    }
+    .office-stage[data-scene="camp"] .staff[data-activity="binoc"][data-moving="0"] .head::before,
+    .office-stage[data-scene="camp"] .staff[data-activity="binoc"][data-moving="0"] .head::after {
+      content: "";
+      position: absolute;
+      top: 6px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #2a3340;
+    }
+    .office-stage[data-scene="camp"] .staff[data-activity="binoc"][data-moving="0"] .head::before { left: 2px; }
+    .office-stage[data-scene="camp"] .staff[data-activity="binoc"][data-moving="0"] .head::after { right: 2px; }
+    .office-stage[data-scene="camp"] .staff[data-activity="wave"][data-moving="0"] .arm.right { transform: rotate(-70deg); }
+    .office-stage[data-scene="camp"] .staff[data-activity="fire"][data-moving="0"] .arm.right {
+      height: 28px;
+      transform: rotate(28deg);
+      animation: office-type 1.4s ease-in-out infinite;
+    }
+    .office-stage[data-scene="camp"] .staff[data-activity="shell"][data-moving="0"] .arm.left { transform: rotate(55deg); }
+    @keyframes camp-wave {
+      from { transform: translateX(0); }
+      to { transform: translateX(8%); }
+    }
+    @keyframes camp-flicker {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50% { transform: translate(-50%, -50%) scale(1.12); }
+    }
+    @keyframes camp-gull {
+      0% { left: 8%; top: 10%; }
+      50% { left: 78%; top: 16%; }
+      100% { left: 8%; top: 10%; }
+    }
     .staff {
       position: absolute;
       width: 56px;
@@ -1128,13 +1351,13 @@
       "risk_manager", "devils_advocate", "cio", "universe_manager",
     ];
     const OFFICE_STAFF = [
-      { id: "cio", short: "CIO", title: "대표", hair: "side", color: "#2c4a7c", home: { x: 16, y: 48 } },
-      { id: "risk_manager", short: "Risk", title: "준법", hair: "crop", color: "#c4922a", home: { x: 42, y: 44 } },
-      { id: "devils_advocate", short: "Devil", title: "반대", hair: "part", color: "#a35a5a", home: { x: 60, y: 44 } },
-      { id: "universe_manager", short: "Univ", title: "유니버스", hair: "bun", color: "#3d8f6e", home: { x: 80, y: 44 } },
-      { id: "market_intelligence", short: "MI", title: "리서치", hair: "short", color: "#3d7ec4", home: { x: 42, y: 78 } },
-      { id: "macro_strategist", short: "Macro", title: "매크로", hair: "wave", color: "#2f8f88", home: { x: 60, y: 78 } },
-      { id: "quant_strategist", short: "Quant", title: "퀀트", hair: "crop", color: "#6b5ea8", home: { x: 80, y: 78 } },
+      { id: "cio", short: "CIO", title: "대표", hair: "side", color: "#2c4a7c", home: { x: 16, y: 48 }, camp: { x: 27, y: 66, activity: "read" } },
+      { id: "risk_manager", short: "Risk", title: "준법", hair: "crop", color: "#c4922a", home: { x: 42, y: 44 }, camp: { x: 76, y: 40, activity: "fish" } },
+      { id: "devils_advocate", short: "Devil", title: "반대", hair: "part", color: "#a35a5a", home: { x: 60, y: 44 }, camp: { x: 50, y: 72, activity: "fire" } },
+      { id: "universe_manager", short: "Univ", title: "유니버스", hair: "bun", color: "#3d8f6e", home: { x: 80, y: 44 }, camp: { x: 86, y: 58, activity: "shell" } },
+      { id: "market_intelligence", short: "MI", title: "리서치", hair: "short", color: "#3d7ec4", home: { x: 42, y: 78 }, camp: { x: 16, y: 50, activity: "binoc" } },
+      { id: "macro_strategist", short: "Macro", title: "매크로", hair: "wave", color: "#2f8f88", home: { x: 60, y: 78 }, camp: { x: 64, y: 46, activity: "wave" } },
+      { id: "quant_strategist", short: "Quant", title: "퀀트", hair: "crop", color: "#6b5ea8", home: { x: 80, y: 78 }, camp: { x: 38, y: 84, activity: "ball" } },
     ];
     const OFFICE_SPOTS = {
       coffee: { x: 18, y: 86 },
@@ -1146,12 +1369,23 @@
       table: { x: 24, y: 60 },
       window: { x: 90, y: 84 },
     };
+    const CAMP_SPOTS = {
+      fire: { x: 50, y: 72 },
+      tent: { x: 26, y: 66 },
+      dock: { x: 76, y: 40 },
+      shore: { x: 70, y: 50 },
+      pitch: { x: 40, y: 84 },
+      cooler: { x: 38, y: 74 },
+      kayak: { x: 88, y: 38 },
+      pines: { x: 10, y: 62 },
+    };
     const OFFICE_SPACE = 11;
     let _officeData = null;
     let _officeActors = {};
     let _officeRaf = 0;
     let _officeLast = 0;
     let _officeShift = false;
+    let _officeScene = "office";
     let _gossipQueue = [];
     let _thoughtsById = {};
     let _gossipFetchAt = 0;
@@ -1695,6 +1929,26 @@
       return (snap?.session_jobs || []).some(officeJobLive);
     }
 
+    function sessionIsClosedDay(sess) {
+      if (!sess) return false;
+      if (sess.is_trading_day === false) return true;
+      return sess.phase === "NON_TRADING_DAY";
+    }
+
+    function officeIsCamp(snap) {
+      const ms = snap?.market_status || {};
+      const us = ms.us_session || {};
+      const au = ms.au_session || (ms.venue_sessions && ms.venue_sessions.AU);
+      const usClosed = sessionIsClosedDay(us);
+      if (!au) return usClosed;
+      return usClosed && sessionIsClosedDay(au);
+    }
+
+    function officeSceneName(snap) {
+      if (officeShiftOn(snap)) return "office";
+      return officeIsCamp(snap) ? "camp" : "office";
+    }
+
     function officeShiftLabel(snap) {
       const lamps = snap?.agent_lamps || [];
       const live = lamps.filter((r) => r.lamp === "running" || r.live);
@@ -1737,6 +1991,20 @@
     }
 
     function officeGossipFallback() {
+      if (_officeScene === "camp") {
+        return [
+          "파도 소리 좋다.",
+          "불 꺼지기 전에 장작.",
+          "고등어 한 마리도 없다.",
+          "공 바다로 가지 마.",
+          "텐트 말뚝 삐뚤어졌어.",
+          "모기 너무 많다.",
+          "STAY_CASH인데 왜 낚시해.",
+          "별 세는 중.",
+          "모래에 책 떨어뜨림.",
+          "쿨러 맥주 식었나.",
+        ];
+      }
       return [
         "커피 또 내렸어.",
         "게시판 안 바뀌네.",
@@ -1825,8 +2093,8 @@
       _gossipAcc = 0;
       if (_officeShift) return;
       const showing = OFFICE_STAFF.filter((s) => ((_officeActors[s.id] || {}).gossipT || 0) > 0).length;
-      if (showing >= 1) return;
-      if (Math.random() > 0.06) return;
+      if (showing >= (_officeScene === "camp" ? 2 : 1)) return;
+      if (Math.random() > (_officeScene === "camp" ? 0.12 : 0.06)) return;
       const idle = OFFICE_STAFF.map((s) => _officeActors[s.id]).filter((a) => (
         a && a.el && a.el.dataset.moving !== "1"
         && (a.pose === "idle" || a.pose === "stale")
@@ -1849,7 +2117,8 @@
     }
 
     function staffMarkup(cfg) {
-      return `<div class="staff" data-agent="${cfg.id}" data-pose="silent" data-moving="0">
+      const act = (cfg.camp && cfg.camp.activity) || "";
+      return `<div class="staff" data-agent="${cfg.id}" data-pose="silent" data-moving="0" data-activity="${esc(act)}">
         <div class="bubble" hidden></div>
         <div class="halo"></div>
         <div class="figure" style="--shirt:${cfg.color}">
@@ -1879,12 +2148,21 @@
       return Math.hypot(dx, dy);
     }
 
+    function officeStaffHome(cfg) {
+      if (_officeScene === "camp" && cfg.camp) return { x: cfg.camp.x, y: cfg.camp.y };
+      return { ...cfg.home };
+    }
+
+    function officeYMin() {
+      return _officeScene === "camp" ? 32 : 38;
+    }
+
     function officeSlot(base, actorId) {
       const i = OFFICE_STAFF.findIndex((s) => s.id === actorId);
       const ang = ((i < 0 ? 0 : i) / OFFICE_STAFF.length) * Math.PI * 2;
       return {
         x: Math.max(8, Math.min(92, base.x + Math.cos(ang) * 6)),
-        y: Math.max(38, Math.min(90, base.y + Math.sin(ang) * 5)),
+        y: Math.max(officeYMin(), Math.min(90, base.y + Math.sin(ang) * 5)),
       };
     }
 
@@ -1906,6 +2184,19 @@
       const home = officeSlot(actor.home, actor.id);
       const pose = actor.pose;
       if (pose === "silent" || pose === "failed" || pose === "working" || pose === "focus") return [home];
+      if (_officeScene === "camp") {
+        const hang = [
+          CAMP_SPOTS.fire,
+          CAMP_SPOTS.shore,
+          CAMP_SPOTS.cooler,
+          CAMP_SPOTS.pitch,
+          CAMP_SPOTS.dock,
+        ].map((p) => officeSlot(p, actor.id));
+        const visits = OFFICE_STAFF
+          .filter((s) => s.id !== actor.id)
+          .map((s) => officeSlot(officeStaffHome(s), actor.id));
+        return [home, ...hang, ...visits];
+      }
       const spots = [
         OFFICE_SPOTS.coffee,
         OFFICE_SPOTS.coffee2,
@@ -1930,6 +2221,14 @@
       const pose = actor.pose;
       if (pose === "silent" || pose === "failed") return home;
       if (actor.shift) return officeWorkTarget(actor);
+      if (_officeScene === "camp") {
+        const campRoll = Math.random();
+        if (campRoll < 0.5) return home;
+        if (campRoll < 0.72) return officeSlot(CAMP_SPOTS.fire, actor.id);
+        const campPool = officeCandidates(actor);
+        const campOpen = campPool.filter((p) => !officeBusy(p, actor.id, OFFICE_SPACE));
+        return campOpen.length ? campOpen[Math.floor(Math.random() * campOpen.length)] : home;
+      }
       const roll = Math.random();
       const stayHome = actor.id === "cio" ? 0.72 : pose === "stale" ? 0.42 : 0.58;
       const pool = officeCandidates(actor);
@@ -1952,10 +2251,11 @@
         actor.y += ((actor.y - o.y) / d) * push;
       });
       actor.x = Math.max(8, Math.min(92, actor.x));
-      actor.y = Math.max(38, Math.min(90, actor.y));
+      actor.y = Math.max(officeYMin(), Math.min(90, actor.y));
     }
 
     function officeWait(pose) {
+      if (_officeScene === "camp") return 3.2 + Math.random() * 5.5;
       if (pose === "working") return 2.4 + Math.random() * 1.8;
       if (pose === "focus") return 3.5 + Math.random() * 2.5;
       if (pose === "stale") return 1.6 + Math.random() * 2.5;
@@ -1964,6 +2264,7 @@
     }
 
     function officeSpeed(pose) {
+      if (_officeScene === "camp") return 8;
       if (pose === "working") return 38;
       if (pose === "focus") return 24;
       if (pose === "stale") return 9;
@@ -1974,8 +2275,12 @@
       OFFICE_STAFF.forEach((s, i) => {
         const el = floor.querySelector(`.staff[data-agent="${s.id}"]`);
         const prev = _officeActors[s.id];
-        const home = { ...s.home };
-        if (prev && prev.el === el) return;
+        const home = officeStaffHome(s);
+        if (prev && prev.el === el) {
+          prev.home = home;
+          if (el && s.camp) el.dataset.activity = s.camp.activity;
+          return;
+        }
         const jitter = { x: home.x + (i - 3) * 0.4, y: home.y };
         _officeActors[s.id] = {
           id: s.id,
@@ -2036,7 +2341,28 @@
         a.el.dataset.moving = "1";
         officePlace(a.el, a.x, a.y, a.faceLeft);
       });
+      tickCampBall(dt);
       tickOfficeGossip(dt);
+    }
+
+    function tickCampBall(dt) {
+      if (_officeScene !== "camp") return;
+      const ball = document.getElementById("officeBall");
+      if (!ball) return;
+      const quant = _officeActors.quant_strategist;
+      const univ = _officeActors.universe_manager;
+      const kick = (quant && quant.wait <= 0) ? quant : univ;
+      if (!kick) return;
+      const tx = kick.x + (kick.faceLeft ? -6 : 6);
+      const ty = kick.y + 2;
+      const curX = parseFloat(ball.dataset.x || String(tx));
+      const curY = parseFloat(ball.dataset.y || String(ty));
+      const nx = curX + (tx - curX) * Math.min(1, dt * 1.8);
+      const ny = curY + (ty - curY) * Math.min(1, dt * 1.8);
+      ball.dataset.x = String(nx);
+      ball.dataset.y = String(ny);
+      ball.style.left = `${nx}%`;
+      ball.style.top = `${ny}%`;
     }
 
     function startOfficeLoop() {
@@ -2055,11 +2381,31 @@
       _officeRaf = requestAnimationFrame(step);
     }
 
-    function ensureOfficeDom() {
-      const floor = document.getElementById("officeFloor");
-      if (!floor) return null;
-      if (floor.dataset.ready === "1") return floor;
-      floor.innerHTML = `
+    function officeFloorMarkup(scene) {
+      if (scene === "camp") {
+        return `
+        <div class="wall-board">
+          <h3>야영 게시판</h3>
+          <p id="officeBoard" class="muted">Weekend camp…</p>
+        </div>
+        <div class="prop sun" style="left:86%;top:10%"></div>
+        <div class="prop water" style="left:50%;top:24%"></div>
+        <div class="prop gull" style="animation-delay:-2s"></div>
+        <div class="prop gull" style="animation-delay:-8s"></div>
+        <div class="prop jetty" style="left:74%;top:36%"></div>
+        <div class="prop kayak" style="left:88%;top:38%"></div>
+        <div class="prop tent" style="left:26%;top:62%"></div>
+        <div class="prop tent small" style="left:14%;top:70%"></div>
+        <div class="prop pine" style="left:8%;top:58%"></div>
+        <div class="prop pine" style="left:94%;top:64%"></div>
+        <div class="prop log" style="left:44%;top:74%"></div>
+        <div class="prop log" style="left:56%;top:76%"></div>
+        <div class="prop fire" style="left:50%;top:70%"></div>
+        <div class="prop cooler" style="left:38%;top:74%"></div>
+        <div class="prop ball" id="officeBall" style="left:40%;top:84%"></div>
+        ${OFFICE_STAFF.map((s) => staffMarkup(s)).join("")}`;
+      }
+      return `
         <div class="wall-board">
           <h3>게시판</h3>
           <p id="officeBoard" class="muted">Waiting for the committee…</p>
@@ -2077,6 +2423,17 @@
         <div class="prop plant" style="left:92%;top:22%"></div>
         <div class="prop plant" style="left:92%;top:88%"></div>
         ${OFFICE_STAFF.map((s) => staffMarkup(s)).join("")}`;
+    }
+
+    function ensureOfficeDom(scene) {
+      const floor = document.getElementById("officeFloor");
+      if (!floor) return null;
+      const next = scene || "office";
+      if (floor.dataset.ready === "1" && floor.dataset.scene === next) return floor;
+      _officeActors = {};
+      _officeScene = next;
+      floor.dataset.scene = next;
+      floor.innerHTML = officeFloorMarkup(next);
       floor.dataset.ready = "1";
       ensureOfficeActors(floor);
       return floor;
@@ -2085,7 +2442,9 @@
     function renderOffice(data) {
       if (data) _officeData = data;
       const snap = _officeData;
-      const floor = ensureOfficeDom();
+      const scene = officeSceneName(snap);
+      const sceneFlipped = _officeScene !== scene;
+      const floor = ensureOfficeDom(scene);
       if (!floor || !snap) return;
       ensureOfficeActors(floor);
       const agents = snap.agents || {};
@@ -2114,8 +2473,9 @@
           const poseChanged = actor.pose !== pose;
           actor.pose = pose;
           actor.shift = shift;
-          if (poseChanged || shiftFlipped) {
+          if (poseChanged || shiftFlipped || sceneFlipped) {
             actor.wait = 0;
+            actor.home = officeStaffHome(s);
             const next = officePickSpot(actor);
             actor.tx = next.x;
             actor.ty = next.y;
@@ -2145,9 +2505,13 @@
       });
       const lead = document.getElementById("officeLead");
       if (lead) {
-        lead.textContent = shift
-          ? `Shift on — ${officeShiftLabel(snap)}. Live staff sprint to the desk and type; the rest wait their turn.`
-          : "Between jobs the floor wanders. When a schedule fires, everyone sits and the live agent works.";
+        if (scene === "camp") {
+          lead.textContent = "Both books are closed. The firm packed the tents and went to the water — fishing, reading, ball, and campfire talk until the next session.";
+        } else {
+          lead.textContent = shift
+            ? `Shift on — ${officeShiftLabel(snap)}. Live staff sprint to the desk and type; the rest wait their turn.`
+            : "Between jobs the floor wanders. When a schedule fires, everyone sits and the live agent works.";
+        }
       }
       const board = document.getElementById("officeBoard");
       if (board) {
@@ -2157,7 +2521,8 @@
         const regime = cio.market_regime || "—";
         const cashish = /CASH|NO_TRADE|HOLD/i.test(String(action));
         const session = shift ? pill("IN SESSION", "good") + " " + pill(officeShiftLabel(snap), "") : "";
-        board.innerHTML = `${session}${pill(action, cashish ? "warn" : "good")} ${pill(regime, "")} ${pill(`${nPos} open`, "")}`;
+        const outing = scene === "camp" ? pill("weekend camp", "warn") + " " : "";
+        board.innerHTML = `${outing}${session}${pill(action, cashish ? "warn" : "good")} ${pill(regime, "")} ${pill(`${nPos} open`, "")}`;
       }
       const roster = document.getElementById("officeRoster");
       if (roster) {
