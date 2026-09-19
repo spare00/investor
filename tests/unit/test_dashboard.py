@@ -153,6 +153,7 @@ def test_dashboard_routes_exist() -> None:
             assert b"function officeBusy" in dash.content
             assert b"function officeSeparate" in dash.content
             assert b"function officeShiftOn" in dash.content
+            assert b"After-hours / inactive still wander" in dash.content
             assert b"function officeWorkTarget" in dash.content
             assert b"function refreshOfficeGossip" in dash.content
             assert b"bubble-down" in dash.content

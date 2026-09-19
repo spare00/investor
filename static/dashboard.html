@@ -609,6 +609,7 @@
     .staff[data-pose="failed"] .arm.left { transform: rotate(28deg); }
     .staff[data-pose="failed"] .arm.right { transform: rotate(-34deg); }
     .staff[data-pose="failed"] .torso { background: #a35a5a; }
+    .staff[data-lamp="silent"] { opacity: 0.62; filter: grayscale(0.35); }
     .staff[data-pose="silent"] { opacity: 0.42; filter: grayscale(0.7); }
     .staff[data-pose="silent"] .leg { height: 16px; top: 62px; }
     @keyframes office-breathe {
@@ -1711,9 +1712,9 @@
     function officePose(lamp, shift) {
       if (lamp === "running") return "working";
       if (lamp === "failed") return "failed";
-      if (lamp === "silent") return "silent";
       if (shift) return "focus";
       if (lamp === "stale") return "stale";
+      // After-hours / inactive still wander. Sitting frozen is only for a live shift or a failed run.
       return "idle";
     }
 
@@ -2107,6 +2108,7 @@
         const row = lamps[s.id] || agents[s.id] || {};
         const lamp = row.lamp || "silent";
         const pose = officePose(lamp, shift);
+        if (el.dataset.lamp !== lamp) el.dataset.lamp = lamp;
         if (el.dataset.pose !== pose) el.dataset.pose = pose;
         if (actor) {
           const poseChanged = actor.pose !== pose;
