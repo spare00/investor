@@ -2028,8 +2028,9 @@
       try {
         const data = await fetchJson("/dashboard/office-gossip");
         const thoughts = (data && data.thoughts) || {};
+        const pool = (data && data.pool) || {};
         OFFICE_STAFF.forEach((s) => {
-          const raw = thoughts[s.id];
+          const raw = pool[s.id] || thoughts[s.id];
           if (!raw) return;
           const list = (Array.isArray(raw) ? raw : [raw]).map((ln) => String(ln || "").trim()).filter(Boolean);
           if (list.length) _thoughtsById[s.id] = list;
@@ -2107,7 +2108,7 @@
           const line = _pendingReply.line;
           _pendingReply = null;
           if (reply && reply.el && reply.el.dataset.moving !== "1" && !reply.shift && (reply.pose === "idle" || reply.pose === "stale")) {
-            officeSpeak(reply, line, 6.5);
+            officeSpeak(reply, line, 8.5);
           }
         }
       }
@@ -2131,9 +2132,9 @@
         const beat = _gossipBeats[0];
         _gossipBeats.push(_gossipBeats.shift());
         const speaker = _officeActors[beat.who];
-        if (speaker && idleIds.has(speaker.id) && officeSpeak(speaker, beat.line, 5.5)) {
+        if (speaker && idleIds.has(speaker.id) && officeSpeak(speaker, beat.line, 9.5)) {
           if (idleIds.has(beat.reply_who) && beat.reply_who !== beat.who) {
-            _pendingReply = { who: beat.reply_who, line: beat.reply, t: 2.6 };
+            _pendingReply = { who: beat.reply_who, line: beat.reply, t: 5.4 + Math.random() * 2.4 };
           }
           return;
         }
@@ -2149,7 +2150,7 @@
       } else {
         return;
       }
-      actor.gossipT = 6 + Math.random() * 3;
+      actor.gossipT = 8 + Math.random() * 3;
       officeApplyBubble(actor);
     }
 

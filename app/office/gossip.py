@@ -27,6 +27,7 @@ import httpx
 from app.agents.activity import AGENT_ORDER, AGENT_SHORT, snapshot_agent_activity
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.office.week import reset_office_week_for_tests
 
 logger = get_logger(__name__)
 
@@ -81,6 +82,7 @@ def reset_office_gossip_for_tests() -> None:
     _generating = False
     _desk = {}
     _desk_fp = ""
+    reset_office_week_for_tests()
 
 
 def remember_office_desk(facts: dict[str, Any] | None) -> None:
@@ -93,7 +95,28 @@ def remember_office_desk(facts: dict[str, Any] | None) -> None:
         _cache_at = 0.0
 
 
-def desk_facts_from_summary(snap: dict[str, Any] | None) -> dict[str, Any]:
+def _session_closed(sess: Any) -> bool:
+    if not isinstance(sess, dict) or not sess:
+        return False
+    if sess.get("is_trading_day") is False:
+        return True
+    return str(sess.get("phase") or "") == "NON_TRADING_DAY"
+
+
+def _summary_is_camp(data: dict[str, Any]) -> bool:
+    ms = data.get("market_status") or {}
+    us = ms.get("us_session") or {}
+    venues = ms.get("venue_sessions") if isinstance(ms.get("venue_sessions"), dict) else {}
+    au = ms.get("au_session") or venues.get("AU") or {}
+    if not au:
+        return _session_closed(us)
+    return _session_closed(us) and _session_closed(au)
+
+
+def desk_facts_from_summary(
+    snap: dict[str, Any] | None,
+    week: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     data = snap or {}
     port = data.get("portfolio") or {}
     cio = data.get("cio") or {}
@@ -110,6 +133,24 @@ def desk_facts_from_summary(snap: dict[str, Any] | None) -> dict[str, Any]:
     focus = universe.get("focus") if isinstance(universe, dict) else {}
     focus_n = len((focus or {}).get("symbols") or []) if isinstance(focus, dict) else 0
     clips = _clips_from_summary(data)
+    week = week if isinstance(week, dict) else {}
+    if not week:
+        week = data.get("office_week") if isinstance(data.get("office_week"), dict) else {}
+    if week:
+        clips["week"] = week
+        clips["suggested"] = _uniq_syms(
+            list(clips.get("suggested") or []) + list(week.get("suggested") or []),
+            limit=6,
+        )
+        clips["blocked"] = _uniq_syms(
+            list(clips.get("blocked") or []) + list(week.get("blocked") or []),
+            limit=6,
+        )
+        clips["missed"] = _uniq_syms(
+            list(clips.get("missed") or [])
+            + [s for s in (week.get("suggested") or []) if s not in set(week.get("bought") or [])],
+            limit=6,
+        )
     return {
         "book": {
             "pnl_pct": _num(port.get("daily_pnl_pct")),
@@ -120,6 +161,7 @@ def desk_facts_from_summary(snap: dict[str, Any] | None) -> dict[str, Any]:
             "regime": str(cio.get("market_regime") or ""),
             "worst": worst,
             "focus_n": focus_n,
+            "camp": _summary_is_camp(data),
         },
         "clips": clips,
         "agents": {
@@ -517,8 +559,8 @@ def _clips_from_summary(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "approved": _uniq_syms(approved),
         "dumped": _uniq_syms(dumped),
-        "suggested": _uniq_syms(suggested),
-        "missed": _uniq_syms(missed),
+        "suggested": _uniq_syms(suggested, limit=6),
+        "missed": _uniq_syms(missed, limit=6),
         "news": _uniq_syms(news_syms),
         "blocked": _uniq_syms(blocked),
         "blocked_sells": _uniq_syms(blocked_sells),
@@ -573,32 +615,152 @@ def _personality_from_clips(facts: dict[str, Any]) -> dict[str, str]:
     return out
 
 
+def _pnl_tok(value: Any) -> str:
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        return ""
+    return f"+{n}" if n > 0 else str(n)
+
+
+def _append_line(bucket: dict[str, list[str]], agent: str, line: str) -> None:
+    text = _clean_line(line)
+    if not text:
+        return
+    rows = bucket.setdefault(agent, [])
+    if text not in rows:
+        rows.append(text)
+
+
+def _review_pool_lines(facts: dict[str, Any]) -> dict[str, list[str]]:
+    """Several named one-liners so gossip is not stuck on the first ticker."""
+    clips = facts.get("clips") or {}
+    book = facts.get("book") or {}
+    week = clips.get("week") if isinstance(clips.get("week"), dict) else {}
+    out: dict[str, list[str]] = {}
+    suggested = list(clips.get("suggested") or [])
+    blocked = list(clips.get("blocked") or week.get("blocked") or [])
+    for tick in suggested[1:5]:
+        _append_line(out, "market_intelligence", f"지난주에 {tick}도 건의했었는데.")
+        _append_line(out, "quant_strategist", f"{tick} 존도 냈었지.")
+        _append_line(out, "universe_manager", f"{tick} 워치에 있었어.")
+    for tick in blocked[1:4]:
+        _append_line(out, "cio", f"{tick}도 밀었는데 막혔어.")
+        _append_line(out, "devils_advocate", f"{tick}는 보류가 맞았지.")
+    for row in (week.get("losers") or [])[:3]:
+        if not isinstance(row, dict):
+            continue
+        tick = str(row.get("s") or "")
+        pnl = _pnl_tok(row.get("pnl"))
+        if not tick:
+            continue
+        _append_line(out, "cio", f"이번 주 {tick} {pnl}.")
+        _append_line(out, "risk_manager", f"{tick} 손절이 한도 지킨 거야.")
+    for row in (week.get("winners") or [])[:3]:
+        if not isinstance(row, dict):
+            continue
+        tick = str(row.get("s") or "")
+        if tick:
+            _append_line(out, "quant_strategist", f"{tick} 존이 먹혔지.")
+            _append_line(out, "cio", f"{tick} 이번 주 플러스였어.")
+    sold = list(week.get("sold") or [])
+    if sold:
+        _append_line(out, "cio", f"{sold[0]} 정리하라고 했지.")
+    if week.get("n_closes"):
+        pnl = _pnl_tok(week.get("pnl"))
+        if pnl:
+            _append_line(out, "cio", f"한 주 손익 {pnl}.")
+    regimes = list(week.get("regimes") or [])
+    if regimes:
+        _append_line(out, "macro_strategist", f"한 주는 {regimes[0]}이었어.")
+    if book.get("camp"):
+        _append_line(out, "macro_strategist", "주말이야. 한 주 리뷰하자.")
+        _append_line(out, "universe_manager", "장은 쉬니까 워치만 다시 보자.")
+    return out
+
+
+def thought_pool_from_facts(facts: dict[str, Any] | None) -> dict[str, list[str]]:
+    data = facts or {}
+    pool: dict[str, list[str]] = {}
+    for agent, line in role_thoughts_from_facts(data).items():
+        _append_line(pool, agent, line)
+    for agent, lines in _review_pool_lines(data).items():
+        for line in lines:
+            _append_line(pool, agent, line)
+    return {k: v[:6] for k, v in pool.items() if v}
+
+
 def dialogue_beats(
     facts: dict[str, Any] | None,
     thoughts: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
-    """One-turn reply pairs grounded in clips. No extra model call."""
-    thoughts = thoughts or role_thoughts_from_facts(facts)
+    """One-turn reply pairs across several week names. No extra model call."""
+    pool = thought_pool_from_facts(facts)
+    if thoughts:
+        for agent, line in thoughts.items():
+            _append_line(pool, agent, line)
     clips = (facts or {}).get("clips") or {}
+    week = clips.get("week") if isinstance(clips.get("week"), dict) else {}
     beats: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
 
-    def _beat(who: str, reply_who: str) -> None:
-        a = thoughts.get(who)
-        b = thoughts.get(reply_who)
-        if not a or not b:
+    def _lines(agent: str) -> list[str]:
+        return list(pool.get(agent) or [])
+
+    def _with_tick(agent: str, tick: str) -> str | None:
+        return next((ln for ln in _lines(agent) if tick in ln), None)
+
+    def _beat(who: str, line: str | None, reply_who: str, reply: str | None) -> None:
+        if not line or not reply:
             return
-        beats.append({"who": who, "line": a, "reply_who": reply_who, "reply": b})
+        key = (who, reply_who, line)
+        if key in seen:
+            return
+        seen.add(key)
+        beats.append({"who": who, "line": line, "reply_who": reply_who, "reply": reply})
 
-    if clips.get("blocked") or clips.get("devil_no"):
-        _beat("cio", "devils_advocate")
-        _beat("cio", "risk_manager")
-    if clips.get("missed") or clips.get("suggested"):
-        _beat("market_intelligence", "cio")
-        _beat("quant_strategist", "cio")
+    ticks = _uniq_syms(
+        list(week.get("blocked") or [])
+        + list(week.get("suggested") or [])
+        + [str(r.get("s") or "") for r in (week.get("losers") or []) if isinstance(r, dict)]
+        + [str(r.get("s") or "") for r in (week.get("winners") or []) if isinstance(r, dict)]
+        + list(clips.get("blocked") or [])
+        + list(clips.get("missed") or [])
+        + list(clips.get("suggested") or []),
+        limit=8,
+    )
+    for tick in ticks:
+        mi = _with_tick("market_intelligence", tick)
+        cio = _with_tick("cio", tick)
+        devil = _with_tick("devils_advocate", tick)
+        quant = _with_tick("quant_strategist", tick)
+        risk = _with_tick("risk_manager", tick)
+        if mi and cio:
+            _beat("market_intelligence", mi, "cio", cio)
+        elif quant and cio:
+            _beat("quant_strategist", quant, "cio", cio)
+        if cio and devil:
+            _beat("cio", cio, "devils_advocate", devil)
+        elif cio and risk:
+            _beat("cio", cio, "risk_manager", risk)
+        if quant and mi and not (mi and cio):
+            _beat("market_intelligence", mi, "quant_strategist", quant)
     if not beats:
-        _beat("macro_strategist", "quant_strategist")
-        _beat("cio", "devils_advocate")
-    return beats[:4]
+        _beat("cio", next(iter(_lines("cio")), None), "devils_advocate", next(iter(_lines("devils_advocate")), None))
+        _beat(
+            "macro_strategist",
+            next(iter(_lines("macro_strategist")), None),
+            "quant_strategist",
+            next(iter(_lines("quant_strategist")), None),
+        )
+    if (facts or {}).get("book", {}).get("camp") or week:
+        _beat(
+            "macro_strategist",
+            next(iter(_lines("macro_strategist")), None),
+            "cio",
+            next((ln for ln in _lines("cio") if "한 주" in ln or "이번 주" in ln), next(iter(_lines("cio")), None)),
+        )
+    return beats[:8]
 
 
 def _has_ticker(line: str) -> bool:
@@ -614,16 +776,23 @@ def _payload(
 ) -> dict[str, Any]:
     cleaned = {k: _clean_line(v) for k, v in thoughts.items() if _agent_key(k) and _clean_line(v)}
     cleaned = {_agent_key(k) or k: v for k, v in cleaned.items()}
-    lines = list(cleaned.values()) or list(FALLBACK_LINES[:8])
-    if not cleaned:
-        cleaned = {}
+    pool = thought_pool_from_facts(_desk) if _desk else {}
+    for agent, line in cleaned.items():
+        bucket = list(pool.get(agent) or [])
+        if line and line not in bucket:
+            bucket.insert(0, line)
+        pool[agent] = bucket[:6]
+    pool = {k: v for k, v in pool.items() if v}
+    first = {k: v[0] for k, v in pool.items()} if pool else cleaned
+    lines = list(first.values()) or list(FALLBACK_LINES[:8])
     return {
         "enabled": enabled,
         "source": source,
         "reason": reason,
-        "thoughts": cleaned,
+        "thoughts": first,
+        "pool": pool,
         "lines": lines,
-        "beats": dialogue_beats(_desk, cleaned) if _desk else [],
+        "beats": dialogue_beats(_desk, first) if _desk else [],
     }
 
 
@@ -717,19 +886,30 @@ def _desk_prompt(facts: dict[str, Any]) -> str:
     book = facts.get("book") or {}
     agents = facts.get("agents") or {}
     clips = facts.get("clips") or {}
+    week = clips.get("week") if isinstance(clips.get("week"), dict) else {}
+    camp = bool(book.get("camp"))
     bits = [
         f"Book pnl={book.get('pnl_pct')} dd={book.get('dd_pct')} cash={book.get('cash_pct')} "
         f"open={book.get('n_pos')} action={book.get('action')} regime={book.get('regime')} "
-        f"worst={book.get('worst') or '-'}",
+        f"worst={book.get('worst') or '-'} camp={camp}",
         f"Clips suggested={clips.get('suggested') or []} missed={clips.get('missed') or []} "
         f"blocked={clips.get('blocked') or []} news={clips.get('news') or []} "
         f"why={clips.get('why') or '-'}",
     ]
+    if week:
+        wins = [(w.get("s"), w.get("pnl")) for w in (week.get("winners") or []) if isinstance(w, dict)]
+        losses = [(w.get("s"), w.get("pnl")) for w in (week.get("losers") or []) if isinstance(w, dict)]
+        bits.append(
+            f"Week pnl={week.get('pnl')} closes={week.get('n_closes')} "
+            f"bought={week.get('bought') or []} sold={week.get('sold') or []} "
+            f"blocked={week.get('blocked') or []} suggested={week.get('suggested') or []} "
+            f"winners={wins} losers={losses} regimes={week.get('regimes') or []}"
+        )
     for name in AGENT_ORDER:
         row = agents.get(name) or {}
         compact = ", ".join(f"{k}={v}" for k, v in row.items() if v not in (None, "", False, []))
         bits.append(f"{name}: {compact or 'n/a'}")
-    return "\n".join(bits)[:1200]
+    return "\n".join(bits)[: 1800 if camp or week else 1200]
 
 
 async def _complete_local_gossip(settings: Settings, facts: dict[str, Any]) -> str:
@@ -739,19 +919,29 @@ async def _complete_local_gossip(settings: Settings, facts: dict[str, Any]) -> s
         if raw_key:
             api_key = raw_key
     url = settings.llm_base_url.rstrip("/") + "/chat/completions"
+    book = facts.get("book") or {}
+    clips = facts.get("clips") or {}
+    week = clips.get("week") if isinstance(clips.get("week"), dict) else {}
+    camp = bool(book.get("camp"))
+    review = camp or bool(week)
+    max_tokens = 260 if review else 180
+    system = (
+        "Weekend weekly review. Each staff comments on a DIFFERENT ticker from Week. "
+        "Casual Korean 반말. Do not invent names or numbers. Do not issue new orders. "
+        "Max 36 Korean characters. JSON only."
+        if review
+        else (
+            "Each staff member says one short line in THEIR job voice from the facts. "
+            "Casual Korean 반말. Use named tickers when given. Do not invent names or numbers. "
+            "Do not issue new orders. Max 32 Korean characters. JSON only."
+        )
+    )
     payload: dict[str, Any] = {
         "model": _gossip_model(settings),
         "temperature": 0.7,
-        "max_tokens": 180,
+        "max_tokens": max_tokens,
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Each staff member says one short line in THEIR job voice from the facts. "
-                    "Casual Korean 반말. Use named tickers when given. Do not invent names or numbers. "
-                    "Do not issue new orders. Max 32 Korean characters. JSON only."
-                ),
-            },
+            {"role": "system", "content": system},
             {
                 "role": "user",
                 "content": (
@@ -762,8 +952,8 @@ async def _complete_local_gossip(settings: Settings, facts: dict[str, Any]) -> s
                 ),
             },
         ],
-        "num_ctx": 1024,
-        "options": {"num_ctx": 1024, "num_predict": 160},
+        "num_ctx": 1024 if not review else 1536,
+        "options": {"num_ctx": 1024 if not review else 1536, "num_predict": 220 if review else 160},
     }
     timeout = httpx.Timeout(_HTTP_TIMEOUT_SECONDS, connect=2.0)
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}

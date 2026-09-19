@@ -12,12 +12,14 @@ from app.office.gossip import (
     FALLBACK_LINES,
     committee_holding_gpu,
     desk_facts_from_summary,
+    dialogue_beats,
     next_office_gossip,
     parse_gossip_lines,
     parse_gossip_thoughts,
     remember_office_desk,
     reset_office_gossip_for_tests,
     role_thoughts_from_facts,
+    thought_pool_from_facts,
 )
 
 
@@ -237,8 +239,6 @@ def test_personality_from_last_book_clips() -> None:
 
 
 def test_dialogue_beats_cio_devil() -> None:
-    from app.office.gossip import dialogue_beats
-
     facts = desk_facts_from_summary(_blocked_cba_summary())
     beats = dialogue_beats(facts)
     pair = next(b for b in beats if b["who"] == "cio" and b["reply_who"] == "devils_advocate")
@@ -266,3 +266,70 @@ def test_llm_overlay_does_not_drop_ticker_lines() -> None:
     )
     assert "CBA" in merged["cio"]
     assert "BHP" in merged["devils_advocate"]
+
+
+def test_week_review_covers_several_names() -> None:
+    week = {
+        "suggested": ["AMD", "IONQ", "CBA"],
+        "blocked": ["CBA"],
+        "bought": ["IONQ"],
+        "sold": [],
+        "winners": [{"s": "AMD", "pnl": 40}],
+        "losers": [{"s": "NVDA", "pnl": -120}],
+        "regimes": ["RISK_ON"],
+        "pnl": -80,
+        "n_closes": 4,
+        "n_decisions": 6,
+    }
+    facts = desk_facts_from_summary(_blocked_cba_summary(), week=week)
+    blob = " ".join(ln for lines in thought_pool_from_facts(facts).values() for ln in lines)
+    assert "AMD" in blob
+    assert "IONQ" in blob
+    assert "CBA" in blob
+    assert "NVDA" in blob
+    beats = dialogue_beats(facts)
+    joined = " ".join(f"{b['line']} {b['reply']}" for b in beats)
+    assert "CBA" in joined
+    assert "AMD" in joined or "IONQ" in joined or "NVDA" in joined
+    assert len(beats) >= 3
+
+
+def test_week_review_from_records_splits_blocked_and_closes() -> None:
+    from types import SimpleNamespace
+
+    from app.office.week import week_review_from_records
+
+    week = week_review_from_records(
+        decisions=[
+            SimpleNamespace(
+                portfolio_action="STAY_CASH",
+                reason_not_to_trade="devil veto",
+                risk_approval=False,
+                market_regime="RISK_ON",
+                payload={
+                    "symbol_actions": [
+                        {"symbol": "CBA", "action": "BUY"},
+                        {"symbol": "AMD", "action": "BUY"},
+                    ]
+                },
+            ),
+            SimpleNamespace(
+                portfolio_action="SCALE_IN",
+                reason_not_to_trade=None,
+                risk_approval=True,
+                market_regime="RISK_ON",
+                payload={"symbol_actions": [{"symbol": "IONQ", "action": "BUY"}]},
+            ),
+        ],
+        closes=[
+            SimpleNamespace(symbol="NVDA", realized_pl=-120.0, unrealized_pl=0.0),
+            SimpleNamespace(symbol="AMD", realized_pl=40.0, unrealized_pl=0.0),
+            SimpleNamespace(symbol="AMD", realized_pl=-10.0, unrealized_pl=0.0),
+        ],
+    )
+    assert "CBA" in week["blocked"]
+    assert "AMD" in week["blocked"]
+    assert "IONQ" in week["bought"]
+    assert week["losers"][0]["s"] == "NVDA"
+    assert week["winners"][0]["s"] == "AMD"
+    assert week["winners"][0]["pnl"] == 30.0
