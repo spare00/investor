@@ -195,3 +195,74 @@ async def test_fill_cache_uses_local_http_and_stores_thoughts(monkeypatch: pytes
     await mod._fill_cache(settings)
     assert "cio" in mod._cache_thoughts
     assert "손실" in mod._cache_thoughts["cio"]
+
+
+def _blocked_cba_summary() -> dict:
+    return {
+        "portfolio": {"daily_pnl_pct": -1.2, "cash_pct": 72, "drawdown_pct": 1.2},
+        "cio": {
+            "portfolio_action": "STAY_CASH",
+            "market_regime": "NEUTRAL",
+            "payload": {
+                "symbol_actions": [{"symbol": "CBA", "action": "BUY"}],
+                "reason_not_to_trade": "devil veto",
+            },
+        },
+        "agents": {
+            "devils_advocate": {
+                "payload": {
+                    "prefer_no_trade": True,
+                    "recommendation": "NO_TRADE",
+                }
+            },
+            "quant_strategist": {
+                "payload": {
+                    "market_trend_state": "SIDEWAYS",
+                    "symbol_views": [
+                        {"symbol": "CBA", "entry_zone": {"min": 140.0, "max": 142.0}}
+                    ],
+                }
+            },
+        },
+    }
+
+
+def test_personality_from_last_book_clips() -> None:
+    facts = desk_facts_from_summary(_blocked_cba_summary())
+    thoughts = role_thoughts_from_facts(facts)
+    assert thoughts["cio"] == "CBA 승인했는데 반대해서 못 샀어."
+    assert "CBA" in thoughts["market_intelligence"]
+    assert "건의" in thoughts["market_intelligence"]
+    assert "보류" in thoughts["devils_advocate"]
+
+
+def test_dialogue_beats_cio_devil() -> None:
+    from app.office.gossip import dialogue_beats
+
+    facts = desk_facts_from_summary(_blocked_cba_summary())
+    beats = dialogue_beats(facts)
+    pair = next(b for b in beats if b["who"] == "cio" and b["reply_who"] == "devils_advocate")
+    assert "CBA" in pair["line"]
+    assert "CBA" in pair["reply"]
+    mi = next(b for b in beats if b["who"] == "market_intelligence" and b["reply_who"] == "cio")
+    assert "건의" in mi["line"]
+
+
+@pytest.mark.asyncio
+async def test_next_office_gossip_returns_beats() -> None:
+    remember_office_desk(desk_facts_from_summary(_blocked_cba_summary()))
+    out = await next_office_gossip(Settings(llm_runtime="local", llm_api_key=None))
+    assert out["beats"]
+    assert out["thoughts"]["cio"].startswith("CBA")
+    assert any(b["who"] == "cio" for b in out["beats"])
+
+
+def test_llm_overlay_does_not_drop_ticker_lines() -> None:
+    from app.office import gossip as mod
+
+    remember_office_desk(desk_facts_from_summary(_blocked_cba_summary()))
+    merged = mod._merged_thoughts(
+        {"cio": "커피 또 내렸어.", "devils_advocate": "BHP는 아니지. 보류가 맞아."}
+    )
+    assert "CBA" in merged["cio"]
+    assert "BHP" in merged["devils_advocate"]

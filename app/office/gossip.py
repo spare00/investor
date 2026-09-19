@@ -47,7 +47,8 @@ _CACHE_TTL_SECONDS = 12 * 60
 _MIN_ATTEMPT_SECONDS = 2 * 60
 _COMMITTEE_GRACE_SECONDS = 45
 _HTTP_TIMEOUT_SECONDS = 10.0
-_MAX_LINE = 52
+_MAX_LINE = 56
+_TICKER = re.compile(r"\b[A-Z]{1,5}(?:\.[A-Z]{1,2})?\b")
 _JSON_BLOB = re.compile(r"\{.*\}", re.DOTALL)
 
 _KEY_ALIASES = {
@@ -108,6 +109,7 @@ def desk_facts_from_summary(snap: dict[str, Any] | None) -> dict[str, Any]:
     worst = str((losers[0] or {}).get("symbol") or "") if losers else ""
     focus = universe.get("focus") if isinstance(universe, dict) else {}
     focus_n = len((focus or {}).get("symbols") or []) if isinstance(focus, dict) else 0
+    clips = _clips_from_summary(data)
     return {
         "book": {
             "pnl_pct": _num(port.get("daily_pnl_pct")),
@@ -119,6 +121,7 @@ def desk_facts_from_summary(snap: dict[str, Any] | None) -> dict[str, Any]:
             "worst": worst,
             "focus_n": focus_n,
         },
+        "clips": clips,
         "agents": {
             "cio": _cio_slice(cio, agents.get("cio") or {}),
             "devils_advocate": _devil_slice(agents.get("devils_advocate") or {}),
@@ -219,6 +222,7 @@ def role_thoughts_from_facts(facts: dict[str, Any] | None) -> dict[str, str]:
     else:
         out["universe_manager"] = "유니버스 다시 봐야 해."
 
+    out.update(_personality_from_clips(data))
     return {k: v for k, v in out.items() if _clean_line(v)}
 
 
@@ -439,6 +443,168 @@ def _univ_slice(agent: dict[str, Any], focus_n: int) -> dict[str, Any]:
     return {"focus_n": n, "note": _clip(p.get("focus_rationale") or p.get("mode") or "", 48)}
 
 
+def _uniq_syms(values: list[str], *, limit: int = 3) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        sym = str(raw or "").upper().strip()
+        if not sym or sym in {"—", "-", "N/A"} or len(sym) > 6:
+            continue
+        if not re.fullmatch(r"[A-Z]{1,5}(\.[A-Z]{1,2})?", sym):
+            continue
+        if sym in seen:
+            continue
+        seen.add(sym)
+        out.append(sym)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _plan_action(plan: dict[str, Any]) -> str:
+    raw = plan.get("action")
+    return str(getattr(raw, "value", raw) or "")
+
+
+def _clips_from_summary(data: dict[str, Any]) -> dict[str, Any]:
+    """Tiny named-ticker memory from the last summary — no extra queries."""
+    cio = data.get("cio") or {}
+    payload = cio.get("payload") if isinstance(cio.get("payload"), dict) else {}
+    plans = payload.get("symbol_actions") or []
+    approved: list[str] = []
+    dumped: list[str] = []
+    if isinstance(plans, list):
+        for plan in plans:
+            if not isinstance(plan, dict):
+                continue
+            sym = str(plan.get("symbol") or "").upper()
+            act = _plan_action(plan)
+            if act in _BUYISH:
+                approved.append(sym)
+            elif act in {"SELL", "PARTIAL_SELL", "REDUCE"}:
+                dumped.append(sym)
+
+    agents = data.get("agents") or {}
+    quant = agents.get("quant_strategist") or {}
+    qpay = quant.get("payload") if isinstance(quant.get("payload"), dict) else {}
+    suggested: list[str] = []
+    for view in qpay.get("symbol_views") or []:
+        if not isinstance(view, dict):
+            continue
+        if view.get("entry_zone") is None:
+            continue
+        suggested.append(str(view.get("symbol") or ""))
+
+    news_syms: list[str] = []
+    for item in data.get("news") or []:
+        if not isinstance(item, dict):
+            continue
+        for sym in item.get("symbols") or []:
+            news_syms.append(str(sym or ""))
+
+    devil = agents.get("devils_advocate") or {}
+    dpay = devil.get("payload") if isinstance(devil.get("payload"), dict) else {}
+    devil_no = bool(dpay.get("prefer_no_trade"))
+    why = str(payload.get("reason_not_to_trade") or cio.get("reason_not_to_trade") or "")
+    risk = agents.get("risk_manager") or {}
+    rpay = risk.get("payload") if isinstance(risk.get("payload"), dict) else {}
+    vetoes = rpay.get("hard_vetoes") or []
+    veto = str(vetoes[0]) if isinstance(vetoes, list) and vetoes else ""
+    halted = devil_no or bool(why) or bool(rpay.get("halt_new_trades"))
+    blocked = (list(approved) or list(suggested)) if halted else []
+    blocked_sells = list(dumped) if halted else []
+    missed = [s for s in suggested if s.upper() not in {x.upper() for x in approved}]
+    return {
+        "approved": _uniq_syms(approved),
+        "dumped": _uniq_syms(dumped),
+        "suggested": _uniq_syms(suggested),
+        "missed": _uniq_syms(missed),
+        "news": _uniq_syms(news_syms),
+        "blocked": _uniq_syms(blocked),
+        "blocked_sells": _uniq_syms(blocked_sells),
+        "why": _clip(why, 40),
+        "devil_no": devil_no,
+        "veto": _clip(veto, 40),
+        "halt": bool(rpay.get("halt_new_trades")),
+    }
+
+
+def _personality_from_clips(facts: dict[str, Any]) -> dict[str, str]:
+    clips = facts.get("clips") or {}
+    book = facts.get("book") or {}
+    action = str(book.get("action") or "")
+    suggested = list(clips.get("suggested") or [])
+    missed = list(clips.get("missed") or suggested)
+    blocked = list(clips.get("blocked") or [])
+    dumped = list(clips.get("dumped") or [])
+    news = list(clips.get("news") or [])
+    why = str(clips.get("why") or "")
+    name = (blocked or missed or suggested or dumped or news or [""])[0]
+    out: dict[str, str] = {}
+    if missed or suggested:
+        tick = (missed or suggested)[0]
+        out["market_intelligence"] = f"지난번에 {tick} 건의했는데."
+        out["quant_strategist"] = f"{tick} 존 냈는데 안 들어갔어."
+        out["universe_manager"] = f"{tick} 워치에 있는데 자리 없네."
+    elif news:
+        out["market_intelligence"] = f"{news[0]} 뉴스 떴는데 조용하네."
+    sells = list(clips.get("blocked_sells") or [])
+    if blocked and (clips.get("devil_no") or why or clips.get("halt")):
+        tick = blocked[0]
+        if action in _CASHISH or why or clips.get("halt"):
+            out["cio"] = f"{tick} 승인했는데 반대해서 못 샀어."
+        else:
+            out["cio"] = f"{tick} 밀었는데 또 막혔어."
+        if clips.get("devil_no"):
+            out["devils_advocate"] = f"{tick}는 아니지. 보류가 맞아."
+        if clips.get("halt") or clips.get("veto"):
+            out["risk_manager"] = f"{tick} 못 사. 한도야."
+    elif sells:
+        tick = sells[0]
+        out["cio"] = f"{tick} 팔려 했는데 반대해서 못 팔았어."
+        if clips.get("devil_no"):
+            out["devils_advocate"] = f"{tick} 지금 던지지 마."
+    elif dumped:
+        out["cio"] = f"{dumped[0]} 정리하라고 했어."
+    elif name and action in _CASHISH:
+        out["cio"] = f"{name} 사고 싶었는데 {action}."
+    if why and "cio" not in out:
+        out["cio"] = _clip(f"막힘: {why}", 52)
+    return out
+
+
+def dialogue_beats(
+    facts: dict[str, Any] | None,
+    thoughts: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
+    """One-turn reply pairs grounded in clips. No extra model call."""
+    thoughts = thoughts or role_thoughts_from_facts(facts)
+    clips = (facts or {}).get("clips") or {}
+    beats: list[dict[str, str]] = []
+
+    def _beat(who: str, reply_who: str) -> None:
+        a = thoughts.get(who)
+        b = thoughts.get(reply_who)
+        if not a or not b:
+            return
+        beats.append({"who": who, "line": a, "reply_who": reply_who, "reply": b})
+
+    if clips.get("blocked") or clips.get("devil_no"):
+        _beat("cio", "devils_advocate")
+        _beat("cio", "risk_manager")
+    if clips.get("missed") or clips.get("suggested"):
+        _beat("market_intelligence", "cio")
+        _beat("quant_strategist", "cio")
+    if not beats:
+        _beat("macro_strategist", "quant_strategist")
+        _beat("cio", "devils_advocate")
+    return beats[:4]
+
+
+def _has_ticker(line: str) -> bool:
+    return bool(_TICKER.search(line or ""))
+
+
 def _payload(
     thoughts: dict[str, str],
     source: str,
@@ -457,6 +623,7 @@ def _payload(
         "reason": reason,
         "thoughts": cleaned,
         "lines": lines,
+        "beats": dialogue_beats(_desk, cleaned) if _desk else [],
     }
 
 
@@ -466,8 +633,12 @@ def _merged_thoughts(llm: dict[str, str] | None = None) -> dict[str, str]:
         for key, value in llm.items():
             agent = _agent_key(key)
             line = _clean_line(value)
-            if agent and line:
-                base[agent] = line
+            if not agent or not line:
+                continue
+            prev = base.get(agent)
+            if prev and _has_ticker(prev) and not _has_ticker(line):
+                continue
+            base[agent] = line
     return base
 
 
@@ -545,10 +716,14 @@ def _gossip_model(settings: Settings) -> str:
 def _desk_prompt(facts: dict[str, Any]) -> str:
     book = facts.get("book") or {}
     agents = facts.get("agents") or {}
+    clips = facts.get("clips") or {}
     bits = [
         f"Book pnl={book.get('pnl_pct')} dd={book.get('dd_pct')} cash={book.get('cash_pct')} "
         f"open={book.get('n_pos')} action={book.get('action')} regime={book.get('regime')} "
         f"worst={book.get('worst') or '-'}",
+        f"Clips suggested={clips.get('suggested') or []} missed={clips.get('missed') or []} "
+        f"blocked={clips.get('blocked') or []} news={clips.get('news') or []} "
+        f"why={clips.get('why') or '-'}",
     ]
     for name in AGENT_ORDER:
         row = agents.get(name) or {}
@@ -572,9 +747,9 @@ async def _complete_local_gossip(settings: Settings, facts: dict[str, Any]) -> s
             {
                 "role": "system",
                 "content": (
-                    "Each staff member says one short worry about THEIR job from the facts. "
-                    "Casual Korean 반말. Do not invent numbers. Do not issue new orders. "
-                    "Max 28 Korean characters. JSON only."
+                    "Each staff member says one short line in THEIR job voice from the facts. "
+                    "Casual Korean 반말. Use named tickers when given. Do not invent names or numbers. "
+                    "Do not issue new orders. Max 32 Korean characters. JSON only."
                 ),
             },
             {
