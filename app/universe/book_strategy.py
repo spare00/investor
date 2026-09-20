@@ -162,9 +162,9 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         horizon="short",
         label_ko="단기",
         summary=(
-            "Swing trend is the backdrop. Buy dips toward SMA50 in an uptrend; "
-            "buy oversold bounces in a downtrend. Do not catch a falling knife. "
-            "Overnight ok. Size from risk budget."
+            "Swing trend is the backdrop. Buy dips toward SMA50 in an uptrend. "
+            "Do not buy oversold bounces in a downtrend. Overnight ok. "
+            "Size from risk budget."
         ),
         min_probability=0.48,
         entry_zone_pct=0.008,
@@ -459,6 +459,7 @@ def structure_allows_entry(
     high: float | None = None,
     low: float | None = None,
     sma_20: float | None = None,
+    minutes_to_close: float | None = None,
 ) -> tuple[bool, str]:
     book = playbook_for(horizon)
     if book is None:
@@ -467,6 +468,13 @@ def structure_allows_entry(
         return False, f"liquidity_{liquidity.value}"
     if volatility == VolatilityState.EXTREME:
         return False, "vol_extreme"
+    if horizon == "scalp" and minutes_to_close is not None:
+        try:
+            mtc = float(minutes_to_close)
+        except (TypeError, ValueError):
+            mtc = None
+        if mtc is not None and 0 <= mtc < 45:
+            return False, "too_close_to_flatten"
     if horizon in {"scalp", "day"} and trend == TrendState.SIDEWAYS:
         return False, "sideways_stand_down"
     up = trend in {TrendState.UP, TrendState.STRONG_UP}
@@ -484,6 +492,8 @@ def structure_allows_entry(
         return False, "falling_knife"
     if timing == "blowoff":
         return False, "exhausted"
+    if horizon == "short" and timing == "bounce":
+        return False, "short_oversold_bounce"
     if book.require_uptrend and not up and timing != "bounce":
         if not (
             book.allow_sideways_momentum
@@ -541,6 +551,7 @@ def should_propose_entry(
     high: float | None = None,
     low: float | None = None,
     sma_20: float | None = None,
+    minutes_to_close: float | None = None,
 ) -> bool:
     book = playbook_for(horizon)
     if book is None:
@@ -561,6 +572,7 @@ def should_propose_entry(
         high=high,
         low=low,
         sma_20=sma_20,
+        minutes_to_close=minutes_to_close,
     )
     if not ok:
         return False
@@ -860,6 +872,7 @@ def drop_blocked_entries(
     watchlist: list[dict] | None,
     *,
     regime: str | MarketRegime | None = None,
+    minutes_to_close: float | None = None,
 ) -> Any:
     """Drop CIO/paper entries the playbook would not take (sideways scalp/day, no stop)."""
     if decision is None:
@@ -898,6 +911,7 @@ def drop_blocked_entries(
             volatility=view.volatility_state,
             rsi=None,
             regime=regime,
+            minutes_to_close=minutes_to_close,
             **tape_from_view(view),
         ):
             changed = True

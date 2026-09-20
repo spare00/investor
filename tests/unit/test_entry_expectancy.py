@@ -53,21 +53,21 @@ def test_stamp_exit_reason_does_not_overwrite() -> None:
 
 def test_injected_plans_carry_source_and_timing() -> None:
     view = SymbolQuantView(
-        symbol="CBA",
-        trend_state=TrendState.DOWN,
+        symbol="QQQ",
+        trend_state=TrendState.UP,
         momentum_state=MomentumState.STEADY,
         volatility_state=VolatilityState.NORMAL,
         liquidity_state=LiquidityState.NORMAL,
-        support=100.0,
-        resistance=110.0,
+        support=440.0,
+        resistance=452.0,
         probability_estimate=0.6,
         probability_basis="test",
-        notes=["timing=bounce"],
-        entry_timing="bounce",
+        notes=["timing=dip_buy"],
+        entry_timing="dip_buy",
     )
     quant = QuantStrategistOutput(
         timestamp=datetime.now(UTC),
-        market_trend_state=TrendState.DOWN,
+        market_trend_state=TrendState.UP,
         market_momentum_state=MomentumState.STEADY,
         market_volatility_state=VolatilityState.NORMAL,
         market_breadth_state=BreadthState.MIXED,
@@ -79,7 +79,7 @@ def test_injected_plans_carry_source_and_timing() -> None:
     from app.schemas.common import PriceZone
 
     view = view.model_copy(
-        update={"entry_zone": PriceZone(min=101.0, max=103.0), "stop_or_invalidation": 97.0}
+        update={"entry_zone": PriceZone(min=449.0, max=451.0), "stop_or_invalidation": 445.0}
     )
     quant = quant.model_copy(update={"symbol_views": [view]})
     idle = CIODecision(
@@ -92,18 +92,72 @@ def test_injected_plans_carry_source_and_timing() -> None:
     out = ensure_cio_takes_setups(
         idle,
         quant=quant,
-        watchlist=[{"symbol": "CBA", "horizon": "short"}],
+        watchlist=[{"symbol": "QQQ", "horizon": "scalp"}],
         positions=[],
-        allowlist=["CBA"],
+        allowlist=["QQQ"],
         risk_ok=True,
         regime=MarketRegime.RISK_ON,
         max_position_pct=10.0,
         enabled=True,
     )
-    plan = next(p for p in out.symbol_actions if p.symbol == "CBA")
+    plan = next(p for p in out.symbol_actions if p.symbol == "QQQ")
     assert plan.entry_source == SOURCE_INJECTED
-    assert plan.entry_timing == "bounce"
-    assert plan.trend_at_entry == "down"
+    assert plan.entry_timing == "dip_buy"
+    assert plan.trend_at_entry == "up"
+
+
+def test_short_bounce_and_sideways_are_not_injected() -> None:
+    from app.schemas.common import PriceZone
+
+    bounce = SymbolQuantView(
+        symbol="CBA",
+        trend_state=TrendState.DOWN,
+        momentum_state=MomentumState.STEADY,
+        volatility_state=VolatilityState.NORMAL,
+        liquidity_state=LiquidityState.NORMAL,
+        support=100.0,
+        resistance=110.0,
+        probability_estimate=0.6,
+        probability_basis="test",
+        notes=["timing=bounce"],
+        entry_timing="bounce",
+        entry_zone=PriceZone(min=101.0, max=103.0),
+        stop_or_invalidation=97.0,
+    )
+    sideways = bounce.model_copy(
+        update={"symbol": "BHP", "trend_state": TrendState.SIDEWAYS, "entry_timing": "dip_buy"}
+    )
+    quant = QuantStrategistOutput(
+        timestamp=datetime.now(UTC),
+        market_trend_state=TrendState.SIDEWAYS,
+        market_momentum_state=MomentumState.STEADY,
+        market_volatility_state=VolatilityState.NORMAL,
+        market_breadth_state=BreadthState.MIXED,
+        market_liquidity_state=LiquidityState.NORMAL,
+        symbol_views=[bounce, sideways],
+        data_quality_score=0.8,
+    )
+    idle = CIODecision(
+        timestamp=datetime.now(UTC),
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.NO_TRADE,
+        cash_target_pct=100,
+        risk_approval=True,
+    )
+    out = ensure_cio_takes_setups(
+        idle,
+        quant=quant,
+        watchlist=[{"symbol": "CBA", "horizon": "short"}, {"symbol": "BHP", "horizon": "short"}],
+        positions=[],
+        allowlist=["CBA", "BHP"],
+        risk_ok=True,
+        regime=MarketRegime.RISK_ON,
+        max_position_pct=10.0,
+        enabled=True,
+    )
+    names = {p.symbol for p in out.symbol_actions if p.action.value in {"BUY", "SCALE_IN", "STRONG_BUY"}}
+    assert "CBA" not in names
+    assert "BHP" not in names
 
 
 def test_stamp_cio_fills_cio_source_from_quant() -> None:

@@ -174,10 +174,12 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
             structure_allows_entry,
         )
         from app.universe.horizons import policy_by_symbol, suggested_long_stop
+        from app.services.market_hours import minutes_to_close as minutes_to_close_fn
 
         by_pol = policy_by_symbol(payload.watchlist)
         bars = payload.symbol_bars or payload.index_bars
         views: list[SymbolQuantView] = []
+        minutes_to_close = minutes_to_close_fn(payload.as_of) if getattr(payload, "as_of", None) else None
         for bar in bars:
             horizon = horizon_for_symbol(bar.symbol, payload.watchlist)
             trend = _trend(bar, horizon)
@@ -229,6 +231,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                 high=bar.high,
                 low=bar.low,
                 sma_20=bar.sma_20,
+                minutes_to_close=minutes_to_close,
             )
             hard_no_zone = (
                 why
@@ -237,6 +240,9 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                     "vol_extreme",
                     "falling_knife",
                     "exhausted",
+                    "short_oversold_bounce",
+                    "too_close_to_flatten",
+                    "sideways_stand_down",
                 }
                 or why.startswith("liquidity_")
                 or why.startswith("rsi_extreme")

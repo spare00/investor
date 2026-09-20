@@ -18,6 +18,7 @@ from app.schemas.common import (
     SymbolAction,
     TimeHorizon,
     TraceMetadata,
+    TrendState,
 )
 from app.universe.book_strategy import (
     horizon_for_symbol,
@@ -66,6 +67,7 @@ def quant_entry_plans(
     max_position_pct: float,
     allowlist: list[str] | None = None,
     new_counts: dict[str, int] | None = None,
+    minutes_to_close: float | None = None,
 ) -> list[SymbolActionPlan]:
     """Turn Quant views into SCALE_IN plans (playbook + book caps)."""
     allow = {s.upper() for s in (allowlist or []) if s} or None
@@ -88,6 +90,8 @@ def quant_entry_plans(
         book = playbook_for(hz)
         if book is None:
             continue
+        if view.trend_state == TrendState.SIDEWAYS:
+            continue
         if not should_propose_entry(
             horizon=hz,
             probability=float(view.probability_estimate or 0),
@@ -97,6 +101,7 @@ def quant_entry_plans(
             volatility=view.volatility_state,
             rsi=None,
             regime=regime,
+            minutes_to_close=minutes_to_close,
             **tape_from_view(view),
         ):
             continue
@@ -154,6 +159,7 @@ def ensure_cio_takes_setups(
     enabled: bool,
     cash_pct: float = 100.0,
     min_cash_pct: float = 30.0,
+    minutes_to_close: float | None = None,
 ) -> CIODecision:
     """If the book sat idle — or stayed cash-heavy after a token buy — take Quant setups."""
     if not enabled or not risk_ok or not decision.risk_approval:
@@ -181,6 +187,7 @@ def ensure_cio_takes_setups(
         max_position_pct=max_position_pct,
         allowlist=allowlist,
         new_counts=new_counts,
+        minutes_to_close=minutes_to_close,
     )
     if not extras:
         return decision

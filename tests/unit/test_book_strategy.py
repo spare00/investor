@@ -188,6 +188,46 @@ def test_downtrend_oversold_bounce_allows_entry() -> None:
     assert why == "ok"
 
 
+def test_short_oversold_bounce_is_blocked() -> None:
+    ok, why = structure_allows_entry(
+        horizon="short",
+        trend=TrendState.DOWN,
+        momentum=MomentumState.DECELERATING,
+        liquidity=LiquidityState.NORMAL,
+        volatility=VolatilityState.NORMAL,
+        rsi=32.0,
+        last=447.0,
+        open_=449.0,
+        high=451.0,
+        low=446.0,
+        sma_20=450.0,
+    )
+    assert ok is False
+    assert why == "short_oversold_bounce"
+
+
+def test_scalp_blocked_near_session_flatten() -> None:
+    kwargs = dict(
+        horizon="scalp",
+        trend=TrendState.UP,
+        momentum=MomentumState.STEADY,
+        liquidity=LiquidityState.NORMAL,
+        volatility=VolatilityState.NORMAL,
+        rsi=55.0,
+        last=450.0,
+        open_=448.0,
+        high=451.0,
+        low=447.0,
+        sma_20=448.0,
+    )
+    ok, why = structure_allows_entry(**kwargs, minutes_to_close=20)
+    assert ok is False
+    assert why == "too_close_to_flatten"
+    ok, why = structure_allows_entry(**kwargs, minutes_to_close=90)
+    assert ok is True
+    assert why == "ok"
+
+
 def test_uptrend_dip_scores_higher_than_chase() -> None:
     from app.universe.book_strategy import apply_timing_probability
 

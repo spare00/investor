@@ -62,6 +62,7 @@ def theses_from_quant(
     regime: str | None,
     watchlist: list[dict] | None = None,
     limit: int = 8,
+    minutes_to_close: float | None = None,
 ) -> list[ProposedThesis]:
     """Build Devil/CIO challenge targets from book-aware Quant views.
 
@@ -90,6 +91,7 @@ def theses_from_quant(
             volatility=view.volatility_state,
             rsi=None,
             regime=regime,
+            minutes_to_close=minutes_to_close,
             **tape_from_view(view),
         ):
             continue
@@ -247,6 +249,9 @@ class AgentPipeline:
     ) -> AnalysisBundle:
         wf = workflow_id or collection.workflow_id or uuid4()
         as_of = collection.collected_at
+        from app.services.market_hours import minutes_to_close as minutes_to_close_fn
+
+        minutes_to_close = minutes_to_close_fn(as_of)
         active_book = book or build_venue_book_context(
             self.settings,
             venue=venue,
@@ -403,6 +408,7 @@ class AgentPipeline:
                 entry_universe=entry_list,
                 regime=macro_out.market_regime.value,
                 watchlist=watch_ctx,
+                minutes_to_close=minutes_to_close,
             )
         if not theses:
             theses = [
@@ -493,6 +499,7 @@ class AgentPipeline:
             enabled=paper_aggressive_entries(self.settings),
             cash_pct=float(portfolio.cash_pct),
             min_cash_pct=float(self.settings.min_cash_pct),
+            minutes_to_close=minutes_to_close,
         )
         from app.universe.book_strategy import drop_blocked_entries
 
@@ -501,6 +508,7 @@ class AgentPipeline:
             quant_out,
             watch_ctx,
             regime=macro_out.market_regime,
+            minutes_to_close=minutes_to_close,
         )
         from app.universe.entry_attribution import stamp_cio_entry_attribution
 
