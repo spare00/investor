@@ -690,76 +690,172 @@ def thought_pool_from_facts(facts: dict[str, Any] | None) -> dict[str, list[str]
     return {k: v[:6] for k, v in pool.items() if v}
 
 
+def _thread(
+    *,
+    topic: str,
+    tick: str,
+    who: str,
+    line: str,
+    reply_who: str,
+    reply: str,
+    close_who: str | None = None,
+    close: str | None = None,
+) -> dict[str, str]:
+    out = {
+        "topic": topic,
+        "tick": tick,
+        "who": who,
+        "line": _clean_line(line),
+        "reply_who": reply_who,
+        "reply": _clean_line(reply),
+    }
+    if close_who and _clean_line(close or ""):
+        out["close_who"] = close_who
+        out["close"] = _clean_line(close or "")
+    return out
+
+
+def dialogue_threads(
+    facts: dict[str, Any] | None,
+    thoughts: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
+    """Same-topic 2–3 turn reviews. Tickers only from the book."""
+    del thoughts  # threads are built from clips, not mixed pool lines
+    data = facts or {}
+    clips = data.get("clips") or {}
+    week = clips.get("week") if isinstance(clips.get("week"), dict) else {}
+    book = data.get("book") or {}
+    devil_no = bool(clips.get("devil_no"))
+    threads: list[dict[str, str]] = []
+    used: set[str] = set()
+
+    def _claim(tick: str) -> bool:
+        sym = str(tick or "").upper()
+        if not sym or sym in used:
+            return False
+        used.add(sym)
+        return True
+
+    blocked = _uniq_syms(list(clips.get("blocked") or []) + list(week.get("blocked") or []), limit=4)
+    missed = _uniq_syms(list(clips.get("missed") or []) + list(week.get("suggested") or []), limit=6)
+    for tick in blocked:
+        if not _claim(tick):
+            continue
+        closer_who, closer = (
+            ("devils_advocate", f"{tick}는 아니지. 보류가 맞아.")
+            if devil_no or clips.get("why")
+            else ("risk_manager", f"{tick} 못 사. 한도야.")
+        )
+        threads.append(
+            _thread(
+                topic="blocked",
+                tick=tick,
+                who="market_intelligence",
+                line=f"지난주에 {tick} 건의했었는데.",
+                reply_who="cio",
+                reply=f"{tick} 승인했는데 반대해서 못 샀어.",
+                close_who=closer_who,
+                close=closer,
+            )
+        )
+    for tick in missed:
+        if not _claim(tick):
+            continue
+        threads.append(
+            _thread(
+                topic="suggested",
+                tick=tick,
+                who="market_intelligence",
+                line=f"지난주에 {tick}도 건의했었는데.",
+                reply_who="cio",
+                reply=f"{tick} 사고 싶었는데 {book.get('action') or 'STAY_CASH'}.",
+                close_who="quant_strategist",
+                close=f"{tick} 존 냈는데 안 들어갔어.",
+            )
+        )
+    for row in (week.get("losers") or [])[:3]:
+        if not isinstance(row, dict):
+            continue
+        tick = str(row.get("s") or "").upper()
+        pnl = _pnl_tok(row.get("pnl"))
+        if not _claim(tick) or not pnl:
+            continue
+        threads.append(
+            _thread(
+                topic="loss",
+                tick=tick,
+                who="cio",
+                line=f"이번 주 {tick} {pnl}.",
+                reply_who="risk_manager",
+                reply=f"{tick} 손절이 한도 지킨 거야.",
+                close_who="quant_strategist",
+                close=f"{tick} 존이 짧았지.",
+            )
+        )
+    for row in (week.get("winners") or [])[:2]:
+        if not isinstance(row, dict):
+            continue
+        tick = str(row.get("s") or "").upper()
+        if not _claim(tick):
+            continue
+        threads.append(
+            _thread(
+                topic="win",
+                tick=tick,
+                who="quant_strategist",
+                line=f"{tick} 존이 먹혔지.",
+                reply_who="cio",
+                reply=f"{tick} 이번 주 플러스였어.",
+                close_who="universe_manager",
+                close=f"{tick} 워치에 남겨두자.",
+            )
+        )
+    if book.get("camp") or week.get("n_closes"):
+        pnl = _pnl_tok(week.get("pnl"))
+        reply = f"한 주 손익 {pnl}." if pnl else "한 주 정리해보자."
+        threads.append(
+            _thread(
+                topic="week",
+                tick="",
+                who="macro_strategist",
+                line="주말이야. 한 주 리뷰하자." if book.get("camp") else f"한 주는 {(week.get('regimes') or ['장'])[0]}이었어.",
+                reply_who="cio",
+                reply=reply,
+                close_who="universe_manager",
+                close="장은 쉬니까 워치만 다시 보자." if book.get("camp") else "워치 다시 맞춰보자.",
+            )
+        )
+    return [t for t in threads if t.get("line") and t.get("reply")][:6]
+
+
 def dialogue_beats(
     facts: dict[str, Any] | None,
     thoughts: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
-    """One-turn reply pairs across several week names. No extra model call."""
-    pool = thought_pool_from_facts(facts)
-    if thoughts:
-        for agent, line in thoughts.items():
-            _append_line(pool, agent, line)
-    clips = (facts or {}).get("clips") or {}
-    week = clips.get("week") if isinstance(clips.get("week"), dict) else {}
+    """Flattened pairs from same-topic threads (compat + one-turn playback)."""
     beats: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
-
-    def _lines(agent: str) -> list[str]:
-        return list(pool.get(agent) or [])
-
-    def _with_tick(agent: str, tick: str) -> str | None:
-        return next((ln for ln in _lines(agent) if tick in ln), None)
-
-    def _beat(who: str, line: str | None, reply_who: str, reply: str | None) -> None:
-        if not line or not reply:
-            return
-        key = (who, reply_who, line)
-        if key in seen:
-            return
-        seen.add(key)
-        beats.append({"who": who, "line": line, "reply_who": reply_who, "reply": reply})
-
-    ticks = _uniq_syms(
-        list(week.get("blocked") or [])
-        + list(week.get("suggested") or [])
-        + [str(r.get("s") or "") for r in (week.get("losers") or []) if isinstance(r, dict)]
-        + [str(r.get("s") or "") for r in (week.get("winners") or []) if isinstance(r, dict)]
-        + list(clips.get("blocked") or [])
-        + list(clips.get("missed") or [])
-        + list(clips.get("suggested") or []),
-        limit=8,
-    )
-    for tick in ticks:
-        mi = _with_tick("market_intelligence", tick)
-        cio = _with_tick("cio", tick)
-        devil = _with_tick("devils_advocate", tick)
-        quant = _with_tick("quant_strategist", tick)
-        risk = _with_tick("risk_manager", tick)
-        if mi and cio:
-            _beat("market_intelligence", mi, "cio", cio)
-        elif quant and cio:
-            _beat("quant_strategist", quant, "cio", cio)
-        if cio and devil:
-            _beat("cio", cio, "devils_advocate", devil)
-        elif cio and risk:
-            _beat("cio", cio, "risk_manager", risk)
-        if quant and mi and not (mi and cio):
-            _beat("market_intelligence", mi, "quant_strategist", quant)
-    if not beats:
-        _beat("cio", next(iter(_lines("cio")), None), "devils_advocate", next(iter(_lines("devils_advocate")), None))
-        _beat(
-            "macro_strategist",
-            next(iter(_lines("macro_strategist")), None),
-            "quant_strategist",
-            next(iter(_lines("quant_strategist")), None),
+    for th in dialogue_threads(facts, thoughts):
+        beats.append(
+            {
+                "who": th["who"],
+                "line": th["line"],
+                "reply_who": th["reply_who"],
+                "reply": th["reply"],
+                "topic": th.get("topic") or "",
+                "tick": th.get("tick") or "",
+            }
         )
-    if (facts or {}).get("book", {}).get("camp") or week:
-        _beat(
-            "macro_strategist",
-            next(iter(_lines("macro_strategist")), None),
-            "cio",
-            next((ln for ln in _lines("cio") if "한 주" in ln or "이번 주" in ln), next(iter(_lines("cio")), None)),
-        )
+        if th.get("close_who") and th.get("close"):
+            beats.append(
+                {
+                    "who": th["reply_who"],
+                    "line": th["reply"],
+                    "reply_who": th["close_who"],
+                    "reply": th["close"],
+                    "topic": th.get("topic") or "",
+                    "tick": th.get("tick") or "",
+                }
+            )
     return beats[:8]
 
 
@@ -785,6 +881,7 @@ def _payload(
     pool = {k: v for k, v in pool.items() if v}
     first = {k: v[0] for k, v in pool.items()} if pool else cleaned
     lines = list(first.values()) or list(FALLBACK_LINES[:8])
+    threads = dialogue_threads(_desk, first) if _desk else []
     return {
         "enabled": enabled,
         "source": source,
@@ -792,6 +889,7 @@ def _payload(
         "thoughts": first,
         "pool": pool,
         "lines": lines,
+        "threads": threads,
         "beats": dialogue_beats(_desk, first) if _desk else [],
     }
 
@@ -830,13 +928,16 @@ async def next_office_gossip(settings: Settings | None = None) -> dict[str, Any]
         return _payload(_merged_thoughts(), "fallback", "not_local")
 
     now = time.monotonic()
-    if _cache_thoughts and now - _cache_at < _CACHE_TTL_SECONDS:
+    camp = bool((_desk.get("book") or {}).get("camp"))
+    ttl = 6 * 60 if camp else _CACHE_TTL_SECONDS
+    min_attempt = 45 if camp else _MIN_ATTEMPT_SECONDS
+    if _cache_thoughts and now - _cache_at < ttl:
         return _payload(_merged_thoughts(_cache_thoughts), "cache", None)
     if _generating:
         return _payload(_merged_thoughts(_cache_thoughts), "skipped", "inflight")
-    if now - _last_attempt < _MIN_ATTEMPT_SECONDS and _cache_thoughts:
+    if now - _last_attempt < min_attempt and _cache_thoughts:
         return _payload(_merged_thoughts(_cache_thoughts), "cache", "backoff")
-    if _desk and now - _last_attempt >= _MIN_ATTEMPT_SECONDS:
+    if _desk and now - _last_attempt >= min_attempt:
         _schedule_fill(cfg)
     return _payload(
         _merged_thoughts(_cache_thoughts),

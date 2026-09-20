@@ -13,6 +13,7 @@ from app.office.gossip import (
     committee_holding_gpu,
     desk_facts_from_summary,
     dialogue_beats,
+    dialogue_threads,
     next_office_gossip,
     parse_gossip_lines,
     parse_gossip_thoughts,
@@ -246,6 +247,47 @@ def test_dialogue_beats_cio_devil() -> None:
     assert "CBA" in pair["reply"]
     mi = next(b for b in beats if b["who"] == "market_intelligence" and b["reply_who"] == "cio")
     assert "건의" in mi["line"]
+    thread = next(t for t in dialogue_threads(facts) if t.get("tick") == "CBA")
+    assert thread["topic"] == "blocked"
+    assert thread["close_who"] == "devils_advocate"
+    assert "보류" in thread["close"]
+
+
+def test_threads_keep_loss_and_suggestion_apart() -> None:
+    week = {
+        "suggested": ["AMD"],
+        "blocked": [],
+        "bought": [],
+        "winners": [],
+        "losers": [{"s": "NVDA", "pnl": -120}],
+        "regimes": ["RISK_ON"],
+        "pnl": -120,
+        "n_closes": 1,
+        "n_decisions": 2,
+    }
+    facts = desk_facts_from_summary(
+        {
+            "portfolio": {"daily_pnl_pct": 0.0, "cash_pct": 80},
+            "cio": {"portfolio_action": "STAY_CASH", "market_regime": "NEUTRAL"},
+            "agents": {
+                "quant_strategist": {
+                    "payload": {
+                        "symbol_views": [{"symbol": "AMD", "entry_zone": {"min": 1, "max": 2}}]
+                    }
+                }
+            },
+        },
+        week=week,
+    )
+    threads = dialogue_threads(facts)
+    loss = next(t for t in threads if t["topic"] == "loss")
+    sug = next(t for t in threads if t["topic"] == "suggested")
+    assert "NVDA" in loss["line"]
+    assert "손절" in loss["reply"]
+    assert "건의" not in loss["line"] and "건의" not in loss["reply"]
+    assert "AMD" in sug["line"]
+    assert "손절" not in sug["reply"]
+    assert sug.get("close_who") == "quant_strategist"
 
 
 @pytest.mark.asyncio
