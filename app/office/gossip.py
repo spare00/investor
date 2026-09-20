@@ -736,7 +736,7 @@ def dialogue_threads(
         used.add(sym)
         return True
 
-    blocked = _uniq_syms(list(clips.get("blocked") or []) + list(week.get("blocked") or []), limit=4)
+    blocked = _uniq_syms(list(clips.get("blocked") or []) + list(week.get("blocked") or []), limit=2)
     missed = _uniq_syms(list(clips.get("missed") or []) + list(week.get("suggested") or []), limit=6)
     for tick in blocked:
         if not _claim(tick):
@@ -758,22 +758,7 @@ def dialogue_threads(
                 close=closer,
             )
         )
-    for tick in missed:
-        if not _claim(tick):
-            continue
-        threads.append(
-            _thread(
-                topic="suggested",
-                tick=tick,
-                who="market_intelligence",
-                line=f"지난주에 {tick}도 건의했었는데.",
-                reply_who="cio",
-                reply=f"{tick} 사고 싶었는데 {book.get('action') or 'STAY_CASH'}.",
-                close_who="quant_strategist",
-                close=f"{tick} 존 냈는데 안 들어갔어.",
-            )
-        )
-    for row in (week.get("losers") or [])[:3]:
+    for row in (week.get("losers") or [])[:2]:
         if not isinstance(row, dict):
             continue
         tick = str(row.get("s") or "").upper()
@@ -792,7 +777,7 @@ def dialogue_threads(
                 close=f"{tick} 존이 짧았지.",
             )
         )
-    for row in (week.get("winners") or [])[:2]:
+    for row in (week.get("winners") or [])[:1]:
         if not isinstance(row, dict):
             continue
         tick = str(row.get("s") or "").upper()
@@ -823,6 +808,23 @@ def dialogue_threads(
                 reply=reply,
                 close_who="universe_manager",
                 close="장은 쉬니까 워치만 다시 보자." if book.get("camp") else "워치 다시 맞춰보자.",
+            )
+        )
+    for tick in missed:
+        if len(threads) >= 6:
+            break
+        if not _claim(tick):
+            continue
+        threads.append(
+            _thread(
+                topic="suggested",
+                tick=tick,
+                who="market_intelligence",
+                line=f"지난주에 {tick}도 건의했었는데.",
+                reply_who="cio",
+                reply=f"{tick} 사고 싶었는데 {book.get('action') or 'STAY_CASH'}.",
+                close_who="quant_strategist",
+                close=f"{tick} 존 냈는데 안 들어갔어.",
             )
         )
     return [t for t in threads if t.get("line") and t.get("reply")][:6]
