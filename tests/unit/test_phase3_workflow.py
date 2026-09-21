@@ -386,6 +386,87 @@ async def test_catch_up_marks_planned_premarket_jobs_completed(session: AsyncSes
 
 
 @pytest.mark.asyncio
+async def test_catch_up_ignores_cooldown_once_tape_is_live(session: AsyncSession) -> None:
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-04")
+    run = await svc.get_current("2026-08-04")
+    assert run is not None
+    run.current_state = DailyWorkflowState.PREMARKET_ANALYSIS.value
+    run.metadata_json = {
+        "last_catch_up_at": "2026-08-04T14:59:00+00:00",
+    }
+    await session.flush()
+    now = datetime(2026, 8, 4, 15, 0, tzinfo=UTC)
+    out = await svc.catch_up_to_intraday(session_date="2026-08-04", now=now, fake_llm=True)
+    assert (out.get("catch_up") or {}).get("reason") != "catch_up_cooldown"
+    assert out["current_state"] == DailyWorkflowState.INTRADAY.value
+
+
+@pytest.mark.asyncio
+async def test_catch_up_enters_intraday_when_analysis_fails_after_open(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _boom(*_a: object, **_k: object) -> dict:
+        raise DailyWorkflowError("portfolio_sync_failed:ibkr_connect_failed")
+
+    monkeypatch.setattr(DailyWorkflowService, "run_analysis", _boom)
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-04")
+    run = await svc.get_current("2026-08-04")
+    assert run is not None
+    run.current_state = DailyWorkflowState.PREMARKET_ANALYSIS.value
+    await session.flush()
+    now = datetime(2026, 8, 4, 15, 0, tzinfo=UTC)
+    out = await svc.catch_up_to_intraday(session_date="2026-08-04", now=now, fake_llm=True)
+    assert out["current_state"] == DailyWorkflowState.INTRADAY.value
+    assert (out.get("catch_up") or {}).get("reason") == "analysis_failed_enter"
+    assert (out.get("metadata") or {}).get("catch_up_incomplete")
+
+
+@pytest.mark.asyncio
+async def test_evaluate_intraday_does_not_skip_when_stuck_in_premarket(
+    session: AsyncSession,
+) -> None:
+    svc = DailyWorkflowService(session, settings=get_settings())
+    await svc.prepare(session_date="2026-08-04")
+    run = await svc.get_current("2026-08-04")
+    assert run is not None
+    run.current_state = DailyWorkflowState.PREMARKET_ANALYSIS.value
+    run.metadata_json = {"last_catch_up_at": "2026-08-04T14:50:00+00:00"}
+    await session.flush()
+    now = datetime(2026, 8, 4, 15, 0, tzinfo=UTC)
+    out = await svc.evaluate_intraday(
+        session_date="2026-08-04", trigger="interval", now=now, fake_llm=True
+    )
+    assert out["current_state"] == DailyWorkflowState.INTRADAY.value
+    assert (out.get("intraday") or {}).get("result")
+
+
+@pytest.mark.asyncio
+async def test_recovery_uses_run_venue_calendar_for_au_session(
+    session: AsyncSession,
+) -> None:
+    # Monday 12:00 Sydney = Sunday night US. Primary calendar is NYSE.
+    now = datetime(2026, 9, 21, 2, 0, tzinfo=UTC)
+    run = DailyWorkflowRun(
+        id=uuid4(),
+        session_date="2026-09-21",
+        calendar_name="ASX",
+        current_state=DailyWorkflowState.PREMARKET_ANALYSIS.value,
+        status="running",
+        timezone="Australia/Sydney",
+        metadata_json={},
+    )
+    session.add(run)
+    await session.flush()
+    result = await RecoveryService(session).run(now=now)
+    assert any(a.startswith("resume_intraday_eligible:") for a in result["actions"])
+    assert not any(a.startswith("resume_session_eligible:") for a in result["actions"])
+    await session.refresh(run)
+    assert (run.metadata_json or {}).get("recovery_note") == "resume_after_restart"
+
+
+@pytest.mark.asyncio
 async def test_recovery_preserves_emergency(session: AsyncSession) -> None:
     trading_controls.emergency_stop("persist-me")
     await persist_trading_controls(session, trading_controls)
@@ -543,6 +624,17 @@ async def test_universe_refresh_skipped_when_static(monkeypatch: pytest.MonkeyPa
         assert "universe_refresh" not in ids
     finally:
         await sched.stop_scheduler()
+
+
+def test_reschedule_stuck_premarket_intraday_errors() -> None:
+    from app.core.scheduler import _reschedule_intraday_not_ready
+
+    assert _reschedule_intraday_not_ready(
+        "intraday_not_allowed_from:PREMARKET_ANALYSIS:catch_up={'reason': 'catch_up_cooldown'}"
+    )
+    assert _reschedule_intraday_not_ready("intraday_not_allowed_from:PREOPEN_REVALIDATION")
+    assert not _reschedule_intraday_not_ready("intraday_not_allowed_from:CLOSING_WINDOW")
+    assert not _reschedule_intraday_not_ready("emergency_stop_active")
 
 
 def test_coalesce_keeps_latest_intraday_only() -> None:

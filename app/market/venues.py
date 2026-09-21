@@ -165,6 +165,12 @@ def run_calendar_name(venue: Venue | str, settings: Settings | None = None) -> s
     return (cfg.market_calendar or "NYSE").upper()
 
 
+def venue_for_calendar_name(calendar_name: str | None) -> Venue:
+    """Map a DailyWorkflowRun.calendar_name back to US/AU."""
+    cal = str(calendar_name or "").strip().upper()
+    return _CALENDAR_TO_VENUE.get(cal, Venue.US)
+
+
 def scoped_job_key(venue: Venue | str, base: str) -> str:
     """Prefix scheduled job keys so US/AU session dates can coexist."""
     v = parse_venue(venue) or Venue.US

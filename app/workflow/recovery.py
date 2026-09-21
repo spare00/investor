@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.execution.ops_persistence import restore_trading_controls
 from app.execution.safety_controls import trading_controls
 from app.market.calendar import MarketCalendarService
+from app.market.venues import venue_for_calendar_name
 from app.models import DailyWorkflowRun
 from app.workflow.lease import LeaseService
 from app.workflow.states import DailyWorkflowState, WorkflowRunStatus
@@ -56,8 +57,11 @@ class RecoveryService:
             .all()
         )
         for run in open_runs:
+            run_cal = MarketCalendarService(
+                self.settings, venue=venue_for_calendar_name(run.calendar_name)
+            )
             session_day = datetime.fromisoformat(run.session_date).date()
-            today = now.astimezone(self.calendar.market_tz).date()
+            today = now.astimezone(run_cal.market_tz).date()
             if run.current_state == DailyWorkflowState.EMERGENCY_STOP.value:
                 actions.append(f"keep_emergency:{run.session_date}")
                 continue
@@ -75,11 +79,11 @@ class RecoveryService:
                 DailyWorkflowState.PREMARKET_PREPARATION.value,
                 DailyWorkflowState.PREMARKET_ANALYSIS.value,
             }:
-                status = self.calendar.get_market_status(now)
+                status = run_cal.get_market_status(now)
                 if status.phase in {"PREMARKET", "BEFORE_PREMARKET"}:
                     actions.append(f"resume_premarket_eligible:{run.session_date}")
                 elif (
-                    status.phase in {"REGULAR", "CLOSING"}
+                    status.phase in {"REGULAR", "FORCE_CLOSE_WINDOW", "CLOSING_WINDOW"}
                     or status.in_closing_window
                     or status.in_force_close_window
                 ):
@@ -95,7 +99,7 @@ class RecoveryService:
                     meta["recovery_note"] = "resume_after_restart"
                     run.metadata_json = meta
             elif run.current_state == DailyWorkflowState.CLOSING_WINDOW.value:
-                if self.calendar.get_market_status(now).phase in {"POSTMARKET", "AFTER_HOURS"}:
+                if run_cal.get_market_status(now).phase in {"POSTMARKET", "AFTER_HOURS"}:
                     actions.append(f"missed_closing_no_orders:{run.session_date}")
                     meta = dict(run.metadata_json or {})
                     meta["recovery_note"] = "missed_closing_window"

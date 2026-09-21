@@ -508,6 +508,17 @@ class DailyWorkflowService:
             run.metadata_json = meta
             await self.session.flush()
 
+    def _market_needs_intraday(self, now: datetime) -> bool:
+        """True when this venue's tape is already in the regular / close window."""
+        status = self.calendar.get_market_status(now)
+        if not status.is_trading_day:
+            return False
+        return (
+            status.phase in {"REGULAR", "FORCE_CLOSE_WINDOW", "CLOSING_WINDOW"}
+            or status.in_closing_window
+            or status.in_force_close_window
+        )
+
     def _should_catch_up_session(self, run: DailyWorkflowRun, now: datetime) -> bool:
         """True when prep is incomplete and market is near open or already open."""
         if run.current_state not in {
@@ -516,11 +527,11 @@ class DailyWorkflowService:
             DailyWorkflowState.PREOPEN_REVALIDATION.value,
         }:
             return False
+        if self._market_needs_intraday(now):
+            return True
         status = self.calendar.get_market_status(now)
         if not status.is_trading_day:
             return False
-        if status.phase in {"REGULAR", "CLOSING"} or status.in_closing_window or status.in_force_close_window:
-            return True
         mins = status.minutes_to_open
         if mins is None:
             return False
@@ -534,6 +545,50 @@ class DailyWorkflowService:
         ):
             return True
         return False
+
+    async def _enter_intraday_after_failed_prep(
+        self,
+        run: DailyWorkflowRun,
+        *,
+        now: datetime,
+        fake_llm: bool,
+        reason: str,
+    ) -> DailyWorkflowRun:
+        """Leave stuck premarket and enter the tape so interval evals can run.
+
+        Premarket analysis can fail (IBKR down) while the book is already open.
+        Prefer a no-trade INTRADAY session over burning every ``intraday_eval_*``
+        as ``skipped``.
+        """
+        if run.current_state in {
+            DailyWorkflowState.INTRADAY.value,
+            DailyWorkflowState.MARKET_OPEN.value,
+        }:
+            return run
+        meta = dict(run.metadata_json or {})
+        meta["no_trade_reason"] = str(reason)[:240]
+        meta["catch_up_incomplete"] = str(reason)[:240]
+        run.metadata_json = meta
+        await self.session.flush()
+        if run.current_state == DailyWorkflowState.PREMARKET_PREPARATION.value:
+            await self._set_state(
+                run,
+                DailyWorkflowState.PREMARKET_ANALYSIS,
+                trigger="catch_up",
+                reason="failed_prep_enter",
+            )
+        if run.current_state == DailyWorkflowState.PREMARKET_ANALYSIS.value:
+            await self._set_state(
+                run,
+                DailyWorkflowState.PREOPEN_REVALIDATION,
+                trigger="catch_up",
+                reason="analysis_failed_enter",
+            )
+        if run.current_state == DailyWorkflowState.PREOPEN_REVALIDATION.value:
+            await self.revalidate(
+                session_date=run.session_date, fake_llm=fake_llm, now=now
+            )
+        return await self._require_run(run.session_date)
 
     async def catch_up_to_intraday(
         self,
@@ -579,7 +634,10 @@ class DailyWorkflowService:
 
         meta = dict(run.metadata_json or {})
         last = meta.get("last_catch_up_at")
-        if last and not force:
+        tape_live = self._market_needs_intraday(now)
+        # Cooldown is for pre-open hammering. Once the tape is live, interval
+        # evals must be allowed to pull the session into INTRADAY.
+        if last and not force and not tape_live:
             try:
                 ts = datetime.fromisoformat(str(last))
                 if ts.tzinfo is None:
@@ -598,14 +656,36 @@ class DailyWorkflowService:
         run.metadata_json = meta
         await self.session.flush()
 
-        if run.current_state == DailyWorkflowState.PREMARKET_PREPARATION.value:
-            await self.run_analysis(session_date=run.session_date, fake_llm=fake_llm, now=now)
-            steps.append("analysis")
-            run = await self._require_run(run.session_date)
-        elif run.current_state == DailyWorkflowState.PREMARKET_ANALYSIS.value:
-            await self.run_analysis(session_date=run.session_date, fake_llm=fake_llm, now=now)
-            steps.append("analysis")
-            run = await self._require_run(run.session_date)
+        if run.current_state in {
+            DailyWorkflowState.PREMARKET_PREPARATION.value,
+            DailyWorkflowState.PREMARKET_ANALYSIS.value,
+        }:
+            try:
+                await self.run_analysis(
+                    session_date=run.session_date, fake_llm=fake_llm, now=now
+                )
+                steps.append("analysis")
+                run = await self._require_run(run.session_date)
+            except DailyWorkflowError as exc:
+                if not tape_live:
+                    raise
+                run = await self._enter_intraday_after_failed_prep(
+                    run, now=now, fake_llm=fake_llm, reason=str(exc)
+                )
+                steps.append("analysis_failed_enter")
+                jobs_marked = await self._mark_catch_up_jobs(
+                    run.session_date, ["analysis", "revalidate"], now=now
+                )
+                return {
+                    **self._run_dict(run),
+                    "catch_up": {
+                        "skipped": False,
+                        "steps": steps,
+                        "reason": "analysis_failed_enter",
+                        "error": str(exc)[:240],
+                        "jobs_marked": jobs_marked,
+                    },
+                }
 
         if run.current_state == DailyWorkflowState.PREOPEN_REVALIDATION.value:
             settled = await self.revalidate(
@@ -717,10 +797,39 @@ class DailyWorkflowService:
             DailyWorkflowState.MARKET_OPEN.value,
         }:
             # Late start / stuck preopen: finish prep then continue as intraday.
-            catch = await self.catch_up_to_intraday(
-                session_date=run.session_date, now=now, fake_llm=fake_llm
-            )
+            tape_live = self._market_needs_intraday(now)
+            try:
+                catch = await self.catch_up_to_intraday(
+                    session_date=run.session_date,
+                    now=now,
+                    fake_llm=fake_llm,
+                    force=tape_live,
+                )
+            except DailyWorkflowError as exc:
+                if not tape_live:
+                    raise
+                run = await self._enter_intraday_after_failed_prep(
+                    run, now=now, fake_llm=fake_llm, reason=str(exc)
+                )
+                catch = {
+                    "catch_up": {
+                        "skipped": False,
+                        "reason": "analysis_failed_enter",
+                        "error": str(exc)[:240],
+                    }
+                }
             run = await self._require_run(run.session_date)
+            if run.current_state not in {
+                DailyWorkflowState.INTRADAY.value,
+                DailyWorkflowState.MARKET_OPEN.value,
+            }:
+                if tape_live:
+                    run = await self._enter_intraday_after_failed_prep(
+                        run,
+                        now=now,
+                        fake_llm=fake_llm,
+                        reason=str((catch.get("catch_up") or {}).get("reason") or "catch_up_incomplete"),
+                    )
             if run.current_state not in {
                 DailyWorkflowState.INTRADAY.value,
                 DailyWorkflowState.MARKET_OPEN.value,

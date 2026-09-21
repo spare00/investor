@@ -224,6 +224,18 @@ def _broker_recon_enabled(cfg: Settings) -> bool:
     )
 
 
+def _reschedule_intraday_not_ready(error: str) -> bool:
+    """Stuck premarket is transient — do not burn the interval eval as skipped."""
+    text = str(error or "")
+    if "catch_up_cooldown" in text:
+        return True
+    if "intraday_not_allowed_from:PREMARKET" in text:
+        return True
+    if "intraday_not_allowed_from:PREOPEN" in text:
+        return True
+    return False
+
+
 def _coalesce_due_jobs(due: list[Any]) -> list[Any]:
     """Keep only the latest overdue intraday_eval_* job per venue; mark older ones skipped."""
     from collections import defaultdict
@@ -499,17 +511,33 @@ async def _dispatch_due_jobs() -> None:
                     logger.info("scheduler_job_done", **entry)
                     await session.commit()
                 except DailyWorkflowError as exc:
-                    from types import SimpleNamespace
-
+                    err = str(exc)[:500]
+                    resume = _reschedule_intraday_not_ready(err)
                     await _rollback_quietly(session)
-                    await _set_job_row_status(
-                        session,
-                        job_id,
-                        status="skipped",
-                        error=str(exc)[:500],
-                        completed_at=datetime.now(UTC),
-                    )
-                    logger.warning("scheduler_job_skipped", job=job_key, error=str(exc))
+                    if resume:
+                        await _set_job_row_status(
+                            session,
+                            job_id,
+                            status="planned",
+                            error=err,
+                            planned_at=datetime.now(UTC) + timedelta(seconds=30),
+                            started_at=None,
+                        )
+                        logger.warning(
+                            "scheduler_job_rescheduled",
+                            job=job_key,
+                            error=err,
+                            reason="intraday_not_ready",
+                        )
+                    else:
+                        await _set_job_row_status(
+                            session,
+                            job_id,
+                            status="skipped",
+                            error=err,
+                            completed_at=datetime.now(UTC),
+                        )
+                        logger.warning("scheduler_job_skipped", job=job_key, error=err)
                     await session.commit()
                 except Exception as exc:  # noqa: BLE001
                     from types import SimpleNamespace

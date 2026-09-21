@@ -9,7 +9,12 @@ import pytest
 
 from app.core.config import clear_settings_cache, get_settings
 from app.market.calendar import MarketCalendarService
-from app.market.venues import Venue, ib_qualify_candidates, resolve_venue
+from app.market.venues import (
+    Venue,
+    ib_qualify_candidates,
+    resolve_venue,
+    venue_for_calendar_name,
+)
 
 
 SYD = ZoneInfo("Australia/Sydney")
@@ -29,6 +34,9 @@ def _settings(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_resolve_primary_venue() -> None:
     assert resolve_venue(get_settings()) == Venue.US
     assert resolve_venue(get_settings(), venue="AU") == Venue.AU
+    assert venue_for_calendar_name("ASX") == Venue.AU
+    assert venue_for_calendar_name("XASX") == Venue.AU
+    assert venue_for_calendar_name("NYSE") == Venue.US
 
 
 def test_asx_regular_session() -> None:
