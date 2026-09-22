@@ -162,7 +162,8 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         horizon="short",
         label_ko="단기",
         summary=(
-            "Swing trend is the backdrop. Buy dips toward SMA50 in an uptrend. "
+            "Swing trend is the backdrop. Buy dips toward SMA50 in an uptrend, "
+            "or follow multi-day same-price accumulation (split institutional bids). "
             "Do not buy oversold bounces in a downtrend. Overnight ok. "
             "Size from risk budget."
         ),
@@ -334,8 +335,11 @@ def classify_timing(
     high: float | None = None,
     low: float | None = None,
     sma_20: float | None = None,
+    accumulation: bool = False,
 ) -> str:
-    """dip_buy | continuation | chase | bounce | falling_knife | blowoff."""
+    """dip_buy | continuation | chase | bounce | falling_knife | blowoff | accumulation."""
+    if accumulation:
+        return "accumulation"
     up = trend in {TrendState.UP, TrendState.STRONG_UP}
     down = trend in {TrendState.DOWN, TrendState.STRONG_DOWN}
     loc = _range_loc(last, high, low)
@@ -389,6 +393,7 @@ def apply_timing_probability(
     high: float | None = None,
     low: float | None = None,
     sma_20: float | None = None,
+    accumulation: bool = False,
 ) -> tuple[float, list[str], str]:
     label = classify_timing(
         trend=trend,
@@ -399,6 +404,7 @@ def apply_timing_probability(
         high=high,
         low=low,
         sma_20=sma_20,
+        accumulation=accumulation,
     )
     notes = list(notes) + [f"timing={label}"]
     delta = {
@@ -408,6 +414,7 @@ def apply_timing_probability(
         "chase": -0.04,
         "falling_knife": -0.20,
         "blowoff": -0.20,
+        "accumulation": 0.10,
     }.get(label, 0.0)
     if delta:
         notes.append(f"{label}={delta:+.2f}")
@@ -460,6 +467,7 @@ def structure_allows_entry(
     low: float | None = None,
     sma_20: float | None = None,
     minutes_to_close: float | None = None,
+    accumulation: bool = False,
 ) -> tuple[bool, str]:
     book = playbook_for(horizon)
     if book is None:
@@ -475,6 +483,14 @@ def structure_allows_entry(
             mtc = None
         if mtc is not None and 0 <= mtc < 45:
             return False, "too_close_to_flatten"
+    if rsi is not None:
+        if book.rsi_hard_max is not None and rsi > book.rsi_hard_max:
+            return False, f"rsi_extreme_{rsi:.0f}"
+        if book.rsi_hard_min is not None and rsi < book.rsi_hard_min:
+            return False, f"rsi_extreme_{rsi:.0f}"
+    if accumulation and horizon == "short":
+        # Multi-day same-price follow. Single-bar bounce/knife/chase labels do not veto.
+        return True, "ok"
     if horizon in {"scalp", "day"} and trend == TrendState.SIDEWAYS:
         return False, "sideways_stand_down"
     up = trend in {TrendState.UP, TrendState.STRONG_UP}
@@ -487,6 +503,7 @@ def structure_allows_entry(
         high=high,
         low=low,
         sma_20=sma_20,
+        accumulation=accumulation,
     )
     if timing == "falling_knife":
         return False, "falling_knife"
@@ -526,11 +543,6 @@ def structure_allows_entry(
             typical = (float(high) + float(low) + float(last)) / 3.0
             if last < typical:
                 return False, "below_session_vwap"
-    if rsi is not None:
-        if book.rsi_hard_max is not None and rsi > book.rsi_hard_max:
-            return False, f"rsi_extreme_{rsi:.0f}"
-        if book.rsi_hard_min is not None and rsi < book.rsi_hard_min:
-            return False, f"rsi_extreme_{rsi:.0f}"
     return True, "ok"
 
 
@@ -552,6 +564,7 @@ def should_propose_entry(
     low: float | None = None,
     sma_20: float | None = None,
     minutes_to_close: float | None = None,
+    accumulation: bool = False,
 ) -> bool:
     book = playbook_for(horizon)
     if book is None:
@@ -573,6 +586,7 @@ def should_propose_entry(
         low=low,
         sma_20=sma_20,
         minutes_to_close=minutes_to_close,
+        accumulation=accumulation,
     )
     if not ok:
         return False
@@ -885,6 +899,8 @@ def drop_blocked_entries(
     updated = []
     dropped_sideways = False
     changed = False
+    from app.universe.accumulation import view_has_accumulation
+
     for plan in decision.symbol_actions:
         action = plan.action
         if action not in _ENTRY_ACTIONS:
@@ -912,6 +928,7 @@ def drop_blocked_entries(
             rsi=None,
             regime=regime,
             minutes_to_close=minutes_to_close,
+            accumulation=view_has_accumulation(view),
             **tape_from_view(view),
         ):
             changed = True

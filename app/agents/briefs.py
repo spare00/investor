@@ -83,8 +83,8 @@ def _watch_rows(rows: list[dict] | None, *, limit: int = 16) -> list[dict[str, A
     return [r for r in out if r.get("s")]
 
 
-def _bar_row(bar: BarSnapshot) -> dict[str, Any]:
-    return _drop_empty(
+def _bar_row(bar: BarSnapshot, watchlist: list[dict] | None = None) -> dict[str, Any]:
+    row = _drop_empty(
         {
             "s": bar.symbol.upper(),
             "last": bar.last,
@@ -103,6 +103,13 @@ def _bar_row(bar: BarSnapshot) -> dict[str, Any]:
             "ask": bar.ask,
         }
     )
+    from app.universe.accumulation import detect_stealth_accumulation
+    from app.universe.book_strategy import horizon_for_symbol
+
+    hit = detect_stealth_accumulation(bar.session_history, avg_volume=bar.avg_volume_20d)
+    if hit.detected and horizon_for_symbol(bar.symbol, watchlist) == "short":
+        row["stealth"] = hit.brief()
+    return row
 
 
 def _mi_summary(mi: MarketIntelligenceOutput | None) -> dict[str, Any]:
@@ -250,8 +257,11 @@ def quant_brief(payload: QuantStrategistInput) -> str:
         "as_of": _iso(payload.as_of),
         "vix": payload.vix,
         "ad": payload.advance_decline,
-        "index": [_bar_row(b) for b in payload.index_bars[:6]],
-        "symbols": [_bar_row(b) for b in (payload.symbol_bars or payload.index_bars)[:16]],
+        "index": [_bar_row(b, payload.watchlist) for b in payload.index_bars[:6]],
+        "symbols": [
+            _bar_row(b, payload.watchlist)
+            for b in (payload.symbol_bars or payload.index_bars)[:16]
+        ],
         "watch": _watch_rows(payload.watchlist),
         "books": _watch_by_book(payload.watchlist),
         "playbooks": playbook_cards(),
@@ -261,8 +271,10 @@ def quant_brief(payload: QuantStrategistInput) -> str:
         data["lessons"] = payload.recent_lessons[:8]
     return _ask(
         "From these bars only: trend AND location. Dip in strength / bounce in "
-        "weakness. Skip falling knives. Do not keep proposing negative-signal names "
-        "unless location/trend flipped. Apply the book playbook. No invented indicators.",
+        "weakness. Skip falling knives. If stealth is listed, follow the multi-day "
+        "same-price bid on the short book — it is not a chase. Do not keep proposing "
+        "negative-signal names unless location/trend flipped. Apply the book playbook. "
+        "No invented indicators.",
         data,
         "QuantStrategistOutput. Stop from ATR/horizon policy. p from the numbers. <=12 symbol_views.",
     )

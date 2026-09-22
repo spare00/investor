@@ -1,10 +1,10 @@
 """Stamp and read entry/exit attribution on CIO plans and lifecycles.
 
 Public entry-reason labels (operator language):
-  uptrend_dip | oversold_bounce | chase | aggressive_injected
+  uptrend_dip | oversold_bounce | chase | stealth_buy | aggressive_injected
 
 Internal timing from classify_timing:
-  dip_buy | bounce | chase | continuation | falling_knife | blowoff
+  dip_buy | bounce | chase | continuation | falling_knife | blowoff | accumulation
 
 `aggressive_injected` is a source, not a timing. A trade can be both
 oversold_bounce and aggressive_injected; report buckets are independent gates.
@@ -22,12 +22,14 @@ TIMING_TO_REASON: dict[str, str] = {
     "dip_buy": "uptrend_dip",
     "bounce": "oversold_bounce",
     "chase": "chase",
+    "accumulation": "stealth_buy",
 }
 
 ENTRY_REASONS: tuple[str, ...] = (
     "uptrend_dip",
     "oversold_bounce",
     "chase",
+    "stealth_buy",
     "aggressive_injected",
 )
 

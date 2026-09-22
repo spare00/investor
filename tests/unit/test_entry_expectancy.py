@@ -32,6 +32,7 @@ def test_timing_labels_map_to_operator_reasons() -> None:
     assert public_entry_reason("dip_buy") == "uptrend_dip"
     assert public_entry_reason("bounce") == "oversold_bounce"
     assert public_entry_reason("chase") == "chase"
+    assert public_entry_reason("accumulation") == "stealth_buy"
     assert public_entry_reason("continuation") is None
 
 

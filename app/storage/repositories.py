@@ -123,6 +123,23 @@ class MarketSnapshotRepository:
                 newest[row.symbol] = row
         return list(newest.values())
 
+    async def recent_by_symbol(
+        self, symbols: list[str], *, since: datetime
+    ) -> dict[str, list[MarketSnapshot]]:
+        names = [s.upper() for s in symbols if s]
+        if not names:
+            return {}
+        result = await self.session.execute(
+            select(MarketSnapshot)
+            .where(MarketSnapshot.symbol.in_(names))
+            .where(MarketSnapshot.as_of >= since)
+            .order_by(MarketSnapshot.as_of.desc())
+        )
+        out: dict[str, list[MarketSnapshot]] = {}
+        for row in result.scalars().all():
+            out.setdefault(row.symbol.upper(), []).append(row)
+        return out
+
 
 class MacroSnapshotRepository:
     def __init__(self, session: AsyncSession) -> None:

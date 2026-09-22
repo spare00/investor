@@ -29,7 +29,7 @@ from app.schemas.common import RiskVerdict, SymbolAction, TraceMetadata
 from app.schemas.devils_advocate import DevilsAdvocateInput, ProposedThesis
 from app.schemas.macro_strategist import MacroSnapshotInput, MacroStrategistInput
 from app.schemas.market_intelligence import MarketIntelligenceInput, NewsItemInput
-from app.schemas.quant_strategist import BarSnapshot, QuantStrategistInput, QuantStrategistOutput
+from app.schemas.quant_strategist import BarSnapshot, QuantStrategistInput, SessionBar
 from app.schemas.risk_manager import (
     PortfolioStateInput,
     ProposedTrade,
@@ -82,6 +82,8 @@ def theses_from_quant(
         if view.entry_zone is None:
             continue
         hz = horizon_for_symbol(sym, watchlist)
+        from app.universe.accumulation import view_has_accumulation
+
         if not should_propose_entry(
             horizon=hz,
             probability=float(view.probability_estimate or 0.0),
@@ -92,6 +94,7 @@ def theses_from_quant(
             rsi=None,
             regime=regime,
             minutes_to_close=minutes_to_close,
+            accumulation=view_has_accumulation(view),
             **tape_from_view(view),
         ):
             continue
@@ -322,6 +325,21 @@ class AgentPipeline:
         symbol_bars = []
         vix = None
         for m in collection.markets:
+            history = []
+            for p in (collection.session_history or {}).get(m.symbol.upper(), []):
+                try:
+                    history.append(
+                        SessionBar(
+                            session_date=p.session_date,
+                            close=float(p.close),
+                            open=p.open,
+                            high=p.high,
+                            low=p.low,
+                            volume=p.volume,
+                        )
+                    )
+                except (TypeError, ValueError, AttributeError):
+                    continue
             bar = BarSnapshot(
                 symbol=m.symbol,
                 last=m.last,
@@ -339,6 +357,7 @@ class AgentPipeline:
                 ask=m.ask,
                 premarket_change_pct=m.premarket_change_pct,
                 gap_pct=m.gap_pct,
+                session_history=history,
             )
             if m.symbol in index_syms:
                 index_bars.append(bar)

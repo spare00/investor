@@ -19,6 +19,17 @@ from app.schemas.common import (
 )
 
 
+class SessionBar(StrictModel):
+    """One venue-local session used for multi-day tape (stealth accumulation)."""
+
+    session_date: str
+    close: float
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    volume: float | None = None
+
+
 class BarSnapshot(StrictModel):
     symbol: str
     last: float
@@ -36,6 +47,10 @@ class BarSnapshot(StrictModel):
     ask: float | None = None
     premarket_change_pct: float | None = None
     gap_pct: float | None = None
+    session_history: list[SessionBar] = Field(
+        default_factory=list,
+        description="Recent session OHLCV (oldest first) for split-buy detection",
+    )
 
 
 class QuantStrategistInput(StrictModel):

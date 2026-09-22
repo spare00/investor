@@ -90,7 +90,10 @@ def quant_entry_plans(
         book = playbook_for(hz)
         if book is None:
             continue
-        if view.trend_state == TrendState.SIDEWAYS:
+        from app.universe.accumulation import view_has_accumulation
+
+        acc = view_has_accumulation(view)
+        if view.trend_state == TrendState.SIDEWAYS and not acc:
             continue
         if not should_propose_entry(
             horizon=hz,
@@ -102,6 +105,7 @@ def quant_entry_plans(
             rsi=None,
             regime=regime,
             minutes_to_close=minutes_to_close,
+            accumulation=acc,
             **tape_from_view(view),
         ):
             continue

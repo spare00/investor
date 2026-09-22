@@ -104,6 +104,8 @@ def _proposed_from_dicts(payload: dict[str, Any], regime: str | None) -> dict[st
         except (TypeError, ValueError):
             continue
         hz = horizon_for_symbol(sym)
+        from app.universe.accumulation import view_has_accumulation
+
         if not should_propose_entry(
             horizon=hz,
             probability=prob,
@@ -113,6 +115,7 @@ def _proposed_from_dicts(payload: dict[str, Any], regime: str | None) -> dict[st
             volatility=vol,
             rsi=None,
             regime=regime,
+            accumulation=view_has_accumulation(view),
             **tape_from_view(view),
         ):
             continue

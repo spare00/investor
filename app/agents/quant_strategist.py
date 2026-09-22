@@ -155,7 +155,7 @@ def _probability(trend: TrendState, momentum: MomentumState) -> tuple[float, str
 class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput]):
     name = AgentName.QUANT_STRATEGIST
     prompt_file = "system_v1.md"
-    prompt_version = "2.6.0"
+    prompt_version = "2.7.0"
 
     def output_model(self) -> type[QuantStrategistOutput]:
         return QuantStrategistOutput
@@ -166,6 +166,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
     def fallback_output(
         self, payload: QuantStrategistInput, *, reason: str
     ) -> QuantStrategistOutput:
+        from app.universe.accumulation import detect_stealth_accumulation
         from app.universe.book_strategy import (
             adjust_probability,
             apply_timing_probability,
@@ -187,6 +188,10 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
             vol = _volatility(bar, payload.vix)
             liq = _liquidity(bar)
             base_prob, basis = _probability(trend, mom)
+            hit = detect_stealth_accumulation(
+                bar.session_history, avg_volume=bar.avg_volume_20d
+            )
+            acc = horizon == "short" and hit.detected
             prob, book_notes = adjust_probability(
                 base=base_prob,
                 horizon=horizon,
@@ -207,6 +212,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                 high=bar.high,
                 low=bar.low,
                 sma_20=bar.sma_20,
+                accumulation=acc,
             )
             book = playbook_for(horizon)
             pol = by_pol.get(bar.symbol.upper())
@@ -232,6 +238,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
                 low=bar.low,
                 sma_20=bar.sma_20,
                 minutes_to_close=minutes_to_close,
+                accumulation=acc,
             )
             hard_no_zone = (
                 why
@@ -256,6 +263,10 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
             notes = ["python-indicators" if reason == "local_python_owns" else "fallback-rules"]
             notes.extend(book_notes)
             notes.append(f"structure={why}")
+            if acc:
+                notes.append(f"stealth={hit.reason}")
+            elif hit.reason not in {"insufficient_history"}:
+                notes.append(f"stealth_no={hit.reason}")
             views.append(
                 SymbolQuantView(
                     symbol=bar.symbol.upper(),

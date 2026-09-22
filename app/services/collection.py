@@ -48,6 +48,7 @@ class CollectionBundle:
     eligibility: list[EligibilityResult] = field(default_factory=list)
     aggregate_quality: float = 0.0
     errors: list[str] = field(default_factory=list)
+    session_history: dict[str, list[Any]] = field(default_factory=dict)
 
     @property
     def fail_closed(self) -> bool:
@@ -196,6 +197,8 @@ class DataCollectionService:
             bundle.errors.append(msg)
             logger.exception("fundamentals_collection_failed", workflow_id=str(wf))
 
+        await self._attach_session_history(bundle, universe)
+
         news_scores = [n.quality_score for n in bundle.news if not n.is_duplicate]
         market_scores = [m.quality_score for m in bundle.markets]
         macro_score = bundle.macro.quality_score if bundle.macro else None
@@ -237,3 +240,31 @@ class DataCollectionService:
             fail_closed=bundle.fail_closed,
         )
         return bundle
+
+    async def _attach_session_history(self, bundle: CollectionBundle, universe: list[str]) -> None:
+        """Load recent session prints so Quant can see multi-day split-buy boxes."""
+        from app.universe.accumulation import (
+            collapse_snapshots_to_sessions,
+            session_date_for,
+            session_print_from_row,
+            upsert_session,
+        )
+
+        history: dict[str, list[Any]] = {}
+        try:
+            since = bundle.collected_at - timedelta(days=18)
+            by_sym = await self.market_repo.recent_by_symbol(universe, since=since)
+            for sym, rows in by_sym.items():
+                history[sym] = collapse_snapshots_to_sessions(rows, symbol=sym)
+        except Exception:  # noqa: BLE001 — overlay is optional, never fail closed
+            logger.exception("session_history_load_failed", workflow_id=str(bundle.workflow_id))
+            history = {}
+        for m in bundle.markets:
+            printed = session_print_from_row(m)
+            if printed is None:
+                date = session_date_for(m.as_of, m.symbol)
+                printed = session_print_from_row(m, session_date=date)
+            if printed is None:
+                continue
+            history[m.symbol.upper()] = upsert_session(history.get(m.symbol.upper(), []), printed)
+        bundle.session_history = history
