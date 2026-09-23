@@ -317,6 +317,53 @@ async def test_apply_allows_candidate_add(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_lock_membership_ignores_pause_and_remove(session: AsyncSession) -> None:
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.models import WatchlistSymbol
+    from app.schemas.universe_manager import UniverseManagerOutput, WatchlistProposal
+
+    settings = Settings(
+        universe_mode="dynamic",
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=["JPM"],
+        universe_manager_enabled=False,
+        universe_screener_enabled=False,
+    )
+    session.add(
+        WatchlistSymbol(
+            symbol="JPM", horizon="short", status="active", priority=70, thesis="bank"
+        )
+    )
+    await session.flush()
+    svc = UniverseService(session, settings=settings)
+    await svc._apply_proposals(
+        UniverseManagerOutput(
+            timestamp=datetime.now(UTC),
+            proposals=[
+                WatchlistProposal(
+                    symbol="JPM",
+                    horizon=UniverseHorizon.SHORT,
+                    action="remove",
+                    priority=70,
+                    thesis="drop",
+                    invalidation="x",
+                )
+            ],
+            focus_symbols=["SPY"],
+            focus_rationale="x",
+        ),
+        lock_membership=True,
+    )
+    row = (
+        await session.execute(select(WatchlistSymbol).where(WatchlistSymbol.symbol == "JPM"))
+    ).scalar_one()
+    assert row.status == "active"
+
+
+@pytest.mark.asyncio
 async def test_closing_forces_scalp_even_if_overnight_flag(session: AsyncSession) -> None:
     settings = Settings(
         intraday_operation_mode="MANUAL_APPROVAL",

@@ -18,7 +18,7 @@ from app.universe.horizons import UniverseHorizon
 class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput]):
     name = AgentName.UNIVERSE_MANAGER
     prompt_file = "system_v1.md"
-    prompt_version = "2.1.1"
+    prompt_version = "2.2.0"
 
     def output_model(self) -> type[UniverseManagerOutput]:
         return UniverseManagerOutput

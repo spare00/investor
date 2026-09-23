@@ -726,6 +726,12 @@ class UniverseService:
                 "hygiene": hygiene,
             }
 
+        screened, screen_meta = await self._screened_candidate_pool(
+            themes=themes, market_regime=market_regime
+        )
+        recon = await self.reconstitute_watchlist(
+            holdings=holdings or [], screened=set(screened)
+        )
         paused = list(
             (
                 await self.session.execute(
@@ -734,9 +740,6 @@ class UniverseService:
             )
             .scalars()
             .all()
-        )
-        screened, screen_meta = await self._screened_candidate_pool(
-            themes=themes, market_regime=market_regime
         )
         from app.market.venues import Venue, enabled_venues
         from app.universe.candidates import combined_seed_pool
@@ -772,7 +775,11 @@ class UniverseService:
         if fallback:
             logger.warning("universe_manager_fallback_reconstitute")
         else:
-            await self._apply_proposals(out, candidate_symbols=set(screened))
+            await self._apply_proposals(
+                out,
+                candidate_symbols=set(screened),
+                lock_membership=True,
+            )
         recon = await self.reconstitute_watchlist(
             holdings=holdings or [], screened=set(screened)
         )
@@ -985,6 +992,7 @@ class UniverseService:
         out: UniverseManagerOutput,
         *,
         candidate_symbols: set[str] | None = None,
+        lock_membership: bool = False,
     ) -> None:
         now = utc_now()
         by_sym = {
@@ -1015,6 +1023,8 @@ class UniverseService:
                 continue
             row = by_sym.get(sym)
             action = prop.action.lower()
+            if lock_membership and action in {"remove", "pause"}:
+                continue
             if action == "remove":
                 if row:
                     row.status = "removed"

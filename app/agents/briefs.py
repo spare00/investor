@@ -426,9 +426,11 @@ def cio_brief(payload: CIOInput) -> str:
 
 def universe_brief(payload: UniverseManagerInput) -> str:
     from app.universe.candidates import SECTOR_BY_SYMBOL
+    from app.universe.constituents import gics_sector_buckets
 
     watch_cap = max(int(payload.watchlist_limit or 40), 16)
     watch = _watch_rows(payload.current_watchlist, limit=watch_cap)
+    gics = gics_sector_buckets()
     names: list[str] = []
     seen: set[str] = set()
     for raw in (
@@ -443,7 +445,7 @@ def universe_brief(payload: UniverseManagerInput) -> str:
         names.append(sym)
     sectors: dict[str, list[str]] = {}
     for sym in names:
-        sectors.setdefault(SECTOR_BY_SYMBOL.get(sym, "other"), []).append(sym)
+        sectors.setdefault(SECTOR_BY_SYMBOL.get(sym) or gics.get(sym, "other"), []).append(sym)
     data = {
         "as_of": _iso(payload.as_of),
         "venues": payload.enabled_venues,
@@ -461,9 +463,9 @@ def universe_brief(payload: UniverseManagerInput) -> str:
         "outcomes": payload.recent_outcomes or {},
     }
     return _ask(
-        "Pick 4-8 industries, maintain membership in that bounded pool, then pick working focus <=limit. Not the whole market.",
+        "Python already reconstituted this week's watch. Pick 4-8 industries and working focus <=limit. Do not rebuild the index.",
         data,
-        "UniverseManagerOutput. industries + focus_symbols. thesis/invalidation <=80 chars.",
+        "UniverseManagerOutput. industries + focus_symbols. keep/rehorizon only. thesis/invalidation <=80 chars.",
     )
 
 

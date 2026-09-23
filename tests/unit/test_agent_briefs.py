@@ -236,7 +236,7 @@ def test_universe_brief_is_industry_then_working_set() -> None:
         )
     )
     assert text.startswith("QUESTION:")
-    assert "Pick 4-8 industries" in text
+    assert "Python already reconstituted" in text
     assert "membership_by_sector" in text
     assert "working" in text
     assert "PLTR" in text
