@@ -172,6 +172,9 @@ def test_dashboard_routes_exist() -> None:
             assert b"renderUsSession" in dash.content
             assert b"renderIntradayCadence" in dash.content
             assert b"universePaused" in dash.content
+            assert b"universeRoster" in dash.content
+            assert b"universeRosterFull" in dash.content
+            assert b"consecutive_listed_days" in dash.content
             assert b"refreshStrip" in dash.content
             assert b"Promise.allSettled" in dash.content
             assert b"renderMonitor" in dash.content
@@ -186,7 +189,8 @@ def test_dashboard_routes_exist() -> None:
             assert b"overviewOpsStrip" in dash.content
             assert b"renderOverviewOpsStrip" in dash.content
             assert b"agentPerfNote" in dash.content
-            assert b"Horizon book" in dash.content
+            assert b"Universe roster" in dash.content
+            assert b"Universe by Horizon" in dash.content
             assert b"By entry reason (gate expectancy after costs)" in dash.content
             assert b"Policy cohorts" in dash.content
             assert b"Startup / Intraday Recovery" in dash.content

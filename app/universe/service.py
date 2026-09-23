@@ -17,6 +17,14 @@ from app.models.entities import FocusSetSnapshot, WatchlistSymbol
 from app.schemas.common import TraceMetadata
 from app.schemas.universe_manager import UniverseManagerInput, UniverseManagerOutput
 from app.universe.horizons import UniverseHorizon, all_horizon_summaries, policy_for
+from app.universe.tenure import (
+    churn_summary,
+    clear_active_since,
+    consecutive_focus_sessions,
+    inclusive_calendar_days,
+    listed_since,
+    stamp_active_since,
+)
 
 logger = get_logger(__name__)
 
@@ -93,7 +101,11 @@ class UniverseService:
                         invalidation="Liquidity failure or thesis break",
                         source="seed",
                         last_reviewed_at=now,
-                        payload={"seed_index": i, "venue": venue.value},
+                        payload={
+                            "seed_index": i,
+                            "venue": venue.value,
+                            "active_since": now.isoformat(),
+                        },
                     )
                 )
                 existing.add(sym)
@@ -300,17 +312,32 @@ class UniverseService:
             .scalars()
             .all()
         )
-        by_horizon: dict[str, list[dict[str, Any]]] = {h.value: [] for h in UniverseHorizon}
-        for r in rows:
-            item = self._row_dict(r)
-            by_horizon.setdefault(r.horizon, []).append(item)
         focus = await self._latest_focus()
+        focus_set = {str(s).upper() for s in (focus.symbols or [])} if focus is not None else set()
+        focus_streaks, focus_unique_30d = await self._focus_session_streaks()
+        now = utc_now()
+        by_horizon: dict[str, list[dict[str, Any]]] = {h.value: [] for h in UniverseHorizon}
+        watchlist = [
+            self._row_dict(r, now=now, focus_set=focus_set, focus_streaks=focus_streaks)
+            for r in rows
+        ]
+        for item in watchlist:
+            by_horizon.setdefault(str(item.get("horizon") or ""), []).append(item)
         screened, screen_meta = await self._screened_candidate_pool()
         from app.universe.candidates import membership_by_sector, membership_symbols
 
+        roster = self._membership_roster(
+            rows,
+            now=now,
+            focus_set=focus_set,
+            focus_streaks=focus_streaks,
+        )
+
         return {
             "mode": self.settings.universe_mode,
-            "watchlist": [self._row_dict(r) for r in rows],
+            "watchlist": watchlist,
+            "roster": roster,
+            "churn": churn_summary(roster, focus_unique_30d=focus_unique_30d),
             "by_horizon": by_horizon,
             "horizon_policies": all_horizon_summaries(),
             "limits": {
@@ -682,7 +709,7 @@ class UniverseService:
             row.status = "paused"
             row.last_reviewed_at = now
             row.payload = {
-                **(row.payload or {}),
+                **clear_active_since(row.payload, now=now),
                 "paused_by": "liquidity_screener",
                 "reasons": list(hit.reasons),
                 "avg_volume_20d": hit.avg_volume_20d,
@@ -831,6 +858,7 @@ class UniverseService:
                 if row:
                     row.status = "removed"
                     row.last_reviewed_at = now
+                    row.payload = clear_active_since(row.payload, now=now)
                 continue
             if action == "pause":
                 if row:
@@ -838,6 +866,7 @@ class UniverseService:
                     row.last_reviewed_at = now
                     row.thesis = prop.thesis or row.thesis
                     row.invalidation = prop.invalidation or row.invalidation
+                    row.payload = clear_active_since(row.payload, now=now)
                 continue
             venue_tag = venue_for_universe_symbol(self.settings, sym)
             if row is None:
@@ -851,11 +880,16 @@ class UniverseService:
                     invalidation=prop.invalidation,
                     source="universe_manager",
                     last_reviewed_at=now,
-                    payload={"rationale": prop.rationale, "venue": venue_tag},
+                    payload=stamp_active_since(
+                        {"rationale": prop.rationale, "venue": venue_tag},
+                        now=now,
+                        reset=True,
+                    ),
                 )
                 self.session.add(row)
                 by_sym[sym] = row
             else:
+                was_active = row.status == "active"
                 row.horizon = horizon if action in {"add", "keep", "rehorizon"} else row.horizon
                 row.status = "active"
                 row.priority = prop.priority
@@ -865,11 +899,15 @@ class UniverseService:
                     row.invalidation = prop.invalidation
                 row.source = "universe_manager"
                 row.last_reviewed_at = now
-                row.payload = {
-                    **(row.payload or {}),
-                    "rationale": prop.rationale,
-                    "venue": (row.payload or {}).get("venue") or venue_tag,
-                }
+                row.payload = stamp_active_since(
+                    {
+                        **(row.payload or {}),
+                        "rationale": prop.rationale,
+                        "venue": (row.payload or {}).get("venue") or venue_tag,
+                    },
+                    now=now,
+                    reset=not was_active,
+                )
 
         # Enforce watchlist limit by pausing lowest priority actives
         actives = sorted(
@@ -880,6 +918,7 @@ class UniverseService:
         for extra in actives[limit:]:
             extra.status = "paused"
             extra.last_reviewed_at = now
+            extra.payload = clear_active_since(extra.payload, now=now)
         await self.session.flush()
 
     async def _persist_focus(
@@ -942,13 +981,124 @@ class UniverseService:
             )
         ).scalar_one_or_none()
 
-    @staticmethod
-    def _row_dict(r: WatchlistSymbol) -> dict[str, Any]:
+    async def _focus_session_streaks(self, *, lookback: int = 180) -> tuple[dict[str, int], int]:
+        """Newest-first unique session-date focus membership → consecutive streaks + 30d unique."""
+        rows = list(
+            (
+                await self.session.execute(
+                    select(FocusSetSnapshot)
+                    .order_by(FocusSetSnapshot.as_of.desc())
+                    .limit(lookback)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_day: dict[str, set[str]] = {}
+        order: list[str] = []
+        for row in rows:
+            day = str(row.session_date or "").strip()
+            if not day:
+                continue
+            names = {str(s).upper() for s in (row.symbols or []) if s}
+            if day not in by_day:
+                order.append(day)
+                by_day[day] = set()
+            by_day[day] |= names
+        streaks = consecutive_focus_sessions([(d, by_day[d]) for d in order])
+        unique_30 = set()
+        for day in order[:30]:
+            unique_30 |= by_day.get(day, set())
+        return streaks, len(unique_30)
+
+    def _membership_roster(
+        self,
+        rows: list[WatchlistSymbol],
+        *,
+        now: datetime,
+        focus_set: set[str],
+        focus_streaks: dict[str, int],
+    ) -> list[dict[str, Any]]:
+        from app.universe.candidates import (
+            SECTOR_BY_SYMBOL,
+            combined_seed_pool,
+            curated_candidate_pool,
+            membership_symbols,
+            venue_for_universe_symbol,
+        )
+
+        seed = {s.upper() for s in combined_seed_pool(self.settings)}
+        cand = {s.upper() for s in curated_candidate_pool(self.settings)}
+        membership = {s.upper() for s in membership_symbols(self.settings)}
+        watch_by = {r.symbol.upper(): r for r in rows}
+        symbols = sorted(membership | set(watch_by))
+        roster: list[dict[str, Any]] = []
+        for sym in symbols:
+            row = watch_by.get(sym)
+            if row is not None:
+                item = self._row_dict(
+                    row, now=now, focus_set=focus_set, focus_streaks=focus_streaks
+                )
+            else:
+                item = {
+                    "symbol": sym,
+                    "horizon": None,
+                    "horizon_label_ko": None,
+                    "status": "pool",
+                    "priority": None,
+                    "thesis": None,
+                    "invalidation": None,
+                    "source": None,
+                    "last_reviewed_at": None,
+                    "last_outcome_stats": None,
+                    "created_at": None,
+                    "listed_since": None,
+                    "consecutive_listed_days": 0,
+                    "consecutive_focus_sessions": int(focus_streaks.get(sym, 0)),
+                    "in_focus": sym in focus_set,
+                }
+            if sym in seed:
+                role = "seed"
+            elif sym in cand:
+                role = "candidate"
+            else:
+                role = "watch_only"
+            item["in_membership"] = sym in membership
+            item["role"] = role
+            item["sector"] = SECTOR_BY_SYMBOL.get(sym, "other")
+            item["venue"] = venue_for_universe_symbol(self.settings, sym)
+            roster.append(item)
+        status_rank = {"active": 0, "paused": 1, "removed": 2, "pool": 3}
+        roster.sort(
+            key=lambda r: (
+                0 if r.get("in_focus") else 1,
+                status_rank.get(str(r.get("status") or ""), 9),
+                -int(r.get("consecutive_listed_days") or 0),
+                str(r.get("symbol") or ""),
+            )
+        )
+        return roster
+
+    def _row_dict(
+        self,
+        r: WatchlistSymbol,
+        *,
+        now: datetime | None = None,
+        focus_set: set[str] | None = None,
+        focus_streaks: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
         pol = None
         try:
             pol = policy_for(r.horizon)
         except Exception:  # noqa: BLE001
             pol = None
+        stamp = now or utc_now()
+        active = (r.status or "") == "active"
+        payload = r.payload if isinstance(r.payload, dict) else None
+        since = listed_since(payload, r.created_at, active=active)
+        sym = (r.symbol or "").upper()
+        in_focus = bool(focus_set) and sym in focus_set
+        created = r.created_at.isoformat() if r.created_at else None
         return {
             "symbol": r.symbol,
             "horizon": r.horizon,
@@ -959,6 +1109,11 @@ class UniverseService:
             "invalidation": r.invalidation,
             "source": r.source,
             "last_reviewed_at": r.last_reviewed_at.isoformat() if r.last_reviewed_at else None,
+            "created_at": created,
+            "listed_since": since.isoformat() if since else None,
+            "consecutive_listed_days": inclusive_calendar_days(since, now=stamp) if active else 0,
+            "consecutive_focus_sessions": int((focus_streaks or {}).get(sym, 0)),
+            "in_focus": in_focus,
             "last_outcome_stats": (r.payload or {}).get("last_outcome_stats")
             if isinstance(r.payload, dict)
             else None,

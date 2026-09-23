@@ -77,6 +77,7 @@ def _watch_rows(rows: list[dict] | None, *, limit: int = 16) -> list[dict[str, A
                     "h": raw.get("horizon"),
                     "p": raw.get("priority"),
                     "st": raw.get("status"),
+                    "d": raw.get("consecutive_listed_days"),
                 }
             )
         )

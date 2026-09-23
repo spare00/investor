@@ -119,6 +119,25 @@
     /* Overview: jobs need width for the session plan; universe is denser as a side panel. */
     section.jobs { grid-column: span 7; }
     section.universe { grid-column: span 5; }
+    .universe-roster {
+      max-height: 18rem;
+      overflow: auto;
+      margin-top: 0.45rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .universe-roster table { font-size: 0.78rem; margin: 0; }
+    .universe-roster thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: color-mix(in srgb, var(--panel) 96%, #0d1117);
+      box-shadow: 0 1px 0 var(--line);
+    }
+    .universe-roster tr.row-focus td {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+    }
+    #universeRosterFull.universe-roster { max-height: 36rem; }
     section.alerts #activeAlertsDetail {
       max-height: 16rem;
       overflow: auto;
@@ -1155,7 +1174,8 @@
         <div id="universeOutcomes" style="margin-top:0.5rem"></div>
         <div id="universePaused" style="margin-top:0.5rem"></div>
         <div id="universeFocus" style="margin-top:0.5rem"></div>
-        <div class="muted" style="margin-top:0.45rem">Horizon book → Operations tab</div>
+        <div id="universeRoster" class="universe-roster" style="margin-top:0.5rem"></div>
+        <div class="muted" style="margin-top:0.45rem">Full roster + horizon book → Operations tab</div>
       </section>
       <section class="full">
         <h2>Six Agents — Latest Opinions</h2>
@@ -1299,6 +1319,10 @@
         <h2>Startup / Intraday Recovery</h2>
         <div id="recoveryMeta" class="muted">Loading…</div>
         <div id="recoveryDetail" style="margin-top:0.65rem"></div>
+      </section>
+      <section class="wide">
+        <h2>Universe roster</h2>
+        <div id="universeRosterFull" class="universe-roster muted">Loading…</div>
       </section>
       <section class="wide">
         <h2>Universe by Horizon</h2>
@@ -2732,6 +2756,84 @@
       }
     }
 
+    function universeRosterRows(u) {
+      const roster = Array.isArray(u.roster) ? u.roster.slice() : [];
+      if (roster.length) return roster;
+      const membership = u.membership || [];
+      const watch = new Map((u.watchlist || []).map((r) => [String(r.symbol || "").toUpperCase(), r]));
+      const focus = new Set(((u.focus && u.focus.symbols) || []).map((s) => String(s).toUpperCase()));
+      return membership.map((sym) => {
+        const r = watch.get(String(sym).toUpperCase()) || {};
+        return {
+          symbol: sym,
+          status: r.status || "pool",
+          role: r.source === "seed" ? "seed" : (r.symbol ? "watch" : "candidate"),
+          horizon: r.horizon,
+          priority: r.priority,
+          source: r.source,
+          thesis: r.thesis,
+          consecutive_listed_days: r.consecutive_listed_days || 0,
+          consecutive_focus_sessions: r.consecutive_focus_sessions || 0,
+          in_focus: focus.has(String(sym).toUpperCase()),
+          sector: "",
+          venue: "",
+        };
+      });
+    }
+
+    function listedDaysTone(days, status) {
+      if (status !== "active") return "";
+      const n = Number(days) || 0;
+      if (n >= 30) return "warn";
+      if (n > 0 && n <= 7) return "good";
+      return "";
+    }
+
+    function renderUniverseRoster(el, u, { compact }) {
+      if (!el) return;
+      const rows = universeRosterRows(u);
+      if (!rows.length) {
+        el.innerHTML = `<div class="muted">No membership yet</div>`;
+        return;
+      }
+      const headers = compact
+        ? ["Symbol", "Role", "Status", "Listed", "Focus"]
+        : ["Symbol", "Venue", "Sector", "Role", "Status", "Hz", "Pri", "Listed", "Focus d", "Source", "Thesis"];
+      const body = rows.map((r) => {
+        const status = r.status || "pool";
+        const listed = status === "active" ? (r.consecutive_listed_days ?? 0) : 0;
+        const focusN = r.consecutive_focus_sessions ?? 0;
+        const statusTone = status === "active" ? "good" : (status === "paused" || status === "removed" ? "warn" : "");
+        const trClass = r.in_focus ? "row-focus" : "";
+        if (compact) {
+          return `<tr class="${trClass}">
+            <td class="mono">${esc(r.symbol)}${r.in_focus ? " ·" : ""}</td>
+            <td>${esc(r.role || "—")}</td>
+            <td>${pill(status, statusTone)}</td>
+            <td>${listed ? pill(`${listed}d`, listedDaysTone(listed, status)) : "—"}</td>
+            <td>${r.in_focus ? pill(`${focusN || 1}d`, "good") : "—"}</td>
+          </tr>`;
+        }
+        return `<tr class="${trClass}">
+          <td class="mono">${esc(r.symbol)}</td>
+          <td>${esc(r.venue || "—")}</td>
+          <td>${esc(r.sector || "—")}</td>
+          <td>${esc(r.role || "—")}</td>
+          <td>${pill(status, statusTone)}</td>
+          <td>${esc(r.horizon_label_ko || r.horizon || "—")}</td>
+          <td>${esc(r.priority ?? "—")}</td>
+          <td>${listed ? pill(`${listed}d`, listedDaysTone(listed, status)) : "—"}</td>
+          <td>${r.in_focus ? pill(`${focusN || 1}`, "good") : (focusN ? esc(String(focusN)) : "—")}</td>
+          <td>${esc(r.source || "—")}</td>
+          <td class="muted">${esc(r.thesis || "")}</td>
+        </tr>`;
+      }).join("");
+      const hint = compact
+        ? `<div class="muted" style="margin:0.35rem 0.45rem">All membership · listed = consecutive active days · highlight = working focus</div>`
+        : `<div class="muted" style="margin:0.35rem 0.45rem">${rows.length} names in seed ∪ candidates ∪ watch · listed days reset when paused/removed · focus d = consecutive session dates in working set</div>`;
+      el.innerHTML = hint + dataTable(headers, body, headers.length);
+    }
+
     function renderUniverse(u) {
       const meta = document.getElementById("universeMeta");
       const focusEl = document.getElementById("universeFocus");
@@ -2739,6 +2841,8 @@
       const bookEl = document.getElementById("universeBook");
       const pausedEl = document.getElementById("universePaused");
       const outcomesEl = document.getElementById("universeOutcomes");
+      const rosterEl = document.getElementById("universeRoster");
+      const rosterFullEl = document.getElementById("universeRosterFull");
       if (!meta || !focusEl) return;
       if (!u) {
         meta.textContent = "Universe unavailable";
@@ -2747,6 +2851,8 @@
         if (bookEl) bookEl.innerHTML = "";
         if (pausedEl) pausedEl.innerHTML = "";
         if (outcomesEl) outcomesEl.innerHTML = "";
+        if (rosterEl) rosterEl.innerHTML = "";
+        if (rosterFullEl) rosterFullEl.innerHTML = "";
         return;
       }
       const mode = u.mode || "—";
@@ -2787,6 +2893,23 @@
         meta.innerHTML += " " + pill(`paused illiquid ${hy.paused.length}`, "warn");
       } else if (pausedRows.length) {
         meta.innerHTML += " " + pill(`paused ${pausedRows.length}`, "warn");
+      }
+      const churn = u.churn || {};
+      if (churn.active != null) {
+        const staleTone = (churn.stale_listed || 0) >= Math.max(3, Math.ceil((churn.active || 0) * 0.6))
+          ? "warn" : "";
+        const unique = churn.focus_unique_30d;
+        const focusN = churn.focus || working;
+        const rotateTone = (unique != null && focusN && unique <= focusN + 1) ? "warn" : "";
+        meta.innerHTML += " " + [
+          pill(`median listed ${churn.median_listed_days ?? 0}d`, staleTone),
+          pill(`stale ≥${churn.stale_days ?? 30}d ${churn.stale_listed ?? 0}`, staleTone),
+          pill(`new ≤${churn.new_days ?? 7}d ${churn.new_listed ?? 0}`, churn.new_listed ? "good" : "warn"),
+          unique != null
+            ? pill(`focus unique 30d ${unique}`, rotateTone)
+            : "",
+          churn.pool_only ? pill(`pool only ${churn.pool_only}`, "") : "",
+        ].filter(Boolean).join(" ");
       }
       if (pausedEl) {
         if (pausedRows.length) {
@@ -2862,6 +2985,8 @@
       } else {
         focusEl.innerHTML = `<div class="muted">No focus set yet</div>`;
       }
+      renderUniverseRoster(rosterEl, u, { compact: true });
+      renderUniverseRoster(rosterFullEl, u, { compact: false });
       const policies = Object.fromEntries(
         (u.horizon_policies || []).map((p) => [p.horizon, p]),
       );
@@ -2878,6 +3003,7 @@
           ? rows.map((r) => {
               const oc = r.last_outcome_stats || {};
               const sig = oc.signal || "";
+              const listed = r.consecutive_listed_days || 0;
               const sigPill = sig === "negative" ? pill("neg", "bad")
                 : sig === "positive" ? pill("pos", "good")
                 : sig === "insufficient" ? pill("n<", "")
@@ -2885,6 +3011,7 @@
               return `<tr>
               <td class="mono">${esc(r.symbol)}</td>
               <td>${esc(r.priority ?? "—")}</td>
+              <td>${listed ? pill(`${listed}d`, listedDaysTone(listed, r.status)) : "—"}</td>
               <td>${sigPill || "—"}</td>
               <td class="muted">${esc(r.thesis || r.notes || "")}</td>
             </tr>`;
@@ -2895,7 +3022,7 @@
             ${pill(`pos max ${pol.max_positions ?? "—"}`, "")}
             ${pill(`watch ${rows.length}`, rows.length ? "good" : "")}
           </div>
-          ${dataTable(["Symbol", "Pri", "Out", "Thesis"], body, 4)}
+          ${dataTable(["Symbol", "Pri", "Listed", "Out", "Thesis"], body, 5)}
         </div>`;
       }).join("");
       }

@@ -40,7 +40,7 @@ Policies live in `app/universe/horizons.py`. **Entry/exit rules** live in `app/u
 
 CLI: `investor universe show|horizons|refresh`
 
-Dashboard Overview renders the same snapshot under **Universe** (mode, focus chips, active names by horizon) with a Refresh Universe control.
+Dashboard Overview renders the same snapshot under **Universe** (mode, churn, focus chips, full membership roster with consecutive listed days). Operations tab has the complete roster plus horizon book. Manual Refresh Universe control on Overview.
 
 ## Scheduler
 
@@ -56,8 +56,10 @@ Dual-book: seed = `TRADE_ALLOWLIST` ∪ `TRADE_ALLOWLIST_AU`; curated candidates
 
 ## Persistence
 
-- `watchlist_symbols` (optional `payload.last_outcome_stats` from closed-trade feedback)
+- `watchlist_symbols` (optional `payload.last_outcome_stats` from closed-trade feedback; `payload.active_since` stamps the current active listing streak)
 - `focus_set_snapshots`
+
+`GET /universe` includes `roster` (seed ∪ candidates ∪ watch, with `consecutive_listed_days` and `consecutive_focus_sessions`) and `churn` (median listed days, stale ≥30d, new ≤7d, unique focus names over 30 session dates). Listed days reset when a name is paused or removed, then reactivated.
 
 Migration: `0007_universe_watchlist`.
 

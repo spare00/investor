@@ -173,3 +173,148 @@ async def test_lifecycle_inherits_horizon_hold_policy(session: AsyncSession) -> 
     assert medium.max_holding_minutes == policy_for("medium").max_holding_minutes
     assert medium.stop_price is not None
     assert medium.stop_price < scalp.stop_price
+
+
+@pytest.mark.asyncio
+async def test_snapshot_roster_shows_pool_and_listed_days(session: AsyncSession) -> None:
+    from datetime import UTC, datetime, timedelta
+    from uuid import uuid4
+
+    from app.models import FocusSetSnapshot
+
+    settings = Settings(
+        universe_mode="dynamic",
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=[],
+        enabled_venues=["US"],
+        universe_manager_enabled=False,
+        universe_screener_enabled=False,
+    )
+    svc = UniverseService(session, settings=settings)
+    await svc.ensure_seeded()
+    now = datetime(2026, 9, 23, 14, 0, tzinfo=UTC)
+    session.add(
+        FocusSetSnapshot(
+            id=uuid4(),
+            as_of=now - timedelta(days=2),
+            session_date="2026-09-21",
+            symbols=["SPY", "NVDA"],
+            holdings=["SPY"],
+            rationale="a",
+            source="test",
+        )
+    )
+    session.add(
+        FocusSetSnapshot(
+            id=uuid4(),
+            as_of=now - timedelta(days=1),
+            session_date="2026-09-22",
+            symbols=["SPY"],
+            holdings=["SPY"],
+            rationale="b",
+            source="test",
+        )
+    )
+    session.add(
+        FocusSetSnapshot(
+            id=uuid4(),
+            as_of=now,
+            session_date="2026-09-23",
+            symbols=["SPY"],
+            holdings=["SPY"],
+            rationale="c",
+            source="test",
+        )
+    )
+    await session.flush()
+    snap = await svc.snapshot()
+    by_sym = {r["symbol"]: r for r in snap["roster"]}
+    assert "JPM" in by_sym and by_sym["JPM"]["role"] == "candidate"
+    assert by_sym["JPM"]["status"] == "pool"
+    assert by_sym["JPM"]["consecutive_listed_days"] == 0
+    assert "ANET" not in by_sym
+    assert "ETN" not in by_sym
+    assert by_sym["SPY"]["status"] == "active"
+    assert by_sym["SPY"]["role"] == "seed"
+    assert by_sym["SPY"]["consecutive_listed_days"] >= 1
+    assert by_sym["SPY"]["in_focus"] is True
+    assert by_sym["SPY"]["consecutive_focus_sessions"] == 3
+    assert snap["churn"]["pool_only"] >= 1
+    spy_watch = next(r for r in snap["watchlist"] if r["symbol"] == "SPY")
+    assert spy_watch["consecutive_listed_days"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_pause_resets_listed_streak(session: AsyncSession) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.models import WatchlistSymbol
+    from app.schemas.universe_manager import UniverseManagerOutput, WatchlistProposal
+    from app.universe.tenure import inclusive_calendar_days, listed_since
+
+    old = datetime.now(UTC) - timedelta(days=20)
+    settings = Settings(
+        universe_mode="dynamic",
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=["JPM"],
+        universe_manager_enabled=False,
+        universe_screener_enabled=False,
+    )
+    session.add(
+        WatchlistSymbol(
+            symbol="JPM",
+            horizon="short",
+            status="active",
+            priority=70,
+            thesis="bank",
+            source="universe_manager",
+            payload={"active_since": old.isoformat()},
+        )
+    )
+    await session.flush()
+    svc = UniverseService(session, settings=settings)
+    await svc._apply_proposals(
+        UniverseManagerOutput(
+            timestamp=datetime.now(UTC),
+            proposals=[
+                WatchlistProposal(
+                    symbol="JPM",
+                    horizon=UniverseHorizon.SHORT,
+                    action="pause",
+                    priority=70,
+                    thesis="rest",
+                    invalidation="x",
+                )
+            ],
+            focus_symbols=["SPY"],
+            focus_rationale="pause",
+        )
+    )
+    paused = (
+        await session.execute(select(WatchlistSymbol).where(WatchlistSymbol.symbol == "JPM"))
+    ).scalar_one()
+    assert paused.status == "paused"
+    assert not (paused.payload or {}).get("active_since")
+    await svc._apply_proposals(
+        UniverseManagerOutput(
+            timestamp=datetime.now(UTC),
+            proposals=[
+                WatchlistProposal(
+                    symbol="JPM",
+                    horizon=UniverseHorizon.SHORT,
+                    action="add",
+                    priority=80,
+                    thesis="back",
+                    invalidation="x",
+                )
+            ],
+            focus_symbols=["SPY", "JPM"],
+            focus_rationale="add",
+        )
+    )
+    row = {r.symbol: r for r in (await svc.list_active())}["JPM"]
+    since = listed_since(row.payload, row.created_at, active=True)
+    assert since is not None
+    assert inclusive_calendar_days(since) == 1

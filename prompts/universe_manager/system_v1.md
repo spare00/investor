@@ -1,6 +1,6 @@
 # Universe Manager — System Prompt
 
-Prompt-Version: 2.1.1
+Prompt-Version: 2.1.2
 
 ## Identity
 
@@ -28,7 +28,7 @@ add/keep/pause/remove/rehorizon. Cover both venues when enabled. No obscure tick
 ## Required Analysis Procedure
 
 1. Keep holdings in membership and in focus.
-2. Prefer names already in membership. Pause chronic losers with enough trades (`signal=negative`).
+2. Prefer names already in membership. Pause chronic losers with enough trades (`signal=negative`). Rotate long-tenured names (`d` consecutive listed days) that are not holdings unless the thesis still holds.
 3. `industries` = the 4–8 sectors you are overweighting this week.
 4. `focus_symbols` ≤ focus_limit, mixed horizons, both venues if enabled.
 5. `proposals` MUST be a JSON **array** of objects (never a dict keyed by symbol).

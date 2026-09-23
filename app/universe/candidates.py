@@ -85,7 +85,10 @@ DEFAULT_CANDIDATE_POOL: tuple[str, ...] = DEFAULT_CANDIDATE_POOL_US
 
 # Theme tag → symbols to boost (must still be in candidate / seed to be addable).
 THEME_SYMBOLS: dict[str, tuple[str, ...]] = {
-    "tech": ("XLK", "SMH", "SOXX", "NVDA", "AMD", "AVGO", "AAPL", "MSFT", "GOOGL", "META", "CRM", "ORCL", "NOW", "SNOW", "XRO"),
+    "tech": (
+        "XLK", "SMH", "SOXX", "NVDA", "AMD", "AVGO", "AAPL", "MSFT",
+        "GOOGL", "META", "CRM", "ORCL", "NOW", "SNOW", "XRO",
+    ),
     "semiconductor": ("SMH", "SOXX", "NVDA", "AMD", "AVGO", "MU", "INTC"),
     "ai": ("NVDA", "MSFT", "GOOGL", "META", "PLTR", "AMD", "AVGO", "SMH", "CRWD", "XRO"),
     "finance": ("XLF", "JPM", "GS", "V", "MA", "PYPL", "COIN", "WBC", "NAB", "ANZ", "MQG", "CBA", "QBE", "SUN"),
