@@ -97,6 +97,29 @@ def test_membership_is_index_like_and_venue_scoped() -> None:
     assert "semiconductor" in sectors
 
 
+def test_index_membership_includes_sp500_names() -> None:
+    from app.universe.candidates import membership_symbols
+    from app.universe.constituents import sp500_symbols
+
+    settings = Settings(
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=[],
+        enabled_venues=["US"],
+    )
+    us = membership_symbols(settings, "US")
+    assert len(sp500_symbols()) >= 400
+    assert "ANET" in us
+    assert "ETN" in us
+    assert "JPM" in us
+    # Explicit override still shrinks the book.
+    tight = Settings(
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=["JPM"],
+        enabled_venues=["US"],
+    )
+    assert membership_symbols(tight, "US") == {"SPY", "JPM"}
+
+
 def test_rotating_working_set_moves_with_week() -> None:
     from datetime import UTC, datetime
 

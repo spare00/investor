@@ -232,8 +232,8 @@ async def test_snapshot_roster_shows_pool_and_listed_days(session: AsyncSession)
     assert "JPM" in by_sym and by_sym["JPM"]["role"] == "candidate"
     assert by_sym["JPM"]["status"] == "pool"
     assert by_sym["JPM"]["consecutive_listed_days"] == 0
-    assert "ANET" not in by_sym
-    assert "ETN" not in by_sym
+    assert "ANET" in by_sym and by_sym["ANET"]["role"] == "candidate"
+    assert by_sym["ETN"]["role"] == "candidate"
     assert by_sym["SPY"]["status"] == "active"
     assert by_sym["SPY"]["role"] == "seed"
     assert by_sym["SPY"]["consecutive_listed_days"] >= 1

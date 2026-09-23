@@ -1,8 +1,6 @@
 """Curated expansion pool beyond TRADE_ALLOWLIST for Universe Manager adds.
 
-Not a full-market screener — a bounded, liquid candidate set the AI may promote
-onto the watchlist. Seed (TRADE_ALLOWLIST / TRADE_ALLOWLIST_AU) remains the
-bootstrap soft boundary; candidates expand it without inventing obscure tickers.
+Not a full-market screener — an **index-style membership** from a bundled S&P 500 snapshot (plus ASX 50 when AU is enabled, and a small liquid ETF overlay). Universe reconstitution screens that book and promotes a watch of `universe_watchlist_limit` names. Seed (TRADE_ALLOWLIST / TRADE_ALLOWLIST_AU) remains in the book. `UNIVERSE_CANDIDATE_POOL` still overrides the snapshot when set.
 
 Optional theme / regime ranking reorders the pool so focus-adjacent names float up.
 """
@@ -150,18 +148,28 @@ def venue_for_universe_symbol(settings: Settings, symbol: str) -> str:
 
 
 def curated_candidate_pool(settings: Settings | None = None) -> list[str]:
-    """Configured pool if set; otherwise built-in US (+ AU when enabled) list."""
+    """Configured pool if set; otherwise S&P 500 snapshot (+ ASX 50 / ETF overlay)."""
     if settings is not None and settings.universe_candidate_pool:
         return [s.upper().strip() for s in settings.universe_candidate_pool if s.strip()]
     from app.market.venues import Venue, enabled_venues
+    from app.universe.constituents import asx50_symbols, sp500_symbols
 
-    out = list(DEFAULT_CANDIDATE_POOL_US)
-    if settings is not None and Venue.AU in enabled_venues(settings):
-        seen = set(out)
-        for sym in DEFAULT_CANDIDATE_POOL_AU:
-            if sym not in seen:
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(symbols: list[str] | tuple[str, ...]) -> None:
+        for raw in symbols:
+            sym = str(raw).upper().strip()
+            if sym and sym not in seen:
                 out.append(sym)
                 seen.add(sym)
+
+    index = sp500_symbols()
+    _add(index if index else DEFAULT_CANDIDATE_POOL_US)
+    _add(DEFAULT_CANDIDATE_POOL_US)
+    if settings is not None and Venue.AU in enabled_venues(settings):
+        _add(asx50_symbols())
+        _add(DEFAULT_CANDIDATE_POOL_AU)
     return out
 
 
@@ -309,9 +317,12 @@ def membership_symbols(settings: Settings, venue: str | None = None) -> set[str]
 
 def membership_by_sector(settings: Settings) -> dict[str, list[str]]:
     """Group membership names by sector for the weekend Universe Manager brief."""
+    from app.universe.constituents import gics_sector_buckets
+
+    gics = gics_sector_buckets()
     buckets: dict[str, list[str]] = {}
     for sym in sorted(membership_symbols(settings)):
-        sector = SECTOR_BY_SYMBOL.get(sym, "other")
+        sector = SECTOR_BY_SYMBOL.get(sym) or gics.get(sym, "other")
         buckets.setdefault(sector, []).append(sym)
     return buckets
 

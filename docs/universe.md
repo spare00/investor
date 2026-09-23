@@ -2,7 +2,7 @@
 
 ## Goal
 
-Stop treating `TRADE_ALLOWLIST` as the only tradable set. Weekend Universe Manager maintains an **index-like membership** (seed ∪ liquid candidates, grouped by industry — Nasdaq-100 / S&P-500 style book-keeping, not a full-market scan) and picks a **working set** of ~10 names. Weekday CIO uses that working set with tape, news, and horizon playbooks (scalp / day / short; medium is hold-only).
+Stop treating `TRADE_ALLOWLIST` as the only tradable set. Python reconstitutes an **index-like membership** from a bundled S&P 500 snapshot (plus ASX 50 when AU is on, and a small ETF overlay) and a weekly watch of `universe_watchlist_limit` names. Weekend Universe Manager may overlay a **working set** of ~10 names and horizons. Weekday CIO uses that working set with tape, news, and horizon playbooks (scalp / day / short; medium is hold-only).
 
 ## Horizons
 
@@ -51,7 +51,7 @@ When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler polls `universe
 
 The weekend tick passes last CIO regime / MI themes, the sector-grouped membership, and 90d outcomes. It does **not** scan the whole market. A failed LLM (schema fallback) **reconstitutes** the watch from membership (sector rotation) instead of pinning focus on seed Mag7, and does **not** count as a successful review (`source=universe_fallback`) so the next weekend or idle-weekday tick retries the model. When the review is stale on a weekday with live tape, reconstitution still runs without the LLM. Between successful reconstitutions, premarket/scheduler only rebuild venue-scoped focus + hygiene. Manual `POST /universe/refresh` with `{"force": true}` bypasses weekend + weekly gates.
 
-Dual-book: seed = `TRADE_ALLOWLIST` ∪ `TRADE_ALLOWLIST_AU`; curated candidates include liquid US + ASX names when `ENABLED_VENUES` includes AU. Entry/collection remain venue-scoped.
+Dual-book: seed = `TRADE_ALLOWLIST` ∪ `TRADE_ALLOWLIST_AU`; default membership is the bundled S&P 500 snapshot ∪ ASX 50 (when AU is enabled) ∪ a small liquid ETF overlay. `UNIVERSE_CANDIDATE_POOL` replaces that book when set. Entry/collection remain venue-scoped.
 
 
 ## Persistence
