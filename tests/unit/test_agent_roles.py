@@ -60,6 +60,21 @@ def test_roles_snapshot_marks_python_vs_ai() -> None:
     assert "OHLCV" in snap["quant_strategist"]["python_owns"]
     assert snap["cio"]["skip_llm"] is False
     assert snap["cio"]["model_slot"] == "decision"
+    assert snap["universe_manager"]["timeout_seconds"] == 600
+    assert snap["cio"]["timeout_seconds"] == 180
+    assert snap["universe_manager"]["repair_attempts"] == 2
+    assert snap["cio"]["repair_attempts"] == 1
+
+
+def test_weekend_universe_gets_longer_local_timeout_and_repair() -> None:
+    local = Settings(llm_runtime="local", llm_api_key=None)
+    univ = role_for(AgentName.UNIVERSE_MANAGER)
+    cio = role_for(AgentName.CIO)
+    assert univ.timeout_seconds_for(local) == 600
+    assert cio.timeout_seconds_for(local) == 180
+    assert univ.repair_attempts_for(local) == 2
+    assert cio.repair_attempts_for(local) == 1
+    assert local.universe_refresh_job_timeout_seconds == 1_800
 
 
 @pytest.mark.asyncio
@@ -197,3 +212,4 @@ async def test_local_pipeline_quant_and_risk_are_python() -> None:
     assert stub.calls[0]["num_ctx"] == "4096"
     assert stub.calls[-1]["num_ctx"] == "8192"  # CIO decision slot
     assert stub.calls[-1]["max_tokens"] == "700"
+    assert stub.calls[-1]["timeout_seconds"] == "180"

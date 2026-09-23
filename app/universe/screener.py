@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import desc, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -93,18 +93,38 @@ def evaluate_liquidity(
 async def _latest_snapshots(
     session: AsyncSession, symbols: list[str]
 ) -> dict[str, MarketSnapshot]:
-    out: dict[str, MarketSnapshot] = {}
-    for sym in symbols:
-        row = (
+    """Latest snapshot per symbol in one round-trip (S&P-sized pools cannot be N queries)."""
+    if not symbols:
+        return {}
+    from sqlalchemy import func
+
+    latest = (
+        select(
+            MarketSnapshot.symbol.label("symbol"),
+            func.max(MarketSnapshot.as_of).label("as_of"),
+        )
+        .where(MarketSnapshot.symbol.in_(symbols))
+        .group_by(MarketSnapshot.symbol)
+        .subquery()
+    )
+    rows = list(
+        (
             await session.execute(
-                select(MarketSnapshot)
-                .where(MarketSnapshot.symbol == sym)
-                .order_by(desc(MarketSnapshot.as_of))
-                .limit(1)
+                select(MarketSnapshot).join(
+                    latest,
+                    (MarketSnapshot.symbol == latest.c.symbol)
+                    & (MarketSnapshot.as_of == latest.c.as_of),
+                )
             )
-        ).scalar_one_or_none()
-        if row is not None:
-            out[sym] = row
+        )
+        .scalars()
+        .all()
+    )
+    out: dict[str, MarketSnapshot] = {}
+    for row in rows:
+        key = str(row.symbol or "").upper()
+        if key and key not in out:
+            out[key] = row
     return out
 
 

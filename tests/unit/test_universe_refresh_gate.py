@@ -33,6 +33,24 @@ def test_notes_empty_string_becomes_empty_list() -> None:
     assert out.notes == []
 
 
+def test_proposals_accept_brief_aliases_and_focus_zip() -> None:
+    out = UniverseManagerOutput.model_validate(
+        {
+            "timestamp": datetime(2026, 8, 6, 12, 0, tzinfo=UTC),
+            "focus_symbols": ["NVDA", "BHP", "SPY"],
+            "proposals": [
+                {"s": "NVDA", "h": "day", "action": "keep", "thesis": "Tape leader"},
+                {"action": "keep", "thesis": "AU ballast", "invalidation": "Breaks 200"},
+                {"s": "SPY", "action": "keep"},
+            ],
+        }
+    )
+    assert [p.symbol for p in out.proposals] == ["NVDA", "BHP", "SPY"]
+    assert out.proposals[0].horizon.value == "day"
+    assert out.proposals[1].horizon.value == "short"
+    assert out.proposals[2].horizon.value == "short"
+
+
 def test_universe_refresh_skipped_before_premarket() -> None:
     # Wednesday 2026-08-05 02:30 ET = deep overnight before 04:00 premarket
     settings = Settings(

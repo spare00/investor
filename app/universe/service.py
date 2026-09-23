@@ -770,6 +770,21 @@ class UniverseService:
             recent_outcomes=outcomes,
             trace=TraceMetadata(source_data_timestamp=utc_now()),
         )
+        from app.agents.briefs import universe_brief
+        from app.agents.roles import role_for
+        from app.schemas.common import AgentName
+
+        brief = universe_brief(payload)
+        logger.info(
+            "universe_manager_brief",
+            chars=len(brief),
+            est_tokens=max(1, len(brief) // 4),
+            candidates=len(screened),
+            watch=len(payload.current_watchlist),
+            llm_timeout_s=role_for(AgentName.UNIVERSE_MANAGER).timeout_seconds_for(
+                self.settings
+            ),
+        )
         out = await self.agent.run(payload)
         fallback = _is_fallback_output(out)
         if fallback:

@@ -4,10 +4,36 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.schemas.common import StrictModel, TraceMetadata
 from app.universe.horizons import UniverseHorizon
+
+
+def _proposal_row(raw: object, *, symbol_fallback: str = "") -> object:
+    """14B copies brief keys (`s`/`h`) or omits ticker when focus_symbols is set."""
+    if not isinstance(raw, dict):
+        return raw
+    row = dict(raw)
+    if not row.get("symbol"):
+        for key in ("s", "ticker", "sym", "name"):
+            val = row.get(key)
+            if val:
+                row["symbol"] = val
+                break
+    if not row.get("symbol") and symbol_fallback:
+        row["symbol"] = symbol_fallback
+    if not row.get("horizon"):
+        for key in ("h", "hz", "book"):
+            val = row.get(key)
+            if val:
+                row["horizon"] = val
+                break
+    if row.get("symbol") and not row.get("horizon"):
+        row["horizon"] = UniverseHorizon.SHORT.value
+    for alias in ("s", "ticker", "sym", "name", "h", "hz", "book"):
+        row.pop(alias, None)
+    return row
 
 
 class WatchlistProposal(StrictModel):
@@ -78,12 +104,12 @@ class UniverseManagerOutput(StrictModel):
         if value is None:
             return []
         if isinstance(value, list):
-            return value
+            return [_proposal_row(item) for item in value]
         if not isinstance(value, dict):
             return []
         nested = value.get("proposals")
         if isinstance(nested, list):
-            return nested
+            return [_proposal_row(item) for item in nested]
         skip = {
             "industries",
             "focus_symbols",
@@ -98,11 +124,26 @@ class UniverseManagerOutput(StrictModel):
         for key, raw in value.items():
             if key in skip or not isinstance(raw, dict):
                 continue
-            row = dict(raw)
-            if not row.get("symbol"):
-                row["symbol"] = key
-            out.append(row)
+            row = _proposal_row(raw, symbol_fallback=str(key))
+            if isinstance(row, dict):
+                out.append(row)
         return out
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_proposal_symbols_from_focus(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        props = data.get("proposals")
+        focus = data.get("focus_symbols") or []
+        if not isinstance(props, list) or not isinstance(focus, list):
+            return data
+        filled: list[object] = []
+        for i, raw in enumerate(props):
+            fallback = str(focus[i]).upper() if i < len(focus) else ""
+            filled.append(_proposal_row(raw, symbol_fallback=fallback) if isinstance(raw, dict) else raw)
+        data["proposals"] = filled
+        return data
 
     @field_validator("industries", mode="before")
     @classmethod

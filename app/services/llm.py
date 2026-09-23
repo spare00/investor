@@ -51,6 +51,7 @@ class LLMClient(Protocol):
         temperature: float | None = None,
         max_tokens: int | None = None,
         num_ctx: int | None = None,
+        timeout_seconds: int | None = None,
     ) -> LLMResponse: ...
 
 
@@ -69,6 +70,7 @@ class OpenAICompatibleClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         num_ctx: int | None = None,
+        timeout_seconds: int | None = None,
     ) -> LLMResponse:
         cfg = self.settings
         if not cfg.llm_is_local() and not _llm_api_key_configured(cfg):
@@ -106,6 +108,7 @@ class OpenAICompatibleClient:
             temperature=temperature,
             max_tokens=max_tokens,
             num_ctx=num_ctx,
+            timeout_seconds=timeout_seconds,
         )
 
     @retry(
@@ -123,6 +126,7 @@ class OpenAICompatibleClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         num_ctx: int | None = None,
+        timeout_seconds: int | None = None,
     ) -> LLMResponse:
         cfg = self.settings
         api_key = ""
@@ -157,9 +161,12 @@ class OpenAICompatibleClient:
             "Content-Type": "application/json",
         }
         url = cfg.llm_base_url.rstrip("/") + "/chat/completions"
-        seconds = (
-            cfg.llm_local_timeout_seconds if cfg.llm_is_local() else cfg.llm_timeout_seconds
-        )
+        if timeout_seconds is not None:
+            seconds = max(1, int(timeout_seconds))
+        elif cfg.llm_is_local():
+            seconds = cfg.llm_local_timeout_seconds
+        else:
+            seconds = cfg.llm_timeout_seconds
         timeout = httpx.Timeout(seconds)
 
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -239,6 +246,7 @@ class StubLLMClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         num_ctx: int | None = None,
+        timeout_seconds: int | None = None,
     ) -> LLMResponse:
         self.calls.append(
             {
@@ -247,6 +255,7 @@ class StubLLMClient:
                 "model": model or "",
                 "max_tokens": "" if max_tokens is None else str(max_tokens),
                 "num_ctx": "" if num_ctx is None else str(num_ctx),
+                "timeout_seconds": "" if timeout_seconds is None else str(timeout_seconds),
             }
         )
         return LLMResponse(

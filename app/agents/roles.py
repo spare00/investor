@@ -1,9 +1,7 @@
 """Per-agent split: Python owns facts, LLM owns a single judgment.
 
-Local 14B must finish inside the 8-minute job cap. That means:
-- Python computes indicators, risk vetoes, compact briefs.
-- LLM is called only where a human would still have to choose.
-- Each agent has its own context window, max tokens, and model slot.
+Weekday committee must finish inside the 8-minute job cap.
+Weekend Universe Manager is a separate job — it may spend minutes and one repair round.
 """
 
 from __future__ import annotations
@@ -26,6 +24,8 @@ class AgentRole:
     max_tokens: int
     # "decision" = main local model (14B). "fast" = optional smaller model.
     model_slot: str = "fast"
+    # Weekend jobs may spend a validation repair round on local 14B.
+    allow_local_repair: bool = False
 
     def skip_llm(self, settings: Settings) -> bool:
         return bool(self.skip_llm_when_local and settings.llm_is_local())
@@ -49,6 +49,18 @@ class AgentRole:
             cap = max(64, int(settings.llm_local_max_tokens))
             return min(self.max_tokens, cap)
         return settings.llm_max_tokens
+
+    def timeout_seconds_for(self, settings: Settings) -> int:
+        if not settings.llm_is_local():
+            return max(1, int(settings.llm_timeout_seconds))
+        if self.allow_local_repair:
+            return max(1, int(settings.llm_local_universe_timeout_seconds))
+        return max(1, int(settings.llm_local_timeout_seconds))
+
+    def repair_attempts_for(self, settings: Settings) -> int:
+        if settings.llm_is_local() and not self.allow_local_repair:
+            return 1
+        return 2
 
 
 # Context sizes assume the compact QUESTION/DATA/ANSWER briefs, not full dumps.
@@ -103,11 +115,12 @@ ROLES: dict[AgentName, AgentRole] = {
     ),
     AgentName.UNIVERSE_MANAGER: AgentRole(
         python_owns="membership pool, sectors, holdings, outcome stats, limits",
-        ai_owns="industry selection then keep/pause/add; pick ~10 working names",
+        ai_owns="industry selection then ~10 working names from reconstituted watch",
         skip_llm_when_local=False,
         num_ctx=8192,
         max_tokens=700,
         model_slot="decision",
+        allow_local_repair=True,
     ),
 }
 
@@ -127,6 +140,8 @@ def roles_snapshot(settings: Settings) -> dict[str, dict[str, object]]:
             "model_slot": role.model_slot,
             "num_ctx": role.num_ctx_for(settings),
             "max_tokens": role.max_tokens_for(settings),
+            "timeout_seconds": role.timeout_seconds_for(settings),
+            "repair_attempts": role.repair_attempts_for(settings),
         }
         for name, role in ROLES.items()
     }

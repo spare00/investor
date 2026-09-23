@@ -223,7 +223,8 @@ def test_universe_brief_is_industry_then_working_set() -> None:
         UniverseManagerInput(
             as_of=_now(),
             current_watchlist=[
-                {"symbol": "BHP", "horizon": "short", "priority": 80, "status": "active"}
+                {"symbol": "BHP", "horizon": "short", "priority": 80, "status": "active"},
+                {"symbol": "PLTR", "horizon": "short", "priority": 70, "status": "active"},
             ],
             holdings=["BHP"],
             seed_pool=["SPY", "BHP"],
@@ -237,7 +238,49 @@ def test_universe_brief_is_industry_then_working_set() -> None:
     )
     assert text.startswith("QUESTION:")
     assert "Python already reconstituted" in text
-    assert "membership_by_sector" in text
+    assert "membership_counts" in text
+    assert "watch_by_sector" in text
     assert "working" in text
     assert "PLTR" in text
     assert "BHP" in text
+
+
+def test_universe_brief_stays_small_with_full_membership() -> None:
+    from app.schemas.universe_manager import UniverseManagerInput
+
+    pool = [f"S{i:03d}" for i in range(500)]
+    watch = [
+        {"symbol": sym, "horizon": "short", "priority": 50, "status": "active"}
+        for sym in pool[:40]
+    ]
+    text = universe_brief(
+        UniverseManagerInput(
+            as_of=_now(),
+            current_watchlist=watch,
+            holdings=["S000"],
+            seed_pool=["SPY"],
+            candidate_pool=pool,
+            enabled_venues=["US"],
+            watchlist_limit=40,
+            focus_limit=10,
+            recent_outcomes={
+                "lookback_days": 90,
+                "by_symbol": [
+                    {
+                        "symbol": f"S{i:03d}",
+                        "horizon": "day",
+                        "trade_count": 4,
+                        "win_rate": 0.5,
+                        "expectancy": 0.1,
+                        "total_pnl": 1.0,
+                        "signal": "positive",
+                    }
+                    for i in range(80)
+                ],
+                "by_horizon": {"day": {"trade_count": 80, "win_rate": 0.5}},
+            },
+        )
+    )
+    assert "membership_counts" in text
+    assert "S499" not in text
+    assert len(text) < 8000

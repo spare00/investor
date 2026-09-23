@@ -137,10 +137,11 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
         from app.agents.roles import role_for
 
         role = role_for(self.name)
-        # Local 14B already spent minutes on the first call; do not burn a repair round.
-        repair_attempts = 1 if self.settings.llm_is_local() else 2
+        # Weekday local committee: one shot. Weekend Universe Manager: one repair round.
+        repair_attempts = role.repair_attempts_for(self.settings)
+        timeout_s = role.timeout_seconds_for(self.settings)
 
-        # Phase 2 policy: one validation repair attempt (cloud), then fail (fallback may still apply).
+        # Phase 2 policy: one validation repair attempt (cloud / weekend), then fail.
         @retry(
             reraise=True,
             stop=stop_after_attempt(repair_attempts),
@@ -163,6 +164,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                 model=role.model_name(self.settings),
                 max_tokens=role.max_tokens_for(self.settings),
                 num_ctx=ctx if ctx > 0 else None,
+                timeout_seconds=timeout_s,
             )
             data = json.loads(response.content)
             if not isinstance(data, dict):

@@ -424,6 +424,21 @@ def cio_brief(payload: CIOInput) -> str:
     )
 
 
+def _universe_outcomes(raw: object) -> dict[str, Any]:
+    """Keep 90d lessons tiny — full by_symbol dumps blow local 14B prefill."""
+    if not isinstance(raw, dict) or not raw:
+        return {}
+    from app.universe.outcomes import committee_lessons
+
+    return _drop_empty(
+        {
+            "lookback": raw.get("lookback_days"),
+            "by_horizon": raw.get("by_horizon") or {},
+            "lessons": committee_lessons(raw, limit=8),
+        }
+    )
+
+
 def universe_brief(payload: UniverseManagerInput) -> str:
     from app.universe.candidates import SECTOR_BY_SYMBOL
     from app.universe.constituents import gics_sector_buckets
@@ -431,36 +446,35 @@ def universe_brief(payload: UniverseManagerInput) -> str:
     watch_cap = max(int(payload.watchlist_limit or 40), 16)
     watch = _watch_rows(payload.current_watchlist, limit=watch_cap)
     gics = gics_sector_buckets()
-    names: list[str] = []
-    seen: set[str] = set()
-    for raw in (
-        list(payload.seed_pool)
-        + list(payload.candidate_pool)
-        + [str(w.get("symbol") or "") for w in (payload.current_watchlist or []) if isinstance(w, dict)]
-    ):
-        sym = str(raw or "").upper().strip()
-        if not sym or sym in seen:
+    watch_by_sector: dict[str, list[str]] = {}
+    for raw in payload.current_watchlist or []:
+        if not isinstance(raw, dict):
             continue
-        seen.add(sym)
-        names.append(sym)
-    sectors: dict[str, list[str]] = {}
-    for sym in names:
-        sectors.setdefault(SECTOR_BY_SYMBOL.get(sym) or gics.get(sym, "other"), []).append(sym)
+        sym = str(raw.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        sector = SECTOR_BY_SYMBOL.get(sym) or gics.get(sym, "other")
+        bucket = watch_by_sector.setdefault(sector, [])
+        if sym not in bucket:
+            bucket.append(sym)
+    membership_counts: dict[str, int] = {}
+    for raw in payload.candidate_pool:
+        sym = str(raw or "").upper().strip()
+        if not sym:
+            continue
+        sector = SECTOR_BY_SYMBOL.get(sym) or gics.get(sym, "other")
+        membership_counts[sector] = membership_counts.get(sector, 0) + 1
     data = {
         "as_of": _iso(payload.as_of),
         "venues": payload.enabled_venues,
         "held": [h.upper() for h in payload.holdings],
         "watch": watch,
-        "seed": [s.upper() for s in payload.seed_pool],
-        "seed_by_venue": {
-            k: [x.upper() for x in v] for k, v in (payload.seed_pool_by_venue or {}).items()
-        },
-        "membership_by_sector": {k: v[:16] for k, v in sectors.items()},
-        "candidates": [s.upper() for s in payload.candidate_pool[:60]],
+        "watch_by_sector": watch_by_sector,
+        "membership_counts": membership_counts,
         "regime": payload.market_regime,
         "themes": (payload.themes or [])[:8],
         "limits": {"membership": payload.watchlist_limit, "working": payload.focus_limit},
-        "outcomes": payload.recent_outcomes or {},
+        "outcomes": _universe_outcomes(payload.recent_outcomes),
     }
     return _ask(
         "Python already reconstituted this week's watch. Pick 4-8 industries and working focus <=limit. Do not rebuild the index.",

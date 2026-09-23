@@ -24,7 +24,6 @@ _job_log: list[dict[str, Any]] = []
 # Local and cloud share the 8-minute cap.
 _JOB_ACTION_TIMEOUT_SECONDS = 480
 _CATCH_UP_TIMEOUT_SECONDS = 480
-_UNIVERSE_REFRESH_TIMEOUT_SECONDS = 900
 _BROKER_RECON_TIMEOUT_SECONDS = 120
 
 
@@ -749,6 +748,7 @@ async def _refresh_universe() -> None:
 
             ctx = await load_last_regime_context(session)
             svc = UniverseService(session, settings=settings)
+            timeout_s = float(max(1, int(settings.universe_refresh_job_timeout_seconds)))
             try:
                 result = await asyncio.wait_for(
                     svc.refresh(
@@ -756,7 +756,7 @@ async def _refresh_universe() -> None:
                         market_regime=ctx.get("market_regime"),
                         themes=list(ctx.get("themes") or []),
                     ),
-                    timeout=float(_UNIVERSE_REFRESH_TIMEOUT_SECONDS),
+                    timeout=timeout_s,
                 )
                 replan: dict[str, Any] = {}
                 try:
@@ -803,7 +803,7 @@ async def _refresh_universe() -> None:
                 await session.rollback()
                 logger.error(
                     "universe_refresh_timeout",
-                    timeout_s=_UNIVERSE_REFRESH_TIMEOUT_SECONDS,
+                    timeout_s=timeout_s,
                 )
             except Exception:  # noqa: BLE001
                 await session.rollback()

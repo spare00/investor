@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     llm_local_base_url: str = "http://127.0.0.1:11434/v1"
     llm_local_model: str = "qwen2.5:14b"
     llm_local_timeout_seconds: int = 180
+    # Weekend Universe Manager only — weekday committee stays on llm_local_timeout_seconds.
+    llm_local_universe_timeout_seconds: int = 600
     # Request window for local chat. Briefs fit in 8k; 32k only slows Ollama.
     llm_local_num_ctx: int = 8192
     llm_local_max_tokens: int = 800
@@ -183,6 +185,8 @@ class Settings(BaseSettings):
     # When true (and weekend_only is false), skip periodic refresh outside
     # premarket→after-hours. Ignored when universe_refresh_weekend_only=true.
     universe_refresh_session_only: bool = False
+    # asyncio.wait_for around the weekend refresh (screen + up to two local LLM calls).
+    universe_refresh_job_timeout_seconds: int = 1_800
 
     # Extra symbols AI may add beyond TRADE_ALLOWLIST (empty → built-in curated pool).
     universe_candidate_pool: Annotated[list[str], NoDecode] = Field(default_factory=list)
