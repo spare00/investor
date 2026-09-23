@@ -262,3 +262,33 @@ async def test_weekday_catch_up_when_review_stale_and_tape_idle(
         result = await svc.refresh(holdings=["BHP"])
     assert result["skipped"] is False
     assert agent.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_weekday_stale_reconstitutes_without_llm(session: AsyncSession) -> None:
+    from unittest.mock import patch
+
+    await _seed_llm_focus(session, days_ago=8)
+    settings = Settings(
+        universe_manager_enabled=True,
+        universe_mode="dynamic",
+        universe_refresh_min_interval_days=7,
+        universe_refresh_weekend_only=True,
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=["JPM"],
+        enabled_venues=["US"],
+        universe_screener_enabled=False,
+        universe_watchlist_limit=10,
+    )
+    agent = _StubAgent()
+    svc = UniverseService(session, settings=settings, agent=agent)  # type: ignore[arg-type]
+    with (
+        patch("app.universe.schedule.is_operator_weekend", return_value=False),
+        patch.object(UniverseService, "_live_tape_open", return_value=True),
+    ):
+        result = await svc.refresh(holdings=["SPY"])
+    assert result["skipped"] is True
+    assert result["reason"] == "weekend_only_live"
+    assert agent.calls == 0
+    assert result.get("reconstitute")
+    assert "JPM" in {r.symbol for r in await svc.list_active()}

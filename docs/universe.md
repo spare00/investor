@@ -20,7 +20,7 @@ Policies live in `app/universe/horizons.py`. **Entry/exit rules** live in `app/u
 - `UNIVERSE_MODE=dynamic` (default): **new entries** = active watchlist ∩ membership (seed ∪ curated candidates). Collection = venue-scoped focus ∪ holdings.
 - `UNIVERSE_MODE=static`: legacy allowlist-only behavior.
 
-`TRADE_ALLOWLIST` / `TRADE_ALLOWLIST_AU` **seed** membership. Weekend promotion from the curated candidate pool is buyable next week — the frozen `.env` list is no longer an entry ceiling in dynamic mode.
+`TRADE_ALLOWLIST` / `TRADE_ALLOWLIST_AU` **seed** membership. Python reconstitutes the active watch from seed ∪ screened candidates on the weekly cadence even when Universe Manager LLM falls back — Mag7 seed is no longer a permanent ceiling. Weekend LLM may overlay focus and horizons; it is not required for names to become entry-eligible.
 
 ## Closing / overnight
 
@@ -49,7 +49,7 @@ When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler polls `universe
 1. `UNIVERSE_REFRESH_WEEKEND_ONLY=true` (default) — operator TZ weekend (Sat/Sun, default `Australia/Brisbane`), and
 2. at least `UNIVERSE_REFRESH_MIN_INTERVAL_DAYS` (default **7**) since the last LLM focus snapshot.
 
-The weekend tick passes last CIO regime + Market Intelligence themes, the sector-grouped membership, and 90d outcomes. It does **not** scan the whole market. A failed LLM (schema fallback) does **not** count as a successful review and will retry on the next weekend tick, or on a weekday tick when no venue is in regular/close. Between successful LLM runs, premarket/scheduler only rebuild venue-scoped focus + hygiene. Manual `POST /universe/refresh` with `{"force": true}` bypasses weekend + weekly gates.
+The weekend tick passes last CIO regime / MI themes, the sector-grouped membership, and 90d outcomes. It does **not** scan the whole market. A failed LLM (schema fallback) **reconstitutes** the watch from membership (sector rotation) instead of pinning focus on seed Mag7, and does **not** count as a successful review (`source=universe_fallback`) so the next weekend or idle-weekday tick retries the model. When the review is stale on a weekday with live tape, reconstitution still runs without the LLM. Between successful reconstitutions, premarket/scheduler only rebuild venue-scoped focus + hygiene. Manual `POST /universe/refresh` with `{"force": true}` bypasses weekend + weekly gates.
 
 Dual-book: seed = `TRADE_ALLOWLIST` ∪ `TRADE_ALLOWLIST_AU`; curated candidates include liquid US + ASX names when `ENABLED_VENUES` includes AU. Entry/collection remain venue-scoped.
 

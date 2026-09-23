@@ -141,6 +141,126 @@ class UniverseService:
             changed += 1
         return changed
 
+    def _default_horizon(self, sym: str) -> str:
+        from app.universe.candidates import venue_for_universe_symbol
+
+        name = sym.upper().strip()
+        venue = venue_for_universe_symbol(self.settings, name)
+        if venue == "AU":
+            if name == "NDQ":
+                return UniverseHorizon.SCALP.value
+            if name in {"VAS", "JPEQ", "IOZ"}:
+                return UniverseHorizon.DAY.value
+            return UniverseHorizon.SHORT.value
+        if name in {"SPY", "QQQ"}:
+            return UniverseHorizon.SCALP.value
+        if name in {"IWM", "DIA"}:
+            return UniverseHorizon.DAY.value
+        if name in {"NVDA", "TSLA", "AMD", "META", "AAPL"}:
+            return UniverseHorizon.DAY.value
+        return UniverseHorizon.SHORT.value
+
+    async def reconstitute_watchlist(
+        self,
+        *,
+        holdings: list[str] | None = None,
+        screened: set[str] | list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Python-owned weekly book: promote membership onto the watch without LLM.
+
+        Holdings always stay. Remaining slots fill by sector rotation so fallback
+        cannot pin the firm on seed Mag7. Existing horizon/thesis/priority kept.
+        """
+        from app.universe.candidates import (
+            combined_seed_pool,
+            membership_symbols,
+            ranked_membership_book,
+            venue_for_universe_symbol,
+        )
+
+        await self.ensure_seeded()
+        held = {h.upper() for h in (holdings or []) if h}
+        seed = set(combined_seed_pool(self.settings))
+        membership = membership_symbols(self.settings)
+        if screened is None:
+            passed, _ = await self._screened_candidate_pool()
+            screened_set = {s.upper() for s in passed}
+        else:
+            screened_set = {s.upper() for s in screened}
+        if not self.settings.universe_screener_enabled:
+            eligible = membership | seed | held
+        else:
+            eligible = (membership & screened_set) | seed | held
+        desired = ranked_membership_book(
+            self.settings,
+            holdings=sorted(held),
+            limit=self.settings.universe_watchlist_limit,
+            eligible=eligible,
+        )
+        desired_set = set(desired)
+        now = utc_now()
+        rows = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
+        by_sym = {r.symbol.upper(): r for r in rows}
+        added: list[str] = []
+        reactivated: list[str] = []
+        paused: list[str] = []
+        for i, sym in enumerate(desired):
+            row = by_sym.get(sym)
+            horizon = self._default_horizon(sym)
+            if row is None:
+                row = WatchlistSymbol(
+                    id=uuid4(),
+                    symbol=sym,
+                    horizon=horizon,
+                    status="active",
+                    priority=max(10, 70 - i),
+                    thesis=f"Weekly reconstitution into {horizon} book",
+                    invalidation="Liquidity failure or thesis break",
+                    source="reconstitute",
+                    last_reviewed_at=now,
+                    payload=stamp_active_since(
+                        {"venue": venue_for_universe_symbol(self.settings, sym)},
+                        now=now,
+                        reset=True,
+                    ),
+                )
+                self.session.add(row)
+                by_sym[sym] = row
+                added.append(sym)
+                continue
+            was_active = row.status == "active"
+            if not was_active:
+                row.status = "active"
+                row.payload = stamp_active_since(row.payload, now=now, reset=True)
+                reactivated.append(sym)
+            row.last_reviewed_at = now
+            if not row.horizon:
+                row.horizon = horizon
+        for row in by_sym.values():
+            sym = row.symbol.upper()
+            if row.status != "active":
+                continue
+            if sym in desired_set or sym in held:
+                continue
+            row.status = "paused"
+            row.last_reviewed_at = now
+            row.payload = clear_active_since(row.payload, now=now)
+            paused.append(sym)
+        await self.session.flush()
+        logger.info(
+            "universe_reconstituted",
+            added=len(added),
+            reactivated=len(reactivated),
+            paused=len(paused),
+            active=len(desired_set | held),
+        )
+        return {
+            "added": added,
+            "reactivated": reactivated,
+            "paused": paused,
+            "active": sorted(desired_set | held),
+        }
+
     async def list_active(self) -> list[WatchlistSymbol]:
         result = await self.session.execute(
             select(WatchlistSymbol)
@@ -550,8 +670,16 @@ class UniverseService:
         """
         await self.ensure_seeded()
         if not self.settings.universe_manager_enabled:
-            focus = await self.build_focus_without_llm(holdings=holdings or [], session_date=session_date)
-            return {"skipped": True, "reason": "universe_manager_disabled", "focus": focus}
+            recon = await self.reconstitute_watchlist(holdings=holdings or [])
+            focus = await self.build_focus_without_llm(
+                holdings=holdings or [], session_date=session_date
+            )
+            return {
+                "skipped": True,
+                "reason": "universe_manager_disabled",
+                "focus": focus,
+                "reconstitute": recon,
+            }
 
         if not force and bool(self.settings.universe_refresh_weekend_only):
             from app.universe.schedule import is_operator_weekend
@@ -561,6 +689,9 @@ class UniverseService:
                 if due and not self._live_tape_open():
                     logger.info("universe_refresh_weekday_catch_up")
                 else:
+                    recon = None
+                    if due:
+                        recon = await self.reconstitute_watchlist(holdings=holdings or [])
                     focus = await self.build_focus_without_llm(
                         holdings=holdings or [], session_date=session_date
                     )
@@ -572,6 +703,7 @@ class UniverseService:
                         "reason": reason,
                         "focus": focus,
                         "hygiene": hygiene,
+                        "reconstitute": recon,
                     }
 
         if not force and not await self.llm_refresh_due():
@@ -638,13 +770,25 @@ class UniverseService:
         out = await self.agent.run(payload)
         fallback = _is_fallback_output(out)
         if fallback:
-            logger.warning("universe_manager_fallback_skip_apply")
+            logger.warning("universe_manager_fallback_reconstitute")
         else:
             await self._apply_proposals(out, candidate_symbols=set(screened))
+        recon = await self.reconstitute_watchlist(
+            holdings=holdings or [], screened=set(screened)
+        )
         await self._stamp_outcome_stats(outcomes)
         hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
+        focus_syms = list(out.focus_symbols or [])
+        if fallback:
+            from app.universe.candidates import rotating_working_set
+
+            focus_syms = rotating_working_set(
+                self.settings,
+                holdings=holdings or [],
+                limit=self.settings.universe_focus_limit,
+            )
         focus_doc = await self._persist_focus(
-            symbols=out.focus_symbols,
+            symbols=focus_syms,
             holdings=holdings or [],
             rationale=out.focus_rationale,
             session_date=session_date,
@@ -655,6 +799,7 @@ class UniverseService:
                 "quality": out.data_quality_score,
                 "screener": screen_meta,
                 "hygiene": hygiene,
+                "reconstitute": recon,
                 "enabled_venues": venues,
                 "outcomes_summary": {
                     "by_horizon": outcomes.get("by_horizon"),
@@ -671,6 +816,7 @@ class UniverseService:
             "notes": out.notes,
             "screener": screen_meta,
             "hygiene": hygiene,
+            "reconstitute": recon,
             "outcomes": {
                 "by_horizon": outcomes.get("by_horizon"),
                 "by_source": outcomes.get("by_source"),
@@ -733,25 +879,40 @@ class UniverseService:
         session_date: str | None = None,
     ) -> dict[str, Any]:
         await self.ensure_seeded()
-        active = await self.list_active()
-        ranked = sorted(active, key=lambda r: (-r.priority, r.symbol))
-        held = [h.upper() for h in holdings]
-        held_set = set(held)
-        focus: list[str] = []
-        for h in held:
-            if h not in focus:
-                focus.append(h)
         from app.universe.book_strategy import is_active_strategy_horizon
+        from app.universe.candidates import rotating_working_set
 
-        for r in ranked:
-            if r.symbol.upper() not in focus:
-                if not is_active_strategy_horizon(r.horizon) and r.symbol.upper() not in held_set:
-                    continue
-                focus.append(r.symbol.upper())
-            if len(focus) >= self.settings.universe_focus_limit:
+        active_rows = await self.list_active()
+        active = {r.symbol.upper() for r in active_rows}
+        hz = {r.symbol.upper(): r.horizon for r in active_rows}
+        held = [h.upper() for h in holdings if h]
+        held_set = set(held)
+        allowed = active | held_set
+        focus = rotating_working_set(
+            self.settings,
+            holdings=held,
+            limit=self.settings.universe_focus_limit,
+        )
+        cleaned: list[str] = []
+        for s in focus:
+            if s not in allowed or s in cleaned:
+                continue
+            if s in held_set or is_active_strategy_horizon(hz.get(s)):
+                cleaned.append(s)
+            if len(cleaned) >= self.settings.universe_focus_limit:
                 break
+        if len(cleaned) < self.settings.universe_focus_limit:
+            for r in sorted(active_rows, key=lambda row: (-row.priority, row.symbol)):
+                sym = r.symbol.upper()
+                if sym in cleaned:
+                    continue
+                if not is_active_strategy_horizon(r.horizon) and sym not in held_set:
+                    continue
+                cleaned.append(sym)
+                if len(cleaned) >= self.settings.universe_focus_limit:
+                    break
         return await self._persist_focus(
-            symbols=focus,
+            symbols=cleaned,
             holdings=held,
             rationale="Priority focus without LLM refresh",
             session_date=session_date,
@@ -935,8 +1096,11 @@ class UniverseService:
         day = session_date or now.astimezone(UTC).date().isoformat()
         # Prefer ET session date when possible — keep simple UTC date if unknown
         held = [h.upper() for h in holdings]
+        from app.universe.candidates import membership_symbols
+
         active_set = {r.symbol.upper() for r in await self.list_active()}
-        allowed = active_set | set(held)
+        membership = membership_symbols(self.settings)
+        allowed = active_set | set(held) | membership
         cleaned = []
         for s in symbols:
             u = str(s).upper().strip()

@@ -121,6 +121,27 @@ def test_rotating_working_set_moves_with_week() -> None:
     assert len(b) == 10
 
 
+def test_ranked_membership_book_fills_beyond_one_per_sector() -> None:
+    from datetime import UTC, datetime
+
+    from app.universe.candidates import ranked_membership_book
+
+    settings = Settings(
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=["JPM", "XOM", "CAT"],
+        enabled_venues=["US"],
+    )
+    book = ranked_membership_book(
+        settings,
+        holdings=["SPY"],
+        limit=4,
+        now=datetime(2026, 8, 3, tzinfo=UTC),
+    )
+    assert book[0] == "SPY"
+    assert len(book) == 4
+    assert "JPM" in book or "XOM" in book or "CAT" in book
+
+
 def test_theme_ranking_boosts_matching_names() -> None:
     from app.universe.candidates import ranked_candidate_pool
 

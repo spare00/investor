@@ -9,6 +9,8 @@ Optional theme / regime ranking reorders the pool so focus-adjacent names float 
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from app.core.config import Settings
 
 # Liquid US names / sector ETFs commonly useful across horizons.
@@ -314,6 +316,59 @@ def membership_by_sector(settings: Settings) -> dict[str, list[str]]:
     return buckets
 
 
+def ranked_membership_book(
+    settings: Settings,
+    *,
+    holdings: list[str],
+    limit: int,
+    now: datetime | None = None,
+    eligible: set[str] | None = None,
+) -> list[str]:
+    """Holdings first, then weekly sector rotation until ``limit``.
+
+    One name per sector per round so Mag7 cannot consume the whole watch.
+    """
+    cap = max(1, int(limit))
+    stamp = now or datetime.now(UTC)
+    week = int(stamp.isocalendar()[1])
+    book: list[str] = []
+    for h in holdings:
+        sym = str(h or "").upper().strip()
+        if sym and sym not in book:
+            book.append(sym)
+        if len(book) >= cap:
+            return book[:cap]
+    buckets = membership_by_sector(settings)
+    if eligible is not None:
+        allow = {s.upper() for s in eligible}
+        buckets = {
+            sector: [n for n in names if n in allow]
+            for sector, names in buckets.items()
+        }
+    items = [(sector, names) for sector, names in buckets.items() if names]
+    if not items:
+        return book[:cap]
+    rot = week % len(items)
+    items = items[rot:] + items[:rot]
+    round_idx = 0
+    while len(book) < cap:
+        added = 0
+        for _sector, names in items:
+            start = week % len(names)
+            ordered = names[start:] + names[:start]
+            picked = [n for n in ordered if n not in book]
+            if round_idx >= len(picked):
+                continue
+            book.append(picked[round_idx])
+            added += 1
+            if len(book) >= cap:
+                break
+        if added == 0:
+            break
+        round_idx += 1
+    return book[:cap]
+
+
 def rotating_working_set(
     settings: Settings,
     *,
@@ -321,37 +376,10 @@ def rotating_working_set(
     limit: int,
     now: datetime | None = None,
 ) -> list[str]:
-    """Deterministic ~10 name working set: holdings plus one name per sector, rotated weekly.
-
-    Used when Universe Manager LLM fails so the board is not stuck on seed Mag7 forever.
-    """
-    from datetime import UTC, datetime as dt
-
-    stamp = now or dt.now(UTC)
-    week = int(stamp.isocalendar()[1])
-    focus: list[str] = []
-    for h in holdings:
-        sym = str(h or "").upper().strip()
-        if sym and sym not in focus:
-            focus.append(sym)
-    buckets = membership_by_sector(settings)
-    items = list(buckets.items())
-    if not items:
-        return focus[: max(1, int(limit))]
-    rot = week % len(items)
-    items = items[rot:] + items[:rot]
-    for _sector, names in items:
-        if not names:
-            continue
-        start = week % len(names)
-        ordered = names[start:] + names[:start]
-        for n in ordered:
-            if n not in focus:
-                focus.append(n)
-                break
-        if len(focus) >= int(limit):
-            break
-    return focus[: max(1, int(limit))]
+    """Deterministic working set: holdings plus sector-rotated membership."""
+    return ranked_membership_book(
+        settings, holdings=holdings, limit=limit, now=now
+    )
 
 
 def addable_universe(

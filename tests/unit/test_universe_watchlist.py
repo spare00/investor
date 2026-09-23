@@ -318,3 +318,68 @@ async def test_pause_resets_listed_streak(session: AsyncSession) -> None:
     since = listed_since(row.payload, row.created_at, active=True)
     assert since is not None
     assert inclusive_calendar_days(since) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconstitute_promotes_candidates_onto_watch(session: AsyncSession) -> None:
+    settings = Settings(
+        universe_mode="dynamic",
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=["JPM", "CAT"],
+        enabled_venues=["US"],
+        universe_manager_enabled=False,
+        universe_screener_enabled=False,
+        universe_watchlist_limit=10,
+        universe_focus_limit=5,
+    )
+    svc = UniverseService(session, settings=settings)
+    await svc.ensure_seeded()
+    before = {r.symbol for r in await svc.list_active()}
+    assert before == {"SPY"}
+    out = await svc.reconstitute_watchlist(holdings=["SPY"])
+    active = {r.symbol for r in await svc.list_active()}
+    assert "SPY" in active
+    assert "JPM" in active
+    assert "CAT" in active
+    assert "JPM" in out["added"] or "JPM" in active
+    entries = await svc.entry_universe(venue="US")
+    assert {"SPY", "JPM", "CAT"} <= entries
+
+
+@pytest.mark.asyncio
+async def test_fallback_refresh_reconstitutes_instead_of_keeping_seed(
+    session: AsyncSession,
+) -> None:
+    from datetime import UTC, datetime
+
+    from app.schemas.universe_manager import UniverseManagerOutput
+
+    class _FallbackAgent:
+        async def run(self, payload: object) -> UniverseManagerOutput:
+            return UniverseManagerOutput(
+                timestamp=datetime.now(UTC),
+                proposals=[],
+                focus_symbols=["SPY"],
+                focus_rationale="fallback from seed",
+                notes=["fallback:schema"],
+            )
+
+    settings = Settings(
+        universe_mode="dynamic",
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=["JPM"],
+        enabled_venues=["US"],
+        universe_manager_enabled=True,
+        universe_screener_enabled=False,
+        universe_refresh_weekend_only=False,
+        universe_refresh_min_interval_days=7,
+        universe_watchlist_limit=10,
+        universe_focus_limit=5,
+    )
+    svc = UniverseService(session, settings=settings, agent=_FallbackAgent())  # type: ignore[arg-type]
+    result = await svc.refresh(holdings=["SPY"], force=True)
+    assert result["skipped"] is False
+    assert result["fallback"] is True
+    assert "JPM" in {r.symbol for r in await svc.list_active()}
+    assert "JPM" in await svc.entry_universe(venue="US")
+    assert "JPM" in (result["focus"] or {}).get("symbols", []) or "JPM" in result["reconstitute"]["active"]
