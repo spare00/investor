@@ -160,6 +160,7 @@ class IntradayAgentService:
                 symbols=universe,
                 workflow_id=run.id,
                 horizon_by_symbol=horizons,
+                venue=book,
             )
             llm = FakeLLMProvider({}) if fake_llm else None
             pipeline = (

@@ -112,20 +112,31 @@ def ib_qualify_candidates(
     *,
     venue: Venue | str | None = None,
 ) -> list[tuple[str, str]]:
-    """Ordered (exchange, currency) pairs for IBKR stock qualification."""
+    """Ordered (exchange, currency) pairs for IBKR stock qualification.
+
+    Stay inside the book's currency. Dual tickers (CSL, RIO, TLS, BHP) exist on
+    both ASX and NYSE/NASDAQ; a USD fallback during an AU eval qualifies the
+    US listing, then ``reqTickersAsync`` waits on overnight US ticks / error
+    10197 and the whole snapshot times out.
+    """
     cfg = settings or get_settings()
     preferred = resolve_venue_spec(cfg, venue=venue)
-    defaults = (
-        (cfg.ibkr_default_exchange or "SMART").upper(),
-        (cfg.ibkr_default_currency or "USD").upper(),
-    )
-    ordered: list[tuple[str, str]] = [
-        (preferred.ib_exchange, preferred.currency),
-        defaults,
-        ("SMART", "USD"),
-        ("ASX", "AUD"),
-        ("SMART", "AUD"),
-    ]
+    if preferred.venue == Venue.AU:
+        ordered: list[tuple[str, str]] = [
+            (preferred.ib_exchange, preferred.currency),
+            ("ASX", "AUD"),
+            ("SMART", "AUD"),
+        ]
+    else:
+        defaults = (
+            (cfg.ibkr_default_exchange or "SMART").upper(),
+            (cfg.ibkr_default_currency or "USD").upper(),
+        )
+        ordered = [
+            (preferred.ib_exchange, preferred.currency),
+            defaults,
+            ("SMART", "USD"),
+        ]
     out: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for pair in ordered:

@@ -84,7 +84,15 @@ def test_ib_qualify_candidates_prefer_au() -> None:
     pairs = ib_qualify_candidates(get_settings(), venue=Venue.AU)
     assert pairs[0] == ("SMART", "AUD")
     assert ("ASX", "AUD") in pairs
-    assert ("SMART", "USD") in pairs
+    assert all(ccy == "AUD" for _, ccy in pairs)
+    assert ("SMART", "USD") not in pairs
+
+
+def test_ib_qualify_candidates_us_stays_usd() -> None:
+    pairs = ib_qualify_candidates(get_settings(), venue=Venue.US)
+    assert pairs[0] == ("SMART", "USD")
+    assert all(ccy == "USD" for _, ccy in pairs)
+    assert ("ASX", "AUD") not in pairs
 
 
 def test_venue_for_symbol_allowlist_and_exchange() -> None:
@@ -95,6 +103,8 @@ def test_venue_for_symbol_allowlist_and_exchange() -> None:
     assert venue_for_symbol("AAPL", settings).value == "US"
     assert venue_for_symbol("XYZ", settings, exchange="ASX", currency="AUD").value == "AU"
     assert venue_for_symbol("XYZ", settings, venue="AU").value == "AU"
+    assert venue_for_symbol("CSL", settings).value == "US"
+    assert venue_for_symbol("CSL", settings, venue="AU").value == "AU"
 
 
 def test_summarize_venue_books() -> None:

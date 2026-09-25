@@ -38,7 +38,7 @@ async def _qualify_async(ib: Any, contract: Any, *, settings: Settings, label: s
         return None
 
 
-def cache_contract(contract: Any) -> Any:
+def cache_contract(contract: Any, *, venue: str | None = None) -> Any:
     """Remember a qualified contract under conId and symbol keys."""
     if contract is None:
         return contract
@@ -48,9 +48,11 @@ def cache_contract(contract: Any) -> Any:
     symbol = str(getattr(contract, "symbol", "") or "").upper()
     if symbol:
         ccy = str(getattr(contract, "currency", "") or "") or None
-        venue_hint = None
+        venue_hint = str(venue).upper() if venue else None
         _BY_SYMBOL_KEY[(symbol, venue_hint, ccy)] = contract
         # Also index without currency for fast conId-less lookups after first hit.
+        # Do not also write (symbol, None, *) — that poisons the other venue's
+        # dual-listed ticker (CSL ASX vs CSL NYSE).
         _BY_SYMBOL_KEY.setdefault((symbol, venue_hint, None), contract)
     return contract
 
@@ -100,9 +102,9 @@ async def resolve_stock_contract(
                 qualified = None
             hit = next((c for c in (qualified or []) if getattr(c, "conId", 0)), None)
             if hit is not None:
-                return cache_contract(hit)
+                return cache_contract(hit, venue=venue)
             # Gateway often accepts placeOrder with conId alone after a prior qualify.
-            return cache_contract(bare)
+            return cache_contract(bare, venue=venue)
 
     sym = (symbol or "").upper().strip()
     if not sym:
@@ -137,7 +139,7 @@ async def resolve_stock_contract(
             continue
         hit = next((c for c in (qualified or []) if getattr(c, "conId", 0)), None)
         if hit is not None:
-            cache_contract(hit)
+            cache_contract(hit, venue=venue)
             _BY_SYMBOL_KEY[key] = hit
             _BY_SYMBOL_KEY[(sym, venue or None, None)] = hit
             return hit

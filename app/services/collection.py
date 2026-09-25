@@ -89,6 +89,7 @@ class DataCollectionService:
         symbols: list[str] | None = None,
         workflow_id: UUID | None = None,
         horizon_by_symbol: dict[str, str] | None = None,
+        venue: str | None = None,
     ) -> CollectionBundle:
         wf = workflow_id or uuid4()
         now = datetime.now(UTC)
@@ -126,7 +127,9 @@ class DataCollectionService:
                 )
 
         try:
-            raw_quotes = await get_market_data_provider().fetch_quotes(universe)
+            raw_quotes = await get_market_data_provider().fetch_quotes(
+                universe, venue=venue
+            )
             for raw in raw_quotes:
                 norm = normalize_market_quote(raw, now=now)
                 bundle.markets.append(norm)

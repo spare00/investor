@@ -16,3 +16,17 @@ def test_cache_and_lookup_by_con_id() -> None:
     bare = contract_from_con_id(265598)
     assert bare is not None
     assert int(getattr(bare, "conId", 0) or 0) == 265598
+
+
+def test_cache_does_not_poison_other_venue() -> None:
+    from app.brokers.ibkr_contracts import _BY_SYMBOL_KEY
+
+    clear_contract_cache()
+    asx = SimpleNamespace(conId=1, symbol="CSL", currency="AUD", primaryExchange="ASX")
+    nyse = SimpleNamespace(conId=6120, symbol="CSL", currency="USD", primaryExchange="NYSE")
+    cache_contract(asx, venue="AU")
+    cache_contract(nyse, venue="US")
+    assert _BY_SYMBOL_KEY[("CSL", "AU", "AUD")] is asx
+    assert _BY_SYMBOL_KEY[("CSL", "US", "USD")] is nyse
+    assert ("CSL", None, None) not in _BY_SYMBOL_KEY
+    clear_contract_cache()

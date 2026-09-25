@@ -106,7 +106,11 @@ class MarketDataProvider(Protocol):
     name: str
 
     async def fetch_quotes(
-        self, symbols: list[str], *, con_ids: dict[str, int] | None = None
+        self,
+        symbols: list[str],
+        *,
+        con_ids: dict[str, int] | None = None,
+        venue: str | None = None,
     ) -> list[RawMarketQuote]: ...
 
 

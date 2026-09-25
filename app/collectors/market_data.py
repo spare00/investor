@@ -38,11 +38,17 @@ class StubMarketDataProvider:
         self._quotes = quotes or _STUB_LAST
 
     async def fetch_quotes(
-        self, symbols: list[str], *, allow_stub: bool = False, con_ids: dict[str, int] | None = None
+        self,
+        symbols: list[str],
+        *,
+        allow_stub: bool = False,
+        con_ids: dict[str, int] | None = None,
+        venue: str | None = None,
     ) -> list[RawMarketQuote]:
         from app.market.live_prices import requires_live_market_prices
 
         _ = con_ids
+        _ = venue
         if requires_live_market_prices() and not allow_stub:
             logger.error(
                 "stub_quotes_blocked",
@@ -163,6 +169,7 @@ class IbkrMarketDataProvider:
         symbols: list[str],
         *,
         con_ids: dict[str, int] | None = None,
+        venue: str | None = None,
     ) -> list[RawMarketQuote]:
         settings = self.settings
         if not settings.enable_external_data or not settings.enable_market_data_collection:
@@ -187,19 +194,31 @@ class IbkrMarketDataProvider:
             return []
 
         now = datetime.now(UTC)
-        out: list[RawMarketQuote] = []
-        # reqTickersAsync can hang indefinitely on a wedged Gateway session; bound it.
-        timeout = max(5, int(settings.provider_request_timeout_seconds))
+        # Qualify + delayed ticks can exceed a single HTTP-ish timeout when the
+        # universe includes dual-listed names. Bound each ticker instead of
+        # aborting the whole snapshot at 15s (that previously returned 0 quotes
+        # even after Gateway had already accepted the MD client).
+        ticker_timeout = 5.0
+        outer_timeout = max(60.0, ticker_timeout * max(4, len(syms) + 2))
         try:
             out = await asyncio.wait_for(
-                self._fetch_quotes_inner(ib, Stock, syms, con_ids=con_ids, now=now),
-                timeout=float(timeout),
+                self._fetch_quotes_inner(
+                    ib,
+                    Stock,
+                    syms,
+                    con_ids=con_ids,
+                    now=now,
+                    venue=venue,
+                    ticker_timeout=ticker_timeout,
+                ),
+                timeout=outer_timeout,
             )
         except TimeoutError:
             logger.error(
                 "ibkr_md_fetch_timeout",
                 requested=len(syms),
-                timeout_s=timeout,
+                timeout_s=outer_timeout,
+                venue=venue,
             )
             await self.disconnect()
             return []
@@ -209,7 +228,12 @@ class IbkrMarketDataProvider:
             await self.disconnect()
             return []
 
-        logger.info("ibkr_quotes_fetched", requested=len(syms), returned=len(out))
+        logger.info(
+            "ibkr_quotes_fetched",
+            requested=len(syms),
+            returned=len(out),
+            venue=venue,
+        )
         return out
 
     async def _fetch_quotes_inner(
@@ -220,6 +244,8 @@ class IbkrMarketDataProvider:
         *,
         con_ids: dict[str, int] | None,
         now: datetime,
+        venue: str | None,
+        ticker_timeout: float,
     ) -> list[RawMarketQuote]:
         out: list[RawMarketQuote] = []
         contracts = []
@@ -228,15 +254,59 @@ class IbkrMarketDataProvider:
             if con_ids:
                 raw = con_ids.get(sym) or con_ids.get(sym.upper())
                 cid = int(raw) if raw else None
-            contract = await self._qualify(ib, stock_cls, sym, con_id=cid)
+            contract = await self._qualify(ib, stock_cls, sym, con_id=cid, venue=venue)
             if contract is not None:
+                logger.info(
+                    "ibkr_md_qualified",
+                    symbol=sym,
+                    con_id=getattr(contract, "conId", None),
+                    currency=getattr(contract, "currency", None),
+                    exchange=getattr(contract, "primaryExchange", None)
+                    or getattr(contract, "exchange", None),
+                    venue=venue,
+                )
                 contracts.append(contract)
         if not contracts:
             return []
-        tickers = await ib.reqTickersAsync(*contracts)
-        # Brief settle for delayed ticks.
-        await asyncio.sleep(0.8)
-        tickers = await ib.reqTickersAsync(*contracts)
+        tickers: list[Any] = []
+        for contract in contracts:
+            sym = str(getattr(contract, "symbol", "") or "").upper()
+            try:
+                batch = await asyncio.wait_for(
+                    ib.reqTickersAsync(contract),
+                    timeout=ticker_timeout,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "ibkr_ticker_timeout",
+                    symbol=sym,
+                    timeout_s=ticker_timeout,
+                    currency=getattr(contract, "currency", None),
+                    exchange=getattr(contract, "primaryExchange", None),
+                )
+                continue
+            tickers.extend(batch or [])
+        # Brief settle for delayed ticks, then retry only names still missing a last.
+        await asyncio.sleep(0.4)
+        have = {str(t.contract.symbol).upper() for t in tickers if t.contract}
+        missing = [
+            c
+            for c in contracts
+            if str(getattr(c, "symbol", "") or "").upper() not in have
+        ]
+        if missing:
+            try:
+                extra = await asyncio.wait_for(
+                    ib.reqTickersAsync(*missing),
+                    timeout=ticker_timeout,
+                )
+                tickers.extend(extra or [])
+            except TimeoutError:
+                logger.warning(
+                    "ibkr_ticker_retry_timeout",
+                    missing=len(missing),
+                    timeout_s=ticker_timeout,
+                )
         by_sym = {str(t.contract.symbol).upper(): t for t in tickers if t.contract}
         for sym in syms:
             t = by_sym.get(sym)
@@ -278,22 +348,25 @@ class IbkrMarketDataProvider:
         symbol: str,
         *,
         con_id: int | None = None,
+        venue: str | None = None,
     ) -> Any | None:
         from app.brokers.ibkr_contracts import resolve_stock_contract
         from app.market.venues import venue_for_symbol
 
         try:
-            venue = venue_for_symbol(symbol, self.settings).value
+            resolved = venue or venue_for_symbol(symbol, self.settings).value
             return await resolve_stock_contract(
                 ib,
                 symbol=symbol,
                 con_id=con_id,
-                venue=venue,
+                venue=resolved,
                 settings=self.settings,
                 stock_cls=stock_cls,
             )
         except LookupError:
-            logger.warning("ibkr_md_qualify_failed", symbol=symbol, con_id=con_id)
+            logger.warning(
+                "ibkr_md_qualify_failed", symbol=symbol, con_id=con_id, venue=venue
+            )
             return None
 
     @staticmethod

@@ -52,9 +52,14 @@ class FixtureMarketDataProvider:
         )
 
     async def fetch_quotes(
-        self, symbols: list[str], *, settings: Settings | None = None
+        self,
+        symbols: list[str],
+        *,
+        settings: Settings | None = None,
+        venue: str | None = None,
     ) -> tuple[list[CanonicalQuote], ProviderRequestMeta]:
         from app.market.live_prices import requires_live_market_prices
+        _ = venue
 
         cfg = settings or get_settings()
         if requires_live_market_prices(cfg) and not self._allow_offline:
@@ -85,10 +90,14 @@ class FixtureMarketDataProvider:
         return quotes, meta
 
     async def fetch_daily_bars(
-        self, symbols: list[str], *, settings: Settings | None = None
+        self,
+        symbols: list[str],
+        *,
+        settings: Settings | None = None,
+        venue: str | None = None,
     ) -> tuple[list[CanonicalBar], ProviderRequestMeta]:
         cfg = settings or get_settings()
-        quotes, meta = await self.fetch_quotes(symbols, settings=cfg)
+        quotes, meta = await self.fetch_quotes(symbols, settings=cfg, venue=venue)
         bars: list[CanonicalBar] = []
         for q in quotes:
             bars.append(
@@ -112,10 +121,14 @@ class FixtureMarketDataProvider:
         return bars, meta
 
     async def fetch_premarket(
-        self, symbols: list[str], *, settings: Settings | None = None
+        self,
+        symbols: list[str],
+        *,
+        settings: Settings | None = None,
+        venue: str | None = None,
     ) -> tuple[list[CanonicalPremarketSnapshot], ProviderRequestMeta]:
         cfg = settings or get_settings()
-        quotes, meta = await self.fetch_quotes(symbols, settings=cfg)
+        quotes, meta = await self.fetch_quotes(symbols, settings=cfg, venue=venue)
         now = datetime.now(UTC)
         out: list[CanonicalPremarketSnapshot] = []
         for q in quotes:
@@ -164,7 +177,11 @@ class IbkrMarketDataAdapter:
         )
 
     async def fetch_quotes(
-        self, symbols: list[str], *, settings: Settings | None = None
+        self,
+        symbols: list[str],
+        *,
+        settings: Settings | None = None,
+        venue: str | None = None,
     ) -> tuple[list[CanonicalQuote], ProviderRequestMeta]:
         from app.collectors.market_data import IbkrMarketDataProvider
         from app.providers.base import ProviderStatus
@@ -191,7 +208,7 @@ class IbkrMarketDataAdapter:
             # Gateway reconnect + delayed ticks need headroom beyond the generic
             # HTTP provider timeout (especially after process kill / clientId churn).
             timeout_seconds=max(60.0, float(cfg.provider_request_timeout_seconds) * 3),
-            fn=lambda: IbkrMarketDataProvider(cfg).fetch_quotes(symbols),
+            fn=lambda: IbkrMarketDataProvider(cfg).fetch_quotes(symbols, venue=venue),
         )
         if meta.status in {ProviderStatus.TIMEOUT, ProviderStatus.ERROR}:
             try:
@@ -204,9 +221,13 @@ class IbkrMarketDataAdapter:
         return quotes, meta
 
     async def fetch_daily_bars(
-        self, symbols: list[str], *, settings: Settings | None = None
+        self,
+        symbols: list[str],
+        *,
+        settings: Settings | None = None,
+        venue: str | None = None,
     ) -> tuple[list[CanonicalBar], ProviderRequestMeta]:
-        quotes, meta = await self.fetch_quotes(symbols, settings=settings)
+        quotes, meta = await self.fetch_quotes(symbols, settings=settings, venue=venue)
         bars: list[CanonicalBar] = []
         for q in quotes:
             bars.append(
@@ -230,9 +251,13 @@ class IbkrMarketDataAdapter:
         return bars, meta
 
     async def fetch_premarket(
-        self, symbols: list[str], *, settings: Settings | None = None
+        self,
+        symbols: list[str],
+        *,
+        settings: Settings | None = None,
+        venue: str | None = None,
     ) -> tuple[list[CanonicalPremarketSnapshot], ProviderRequestMeta]:
-        quotes, meta = await self.fetch_quotes(symbols, settings=settings)
+        quotes, meta = await self.fetch_quotes(symbols, settings=settings, venue=venue)
         now = datetime.now(UTC)
         out: list[CanonicalPremarketSnapshot] = []
         for q in quotes:

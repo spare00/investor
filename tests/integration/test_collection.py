@@ -49,7 +49,7 @@ async def test_collection_fail_closed_on_empty_markets(session: AsyncSession, mo
     class EmptyProvider:
         name = "empty"
 
-        async def fetch_quotes(self, symbols: list[str]) -> list:
+        async def fetch_quotes(self, symbols: list[str], **_: object) -> list:
             return []
 
     monkeypatch.setattr(md, "get_market_data_provider", lambda name=None: EmptyProvider())

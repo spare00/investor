@@ -280,7 +280,9 @@ class DailyWorkflowService:
             if collection is None:
                 collection = await DataCollectionService(
                     self.session, settings=self.settings, persist=True
-                ).collect_premarket(workflow_id=run.id, symbols=collect_symbols)
+                ).collect_premarket(
+                    workflow_id=run.id, symbols=collect_symbols, venue=self.venue.value
+                )
             if data.fail_closed:
                 meta = dict(run.metadata_json or {})
                 meta["data_fail_closed"] = True

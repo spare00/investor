@@ -169,11 +169,17 @@ class DataCollectionPipeline:
             from app.providers.registry import FixtureMarketDataProvider
 
             market = FixtureMarketDataProvider(allow_offline=True)
-        quotes, meta_q = await market.fetch_quotes(universe, settings=self.settings)
+        quotes, meta_q = await market.fetch_quotes(
+            universe, settings=self.settings, venue=venue
+        )
         metas.append(meta_q.to_dict())
-        bars, meta_b = await market.fetch_daily_bars(universe[:8], settings=self.settings)
+        bars, meta_b = await market.fetch_daily_bars(
+            universe[:8], settings=self.settings, venue=venue
+        )
         metas.append(meta_b.to_dict())
-        premarket, meta_p = await market.fetch_premarket(universe[:8], settings=self.settings)
+        premarket, meta_p = await market.fetch_premarket(
+            universe[:8], settings=self.settings, venue=venue
+        )
         metas.append(meta_p.to_dict())
 
         # News
