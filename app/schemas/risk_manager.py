@@ -23,6 +23,8 @@ class PositionSnapshot(StrictModel):
     venue: str = "US"
     currency: str | None = None
     con_id: int | None = None
+    # Lets exit rules distinguish a failed thesis from a trade that just opened.
+    opened_at: datetime | None = None
 
 
 class ProposedTrade(StrictModel):

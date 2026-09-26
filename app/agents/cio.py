@@ -305,6 +305,7 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
             horizon_for_symbol,
             playbook_for,
             portfolio_action_from_symbol_actions,
+            position_age_seconds,
             symbol_action_for_exit,
         )
 
@@ -366,6 +367,7 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
                     liquidity=view.liquidity_state,
                     last=last,
                     entry=entry,
+                    held_seconds=position_age_seconds(pos),
                 )
                 action = symbol_action_for_exit(decision)
                 if action == SymbolAction.SELL:

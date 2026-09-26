@@ -414,6 +414,7 @@ class PositionManager:
                     venue=getattr(p, "venue", None) or "US",
                     currency=getattr(p, "currency", None),
                     con_id=int(getattr(p, "con_id", 0) or 0) or None,
+                    opened_at=getattr(p, "opened_at", None),
                 )
                 for p in positions
             ],

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from app.agents.cio import CIOAgent
 from app.agents.quant_strategist import QuantStrategistAgent
@@ -808,13 +810,14 @@ def test_downtrend_deceleration_is_sell_not_hope() -> None:
         )
         == BookExit.SELL
     )
+    # Past the book's 1.5% noise floor: a sideways loser is a hope trade.
     assert (
         exit_action(
             horizon="short",
             trend=TrendState.SIDEWAYS,
             momentum=MomentumState.STEADY,
             liquidity=LiquidityState.NORMAL,
-            last=153.0,
+            last=150.0,
             entry=155.0,
         )
         == BookExit.SELL
@@ -825,11 +828,52 @@ def test_downtrend_deceleration_is_sell_not_hope() -> None:
             trend=TrendState.UP,
             momentum=MomentumState.DECELERATING,
             liquidity=LiquidityState.NORMAL,
+            last=150.0,
+            entry=155.0,
+        )
+        == BookExit.HOLD
+    )
+
+
+def test_a_loss_inside_the_noise_floor_is_not_a_thesis_break() -> None:
+    """Regression: bare ``last < entry`` was an effective ~0.2% stop.
+
+    It fired on the spread — tighter than every designed stop in the book — so
+    setups were closed before they could resolve.
+    """
+    from app.universe.book_strategy import BookExit, hope_trade_floor
+
+    assert hope_trade_floor("short") == pytest.approx(0.015)
+    # 155 → 153 is 1.3%, inside the book's own 1.5% floor.
+    assert (
+        exit_action(
+            horizon="short",
+            trend=TrendState.SIDEWAYS,
+            momentum=MomentumState.STEADY,
+            liquidity=LiquidityState.NORMAL,
             last=153.0,
             entry=155.0,
         )
         == BookExit.HOLD
     )
+
+
+def test_a_fresh_position_gets_one_reeval_cycle_before_it_is_cut() -> None:
+    from app.universe.book_strategy import BookExit, min_hold_seconds
+
+    assert min_hold_seconds("short") == pytest.approx(900.0)
+    kwargs = {
+        "horizon": "short",
+        "trend": TrendState.SIDEWAYS,
+        "momentum": MomentumState.STEADY,
+        "liquidity": LiquidityState.NORMAL,
+        "last": 150.0,
+        "entry": 155.0,
+    }
+    assert exit_action(**kwargs, held_seconds=60.0) == BookExit.HOLD
+    assert exit_action(**kwargs, held_seconds=1200.0) == BookExit.SELL
+    # Unknown age must not exempt a position forever.
+    assert exit_action(**kwargs, held_seconds=None) == BookExit.SELL
 
 
 def test_playbook_take_profit_and_lock() -> None:
@@ -884,13 +928,14 @@ def test_ensure_playbook_exits_sells_sideways_loser() -> None:
     pos = PositionSnapshot(
         symbol="CBA",
         quantity=10,
-        market_value=1530,
+        market_value=1500,
         cost_basis=1550,
-        unrealized_pnl=-20,
+        unrealized_pnl=-50,
         sector="Unknown",
         weight_pct=10,
         venue="AU",
         currency="AUD",
+        opened_at=NOW - timedelta(days=1),
     )
     out = ensure_playbook_exits(
         decision,
@@ -905,7 +950,7 @@ def test_ensure_playbook_exits_sells_sideways_loser() -> None:
             trend=TrendState.SIDEWAYS,
             momentum=MomentumState.STEADY,
             liquidity=LiquidityState.NORMAL,
-            last=153,
+            last=150,
             entry=155,
         ).value
     }

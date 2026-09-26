@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -619,6 +620,55 @@ def lock_level(
     return round(float(entry) + 0.5 * (float(tp) - float(entry)), 4)
 
 
+def _is_hope_trade(
+    horizon: str,
+    *,
+    last: float | None,
+    entry: float | None,
+    held_seconds: float | None,
+) -> bool:
+    """Underwater far enough, and long enough, to call it a failed thesis.
+
+    Bare ``last < entry`` made this an effective ~0.2% stop that fired on the
+    spread — tighter than every designed stop in the book, and it closed trades
+    before the setup had a chance to resolve. Two conditions now gate it:
+    the loss must clear the book's own noise floor, and the position must have
+    survived one full re-evaluation cycle. Before that, "waiting for a reversal"
+    is not a fair description of a trade that has not happened yet.
+    """
+    if last is None or entry is None or float(entry) <= 0:
+        return False
+    drawdown = (float(entry) - float(last)) / float(entry)
+    if drawdown <= hope_trade_floor(horizon):
+        return False
+    if held_seconds is not None and held_seconds < min_hold_seconds(horizon):
+        return False
+    return True
+
+
+def _policy_or_none(horizon: str) -> Any:
+    try:
+        return policy_for(horizon)
+    except (KeyError, ValueError):
+        return None
+
+
+def min_hold_seconds(horizon: str) -> float:
+    """One re-evaluation cycle — the book has to look twice before it gives up."""
+    policy = _policy_or_none(horizon)
+    return float(policy.reeval_seconds) if policy is not None else 300.0
+
+
+def hope_trade_floor(horizon: str) -> float:
+    """Adverse move, as a fraction of entry, below which a loss is just noise.
+
+    The book's own ``min_stop_pct`` is the width it has already declared it will
+    not react inside of, so anything tighter cannot be a thesis break.
+    """
+    policy = _policy_or_none(horizon)
+    return float(policy.min_stop_pct) if policy is not None else 0.005
+
+
 def exit_action(
     *,
     horizon: str,
@@ -627,6 +677,7 @@ def exit_action(
     liquidity: LiquidityState,
     last: float | None = None,
     entry: float | None = None,
+    held_seconds: float | None = None,
 ) -> BookExit:
     book = playbook_for(horizon)
     if book is None:
@@ -636,10 +687,7 @@ def exit_action(
     if book.sell_if_downtrend and down:
         # A downtrend "deceleration" is hope of a bounce, not a dip. Dump it.
         return BookExit.SELL
-    underwater = (
-        last is not None and entry is not None and float(entry) > 0 and float(last) < float(entry)
-    )
-    if underwater and not up:
+    if _is_hope_trade(horizon, last=last, entry=entry, held_seconds=held_seconds) and not up:
         # Sideways loser waiting for a reversal is the same hope trade.
         return BookExit.SELL
     if book.sell_if_liquidity_stressed and liquidity == LiquidityState.STRESSED:
@@ -790,6 +838,20 @@ def _position_entry_last(pos: Any) -> tuple[float | None, float | None]:
     return entry, last
 
 
+def position_age_seconds(pos: Any, *, now: datetime | None = None) -> float | None:
+    """Age of the position, or None when it is unknown.
+
+    Unknown must not read as brand new: a position with no ``opened_at`` would
+    otherwise become permanently exempt from the thesis-break exit.
+    """
+    opened = getattr(pos, "opened_at", None)
+    if not isinstance(opened, datetime):
+        return None
+    if opened.tzinfo is None:
+        opened = opened.replace(tzinfo=UTC)
+    return max(0.0, ((now or datetime.now(UTC)) - opened).total_seconds())
+
+
 def ensure_playbook_exits(
     decision: Any,
     quant: Any,
@@ -831,6 +893,7 @@ def ensure_playbook_exits(
             liquidity=view.liquidity_state,
             last=last,
             entry=entry,
+            held_seconds=position_age_seconds(pos),
         )
         want = symbol_action_for_exit(allowed)
         if want not in {SymbolAction.SELL, SymbolAction.REDUCE}:
