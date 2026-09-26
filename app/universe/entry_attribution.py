@@ -12,6 +12,7 @@ oversold_bounce and aggressive_injected; report buckets are independent gates.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -42,6 +43,11 @@ EXIT_GIVEBACK = "giveback_exit"
 EXIT_SESSION_FLATTEN = "session_flatten"
 EXIT_MAX_HOLDING = "max_holding"
 EXIT_UNKNOWN = "unknown"
+
+# Marks an exit_reason reconstructed from the row's own levels, not observed.
+EXIT_INFERRED_KEY = "exit_reason_inferred"
+# Marks a closed row no source can attribute, so the lookup stops retrying.
+ATTR_MISSING_KEY = "entry_attribution_missing"
 
 COHORT_INJECTED_SIDEWAYS = "aggressive_injected_sideways"
 COHORT_SHORT_BOUNCE = "short_oversold_bounce"
@@ -245,6 +251,57 @@ def classify_exit_reason(
     return EXIT_UNKNOWN
 
 
+def _float(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out == out and abs(out) != float("inf") else None
+
+
+def infer_exit_reason(lc: Any) -> str | None:
+    """Reconstruct why a position is gone when the close carried no reason.
+
+    A reactive broker sync stamps only ``closed_by=broker_position_sync``, which
+    matches none of the text patterns and classifies to ``unknown`` — the outcome
+    for every close in the book so far, which leaves the expectancy report with
+    nothing to group by. But the row still holds the levels the trade was managed
+    against, and those say more than "unknown" does.
+
+    Only claims a reason the geometry makes unambiguous. Session flattens are not
+    inferred: "not overnight_allowed" is true of every intraday position, so it
+    would be a catch-all label rather than evidence.
+    """
+    entry = _float(getattr(lc, "average_entry_price", None))
+    mark = _float(getattr(lc, "current_price", None))
+    stop = _float(getattr(lc, "stop_price", None))
+    target = _float(getattr(lc, "take_profit_price", None))
+
+    long_side: bool | None = None
+    if entry and stop:
+        long_side = stop < entry
+    elif entry and target:
+        long_side = target > entry
+
+    if mark is not None and long_side is not None:
+        if target is not None and (mark >= target if long_side else mark <= target):
+            return EXIT_TAKE_PROFIT
+        if stop is not None and (mark <= stop if long_side else mark >= stop):
+            return EXIT_STOP
+
+    opened = getattr(lc, "opened_at", None)
+    closed = getattr(lc, "closed_at", None)
+    cap = _float(getattr(lc, "max_holding_minutes", None))
+    if cap and isinstance(opened, datetime) and isinstance(closed, datetime):
+        if opened.tzinfo is None:
+            opened = opened.replace(tzinfo=UTC)
+        if closed.tzinfo is None:
+            closed = closed.replace(tzinfo=UTC)
+        if (closed - opened).total_seconds() >= cap * 60.0:
+            return EXIT_MAX_HOLDING
+    return None
+
+
 def stamp_lifecycle_exit_reason(
     lc: Any, *, raw: str | None = None, thesis: str | None = None
 ) -> str:
@@ -259,8 +316,15 @@ def stamp_lifecycle_exit_reason(
         metadata=meta,
         horizon=str(policy.get("horizon") or "") or None,
     )
-    if classified == EXIT_UNKNOWN and existing:
-        return existing
+    if classified == EXIT_UNKNOWN:
+        inferred = infer_exit_reason(lc)
+        if inferred is not None:
+            # Flagged so the report can separate an observed exit from a
+            # reconstructed one rather than reading both as equally certain.
+            classified = inferred
+            meta[EXIT_INFERRED_KEY] = True
+        elif existing:
+            return existing
     meta["exit_reason"] = classified
     if raw and not meta.get("exit_reason_raw"):
         meta["exit_reason_raw"] = str(raw)
@@ -275,8 +339,9 @@ async def copy_entry_attribution_to_lifecycle(session: Any, lc: Any) -> None:
     if qty > 0 and not meta.get("opened_quantity"):
         meta["opened_quantity"] = qty
 
-    have = any(meta.get(k) for k in _ATTR_KEYS)
-    if have:
+    # `any` here left a row stamped with only entry_source permanently missing
+    # its timing and trend — the two fields the expectancy report groups by.
+    if all(meta.get(k) for k in _ATTR_KEYS) or meta.get(ATTR_MISSING_KEY):
         lc.metadata_json = meta
         return
 
@@ -340,4 +405,9 @@ async def copy_entry_attribution_to_lifecycle(session: Any, lc: Any) -> None:
             if attr.get(key) and not policy.get(key):
                 policy[key] = attr[key]
         lc.exit_policy = policy
+    elif str(getattr(lc, "status", "") or "").upper() == "CLOSED":
+        # Nothing can attribute this row any more, so stop re-querying the
+        # decision and intent tables on every sync — and let the report count
+        # what is genuinely unattributable instead of silently dropping it.
+        meta[ATTR_MISSING_KEY] = True
     lc.metadata_json = meta
