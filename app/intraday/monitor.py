@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.intraday.events import IntradayEventBus
+from app.intraday.pnl import usable_mark
 from app.models import PositionLifecycle, PositionSnapshotRecord
 
 
@@ -86,10 +87,17 @@ class PositionMonitor:
         verdict = HEALTHY
         qty = float(lifecycle.quantity or 0)
         entry = float(lifecycle.average_entry_price or 0)
-        price = float(current_price or lifecycle.current_price or entry or 0)
+        mark = usable_mark(current_price, lifecycle.current_price, entry)
+        price = float(mark or 0.0)
         stop = lifecycle.stop_price
         now = datetime.now(UTC)
 
+        if current_price is not None and usable_mark(current_price) is None:
+            verdict = WATCH
+            reasons.append("mark_rejected")
+        if mark is None:
+            verdict = RISK_REVIEW_REQUIRED if verdict != EMERGENCY_ACTION_REQUIRED else verdict
+            reasons.append("mark_unusable")
         if halted:
             verdict = RISK_REVIEW_REQUIRED
             reasons.append("trading_halt")
@@ -167,7 +175,8 @@ class PositionMonitor:
 
             lock = lock_level(entry=entry, take_profit=tp, horizon=hz)
         if (
-            qty > 0
+            mark is not None
+            and qty > 0
             and entry > 0
             and peak is not None
             and lock is not None
@@ -196,7 +205,8 @@ class PositionMonitor:
                 },
             )
         elif (
-            qty > 0
+            mark is not None
+            and qty > 0
             and entry > 0
             and lock is not None
             and price >= lock
@@ -272,8 +282,9 @@ class PositionMonitor:
             reasons.append("position_concentration")
 
         snap = await self._snapshot(lifecycle, price=price, equity=equity)
-        lifecycle.current_price = price
-        lifecycle.unrealized_pl = (price - entry) * qty if entry else 0.0
+        if mark is not None:
+            lifecycle.current_price = mark
+            lifecycle.unrealized_pl = (mark - entry) * qty if entry else 0.0
         lifecycle.last_monitor_verdict = verdict
         await self.session.flush()
         return MonitorResult(
@@ -316,7 +327,7 @@ class PositionMonitor:
             take_profit_state=lifecycle.take_profit_state,
             holding_minutes=held,
             risk_amount=None,
-            data_quality=1.0,
+            data_quality=1.0 if price > 0 else 0.0,
             as_of=datetime.now(UTC),
             source="position_monitor",
         )
@@ -362,7 +373,7 @@ class PositionMonitor:
                     .limit(1)
                 )
             ).scalar_one_or_none()
-        px = float(current_price if current_price is not None else avg_entry or 0)
+        px = float(usable_mark(current_price, avg_entry) or 0.0)
         if existing:
             existing.quantity = quantity
             existing.average_entry_price = avg_entry

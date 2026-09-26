@@ -75,6 +75,27 @@ def apply_fill_fifo(
     )
 
 
+def usable_mark(*candidates: float | None) -> float | None:
+    """First candidate that could be a real equity print, else None.
+
+    IBKR unset ticks arrive as 0 or DBL_MAX, and a mark derived from a short
+    book's signed market value arrives sign-flipped. Any of those multiplied by
+    quantity produces a fabricated P&L, so reject them before they are stored.
+    """
+    from app.brokers.venue_orders import is_sane_equity_price
+
+    for value in candidates:
+        if value is None:
+            continue
+        try:
+            px = float(value)
+        except (TypeError, ValueError):
+            continue
+        if is_sane_equity_price(px):
+            return px
+    return None
+
+
 def lifecycle_pnl(lc: Any) -> float:
     """Closed-trade P&L. Prefer stamped realized; last mark if that was never written."""
     realized = float(getattr(lc, "realized_pl", None) or 0.0)
@@ -84,16 +105,27 @@ def lifecycle_pnl(lc: Any) -> float:
 
 
 def stamp_lifecycle_close_pnl(lc: Any) -> float:
-    """Write realized_pl before quantity is zeroed on broker-flat close."""
+    """Write realized_pl before quantity is zeroed on broker-flat close.
+
+    Falling back to unrealized_pl is only safe when the mark that produced it
+    was itself a real price — otherwise the fallback launders a bad tick into a
+    permanent realized number.
+    """
     existing = float(getattr(lc, "realized_pl", None) or 0.0)
     if abs(existing) > 1e-9:
         return existing
     qty = float(getattr(lc, "quantity", None) or 0.0)
-    entry = float(getattr(lc, "average_entry_price", None) or 0.0)
-    last = float(getattr(lc, "current_price", None) or 0.0)
-    if qty and entry > 0 and last > 0:
+    entry = usable_mark(getattr(lc, "average_entry_price", None))
+    last = usable_mark(getattr(lc, "current_price", None))
+    if qty and entry is not None and last is not None:
         pnl = (last - entry) * qty
-    else:
+    elif last is not None:
         pnl = float(getattr(lc, "unrealized_pl", None) or 0.0)
+    else:
+        # No trustworthy mark ever landed: record flat rather than invent a move.
+        pnl = 0.0
+        meta = dict(getattr(lc, "metadata_json", None) or {})
+        meta["pnl_unavailable"] = "no_usable_mark"
+        lc.metadata_json = meta
     lc.realized_pl = round(float(pnl), 4)
     return float(lc.realized_pl)
