@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -28,6 +29,34 @@ from app.market.venues import venue_for_symbol
 from app.models import OrderIntent, PositionLifecycle, PositionSnapshotRecord
 
 logger = get_logger(__name__)
+
+# Monitor reasons that are an instruction to get out, not a note to look again.
+# Each is only ever appended when the monitor wants the position closed.
+PROTECTIVE_EXIT_REASONS = (
+    "stop_triggered",
+    "take_profit_triggered",
+    "max_holding_time",
+    "giveback_to_loss",
+)
+
+
+def protective_exit_reason(reasons: Sequence[str] | None, *, stop_triggered: bool) -> str | None:
+    """Why this position must be closed now, or None to leave it open.
+
+    Keyed on the reason, not the monitor's verdict. The verdict is a severity
+    label that later, unrelated checks overwrite: ``daily_loss_limit`` and
+    ``drawdown_limit`` are portfolio-wide and run after the exit checks, so on
+    the day they fire they relabelled every position EMERGENCY_ACTION_REQUIRED.
+    The old ``verdict == "EXIT_INTENT_REQUIRED"`` test then dropped every time
+    stop, take-profit and giveback in the book — on exactly the day it most
+    needed flattening. The reason is the observation, and it stands however
+    severe the rest of the portfolio has become.
+    """
+    if stop_triggered:
+        return "hard_stop"
+    found = set(reasons or ())
+    # Ordered by urgency, not by whatever order the monitor appended them.
+    return next((r for r in PROTECTIVE_EXIT_REASONS if r in found), None)
 
 
 class IntradayService:
@@ -126,40 +155,8 @@ class IntradayService:
             if stamped is not None and lc.stop_price == stamped:
                 entry["horizon_stop"] = stamped
             # Hard stop / max-holding / take-profit → exit intent (optional paper submit).
-            protective_exit = stop.triggered or (
-                result.verdict == "EXIT_INTENT_REQUIRED"
-                and any(
-                    r
-                    in {
-                        "stop_triggered",
-                        "take_profit_triggered",
-                        "max_holding_time",
-                        "giveback_to_loss",
-                    }
-                    for r in (result.reasons or [])
-                )
-            )
-            if protective_exit:
-                reason = (
-                    "hard_stop"
-                    if stop.triggered
-                    else str(
-                        next(
-                            (
-                                r
-                                for r in (result.reasons or [])
-                                if r
-                                in {
-                                    "max_holding_time",
-                                    "take_profit_triggered",
-                                    "stop_triggered",
-                                    "giveback_to_loss",
-                                }
-                            ),
-                            "monitor_exit",
-                        )
-                    )
-                )
+            reason = protective_exit_reason(result.reasons, stop_triggered=bool(stop.triggered))
+            if reason is not None:
                 if lc.status == "PENDING_CLOSE":
                     entry["exit_skipped"] = "already_pending_close"
                     intent = None
