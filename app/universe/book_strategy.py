@@ -633,24 +633,38 @@ def should_propose_entry(
     return True
 
 
-def playbook_take_profit(*, entry: float, horizon: str | None) -> float | None:
-    """Absolute long take-profit from the book's target_pct."""
+def playbook_take_profit(
+    *, entry: float, horizon: str | None, long_side: bool = True
+) -> float | None:
+    """Absolute take-profit from the book's target_pct, on the profitable side."""
     book = playbook_for(horizon)
     if book is None or entry <= 0:
         return None
-    return round(float(entry) * (1.0 + float(book.target_pct)), 4)
+    target = float(book.target_pct) if long_side else -float(book.target_pct)
+    return round(float(entry) * (1.0 + target), 4)
 
 
 def lock_level(
-    *, entry: float, take_profit: float | None, horizon: str | None = None
+    *,
+    entry: float,
+    take_profit: float | None,
+    horizon: str | None = None,
+    long_side: bool = True,
 ) -> float | None:
-    """Price that must print before the trade is not allowed to close as a loss."""
+    """Price that must print before the trade is not allowed to close as a loss.
+
+    Halfway from entry to target, in whichever direction the position profits.
+    A short's target sits below entry, so requiring ``tp > entry`` used to
+    return None for the whole short book and the giveback rule never armed.
+    """
     if entry <= 0:
         return None
     tp = take_profit
     if tp is None:
-        tp = playbook_take_profit(entry=entry, horizon=horizon)
-    if tp is None or tp <= entry:
+        tp = playbook_take_profit(entry=entry, horizon=horizon, long_side=long_side)
+    if tp is None:
+        return None
+    if (float(tp) - float(entry) > 0) is not long_side:
         return None
     return round(float(entry) + 0.5 * (float(tp) - float(entry)), 4)
 

@@ -117,9 +117,13 @@ class PositionMonitor:
             verdict = RECONCILIATION_REQUIRED
             reasons.append("flagged_reconciliation")
 
-        # Stop proximity / trigger
-        if stop is not None and price > 0 and qty > 0:
-            if price <= float(stop):
+        # Stop proximity / trigger. `qty > 0` and a bare `price <= stop` made
+        # every exit rule below long-only: a short's stop sits above the mark,
+        # so it could never trigger, never take profit and never give back.
+        # The short book had no exit at all bar a manual close.
+        long_side = qty >= 0
+        if stop is not None and price > 0 and qty != 0:
+            if (price <= float(stop)) if long_side else (price >= float(stop)):
                 verdict = EXIT_INTENT_REQUIRED
                 reasons.append("stop_triggered")
                 await self.bus.publish(
@@ -139,14 +143,18 @@ class PositionMonitor:
                     },
                 )
             else:
-                dist = (price - float(stop)) / price * 100.0
+                dist = abs(price - float(stop)) / price * 100.0
                 if dist < 1.0:
                     verdict = WATCH if verdict == HEALTHY else verdict
                     reasons.append("stop_proximity")
 
         # Take profit
         tp = lifecycle.take_profit_price
-        if tp is not None and price >= float(tp) and qty > 0:
+        if (
+            tp is not None
+            and qty != 0
+            and ((price >= float(tp)) if long_side else (0 < price <= float(tp)))
+        ):
             verdict = EXIT_INTENT_REQUIRED if verdict != EMERGENCY_ACTION_REQUIRED else verdict
             reasons.append("take_profit_triggered")
             await self.bus.publish(
@@ -168,20 +176,22 @@ class PositionMonitor:
         # Once a trade has been a real winner, it may not close as a loss.
         hz = str((lifecycle.exit_policy or {}).get("horizon") or "") or None
         peak = await self._remember_peak_price(lifecycle, price=price)
-        await self._remember_trough_price(lifecycle, price=price)
+        trough = await self._remember_trough_price(lifecycle, price=price)
+        # A short's best print is its lowest, not its highest.
+        best = peak if long_side else trough
         lock = None
         if entry > 0:
             from app.universe.book_strategy import lock_level
 
-            lock = lock_level(entry=entry, take_profit=tp, horizon=hz)
+            lock = lock_level(entry=entry, take_profit=tp, horizon=hz, long_side=long_side)
         if (
             mark is not None
-            and qty > 0
+            and qty != 0
             and entry > 0
-            and peak is not None
+            and best is not None
             and lock is not None
-            and peak >= lock
-            and price < entry
+            and ((best >= lock) if long_side else (best <= lock))
+            and ((price < entry) if long_side else (price > entry))
             and "take_profit_triggered" not in reasons
         ):
             verdict = EXIT_INTENT_REQUIRED if verdict != EMERGENCY_ACTION_REQUIRED else verdict
@@ -197,7 +207,7 @@ class PositionMonitor:
                 bypass_cooldown=True,
                 importance="high",
                 payload={
-                    "peak": peak,
+                    "best": best,
                     "lock": lock,
                     "entry": entry,
                     "price": price,
@@ -206,12 +216,12 @@ class PositionMonitor:
             )
         elif (
             mark is not None
-            and qty > 0
+            and qty != 0
             and entry > 0
             and lock is not None
-            and price >= lock
+            and ((price >= lock) if long_side else (price <= lock))
             and stop is not None
-            and float(stop) < entry
+            and ((float(stop) < entry) if long_side else (float(stop) > entry))
         ):
             lifecycle.stop_price = round(float(entry), 4)
             policy = dict(lifecycle.exit_policy or {})
