@@ -212,7 +212,7 @@ async def screen_candidates(
         else:
             rejected.append(hit)
 
-    logger.info(
+    logger.debug(
         "universe_screener_done",
         passed=len(passed),
         rejected=len(rejected),

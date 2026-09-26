@@ -44,7 +44,13 @@ STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    setup_logging(settings.log_level, settings.log_format)
+    setup_logging(
+        settings.log_level,
+        settings.log_format,
+        log_file=settings.log_file,
+        max_bytes=settings.log_max_bytes,
+        backup_count=settings.log_backup_count,
+    )
     mode = require_execution_allowed(settings)
     try:
         factory = get_session_factory()

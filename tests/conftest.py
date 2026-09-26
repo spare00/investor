@@ -13,6 +13,7 @@ def _env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRADING_MODE", "paper")
     monkeypatch.setenv("LIVE_TRADING_ENABLED", "false")
     monkeypatch.setenv("LOG_FORMAT", "console")
+    monkeypatch.setenv("LOG_FILE", "")
     monkeypatch.setenv("ENABLE_BROKER_ORDERS", "false")
     monkeypatch.setenv("ENABLE_AUTOMATED_EXECUTION", "false")
     monkeypatch.setenv("ENABLE_EXTERNAL_DATA", "false")

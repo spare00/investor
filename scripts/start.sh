@@ -63,20 +63,23 @@ cleanup_starting() {
 }
 trap cleanup_starting EXIT
 
-touch "${LOG_FILE}"
-chmod 600 "${LOG_FILE}"
+# Do not append uvicorn stdout to LOG_FILE — that pins an un-rotatable fd.
+# The app writes LOG_FILE with RotatingFileHandler. Capture boot/import
+# errors (pre-lifespan) in STDIO_LOG instead.
+touch "${STDIO_LOG}" "${LOG_FILE}"
+chmod 600 "${STDIO_LOG}" "${LOG_FILE}"
 
 if [[ "${INVESTOR_RELOAD}" == "1" ]]; then
   nohup "${UVICORN}" "${UVICORN_APP}" \
     --host "${INVESTOR_HOST}" \
     --port "${INVESTOR_PORT}" \
     --reload \
-    >>"${LOG_FILE}" 2>&1 &
+    >>"${STDIO_LOG}" 2>&1 &
 else
   nohup "${UVICORN}" "${UVICORN_APP}" \
     --host "${INVESTOR_HOST}" \
     --port "${INVESTOR_PORT}" \
-    >>"${LOG_FILE}" 2>&1 &
+    >>"${STDIO_LOG}" 2>&1 &
 fi
 APP_PID=$!
 
@@ -89,12 +92,13 @@ trap - EXIT
 # Brief readiness wait
 for _ in $(seq 1 50); do
   if ! kill -0 "${APP_PID}" 2>/dev/null; then
-    die "process exited during startup — see ${LOG_FILE}"
+    die "process exited during startup — see ${STDIO_LOG} and ${LOG_FILE}"
   fi
   if curl -fsS -m 1 "http://${INVESTOR_HOST}:${INVESTOR_PORT}/health" >/dev/null 2>&1; then
     echo "started pid ${APP_PID}"
     echo "  url   http://${INVESTOR_HOST}:${INVESTOR_PORT}/dashboard"
-    echo "  log   ${LOG_FILE}"
+    echo "  log   ${LOG_FILE} (rotating)"
+    echo "  stdio ${STDIO_LOG}"
     echo "  pid   ${PID_FILE}"
     if needs_local_db; then
       echo "  db    docker compose service 'db' (managed)"
@@ -104,6 +108,6 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 
-echo "warning: process is up but /health not ready yet — check ${LOG_FILE}" >&2
+echo "warning: process is up but /health not ready yet — check ${STDIO_LOG} and ${LOG_FILE}" >&2
 echo "started pid ${APP_PID}"
 exit 0

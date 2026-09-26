@@ -5,6 +5,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${REPO_ROOT}/.data"
 PID_FILE="${DATA_DIR}/investor.pid"
 LOG_FILE="${DATA_DIR}/investor.log"
+# Import errors / uvicorn boot only. App logs go to LOG_FILE via RotatingFileHandler.
+STDIO_LOG="${DATA_DIR}/uvicorn.stdio.log"
 UVICORN_APP="app.main:app"
 
 # Secure local defaults (override via env).

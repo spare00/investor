@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     app_env: AppEnv = AppEnv.DEVELOPMENT
     log_level: str = "INFO"
     log_format: str = "json"  # json | console
+    log_file: str = ".data/investor.log"
+    log_max_bytes: int = 50 * 1024 * 1024
+    log_backup_count: int = 5
     tz: str = "UTC"
 
     # API
