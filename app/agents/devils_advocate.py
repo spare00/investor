@@ -21,9 +21,7 @@ class DevilsAdvocateAgent(BaseAgent[DevilsAdvocateInput, DevilsAdvocateOutput]):
     def build_user_prompt(self, payload: DevilsAdvocateInput) -> str:
         return devil_brief(payload)
 
-    def fallback_output(
-        self, payload: DevilsAdvocateInput, *, reason: str
-    ) -> DevilsAdvocateOutput:
+    def fallback_output(self, payload: DevilsAdvocateInput, *, reason: str) -> DevilsAdvocateOutput:
         prefer_no = False
         if payload.risk and payload.risk.halt_new_trades:
             prefer_no = True

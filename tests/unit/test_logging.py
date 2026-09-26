@@ -53,9 +53,7 @@ def test_rotating_handler_rolls_over(tmp_path: Path, restore_logging: None) -> N
     assert log_path.stat().st_size < 8_000
 
 
-def test_oversized_existing_log_is_dropped(
-    tmp_path: Path, restore_logging: None
-) -> None:
+def test_oversized_existing_log_is_dropped(tmp_path: Path, restore_logging: None) -> None:
     log_path = tmp_path / "investor.log"
     log_path.write_bytes(b"z" * 8_000)
     setup_logging(

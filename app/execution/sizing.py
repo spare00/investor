@@ -41,20 +41,16 @@ def size_position(inp: SizingInput) -> SizingResult:
     if inp.side.lower() == "buy" and inp.stop_price >= inp.entry_price:
         return SizingResult(False, 0.0, 0.0, 0.0, stop_distance, reason="stop_not_below_entry")
     if inp.side.lower() == "sell" and inp.stop_price <= inp.entry_price:
-        return SizingResult(False, 0.0, 0.0, 0.0, stop_distance, reason="stop_not_above_entry_for_short")
+        return SizingResult(
+            False, 0.0, 0.0, 0.0, stop_distance, reason="stop_not_above_entry_for_short"
+        )
 
     risk_amount = inp.portfolio_equity * (inp.risk_per_trade_pct / 100.0)
     raw_qty = risk_amount / stop_distance
     max_by_position = (inp.portfolio_equity * (inp.max_position_pct / 100.0)) / inp.entry_price
     qty = min(raw_qty, max_by_position)
 
-    max_cash_spend = max(
-        0.0,
-        inp.available_buying_power
-        - inp.portfolio_equity * (inp.min_cash_pct / 100.0) * 0.0,  # buying power already net
-    )
-    # Keep min cash: available buying power should respect cash floor via caller;
-    # additionally cap notional by buying power.
+    # Cash floor is applied by the caller; cap shares by buying power here.
     max_by_bp = inp.available_buying_power / inp.entry_price if inp.entry_price > 0 else 0.0
     qty = min(qty, max_by_bp)
 

@@ -29,9 +29,7 @@ def operator_now(settings: Settings | None = None, *, now: datetime | None = Non
     return instant.astimezone(operator_zone(settings))
 
 
-def operator_calendar_day(
-    settings: Settings | None = None, *, now: datetime | None = None
-) -> date:
+def operator_calendar_day(settings: Settings | None = None, *, now: datetime | None = None) -> date:
     return operator_now(settings, now=now).date()
 
 

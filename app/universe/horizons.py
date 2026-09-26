@@ -8,8 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from app.schemas.common import TimeHorizon
+
+if TYPE_CHECKING:
+    from app.schemas.cio import CIODecision, SymbolActionPlan
 
 
 class UniverseHorizon(StrEnum):
@@ -319,12 +323,10 @@ def widen_long_stop_if_too_tight(
 
 
 def align_cio_horizons(
-    decision: "CIODecision",
+    decision: CIODecision,
     watchlist_context: list[dict] | None,
-) -> "CIODecision":
+) -> CIODecision:
     """Stamp CIO symbol plans with watchlist horizon → cio_time_horizon / max hold."""
-    from app.schemas.cio import CIODecision, SymbolActionPlan
-
     if not watchlist_context:
         return decision
     by_sym = policy_by_symbol(watchlist_context)

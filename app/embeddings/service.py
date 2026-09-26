@@ -48,9 +48,7 @@ class EmbeddingService:
                 pending.append(chunk)
         for snap in bundle.markets:
             hz = horizons.get(snap.symbol.upper())
-            pending.append(
-                market_chunk(snap, venue=venue, horizon=hz, max_chars=max_chars)
-            )
+            pending.append(market_chunk(snap, venue=venue, horizon=hz, max_chars=max_chars))
         if bundle.macro is not None:
             pending.append(macro_chunk(bundle.macro, venue=venue, max_chars=max_chars))
         return await self.index_chunks(pending)
@@ -119,7 +117,5 @@ class EmbeddingService:
         if score is None:
             return ChangeResult(skipped=False, cosine=None, reason="no_prior_state")
         if score >= threshold:
-            return ChangeResult(
-                skipped=True, cosine=score, reason="state_unchanged"
-            )
+            return ChangeResult(skipped=True, cosine=score, reason="state_unchanged")
         return ChangeResult(skipped=False, cosine=score, reason="state_changed")

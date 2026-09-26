@@ -45,10 +45,7 @@ def relax_fail_closed_reasons(
 
     kept = list(reasons)
     warnings: list[str] = []
-    soft_only = all(
-        r == _SOFT_INDEX_REASON or r.startswith("quality_hard_fail:")
-        for r in kept
-    )
+    soft_only = all(r == _SOFT_INDEX_REASON or r.startswith("quality_hard_fail:") for r in kept)
     if not soft_only:
         return kept, warnings
 

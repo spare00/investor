@@ -147,7 +147,7 @@ async def test_local_complete_json_skips_spend_gate(tmp_path, monkeypatch) -> No
         def json(self) -> dict:
             return {
                 "model": "qwen2.5:14b",
-                "choices": [{"message": {"content": "{\"ok\": true}"}}],
+                "choices": [{"message": {"content": '{"ok": true}'}}],
                 "usage": {"prompt_tokens": 3, "completion_tokens": 2},
             }
 

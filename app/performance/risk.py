@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Sequence
 
-from app.performance.returns import cumulative_return
 from app.performance.types import (
     ANNUALIZATION_FACTOR,
     DEFAULT_MIN_OBS,
@@ -181,7 +180,9 @@ def sortino_ratio(
         )
     rf_daily = risk_free_rate / ANNUALIZATION_FACTOR
     mean_excess = statistics.mean(returns) - rf_daily
-    value = (mean_excess / (dd.value / math.sqrt(ANNUALIZATION_FACTOR))) * math.sqrt(ANNUALIZATION_FACTOR)
+    value = (mean_excess / (dd.value / math.sqrt(ANNUALIZATION_FACTOR))) * math.sqrt(
+        ANNUALIZATION_FACTOR
+    )
     return metric_result(
         "sortino_ratio",
         value,
@@ -295,7 +296,11 @@ def beta(
     b = benchmark_returns[:n]
     mean_p = statistics.mean(p)
     mean_b = statistics.mean(b)
-    cov = sum((pi - mean_p) * (bi - mean_b) for pi, bi in zip(p, b)) / (n - 1) if n > 1 else 0.0
+    cov = (
+        sum((pi - mean_p) * (bi - mean_b) for pi, bi in zip(p, b, strict=True)) / (n - 1)
+        if n > 1
+        else 0.0
+    )
     var_b = statistics.variance(b) if n > 1 else 0.0
     if var_b == 0:
         return metric_result(
@@ -406,7 +411,9 @@ def information_ratio(
         )
     active = [portfolio_returns[i] - benchmark_returns[i] for i in range(n)]
     mean_active = statistics.mean(active)
-    te = tracking_error(portfolio_returns, benchmark_returns, min_obs=min_obs, benchmark_name=benchmark_name)
+    te = tracking_error(
+        portfolio_returns, benchmark_returns, min_obs=min_obs, benchmark_name=benchmark_name
+    )
     if te.status != MetricStatus.AVAILABLE or te.value is None or te.value == 0:
         status = te.status if te.value != 0 else MetricStatus.UNRELIABLE
         return metric_result(

@@ -245,9 +245,7 @@ def rows_for_decision(
                     status="rejected",
                     action=action,
                     reason=(
-                        f"CIO {action}: {thesis}. Blocked: {why}"
-                        if thesis
-                        else f"Blocked: {why}"
+                        f"CIO {action}: {thesis}. Blocked: {why}" if thesis else f"Blocked: {why}"
                     ),
                     source="execution",
                 )
@@ -430,9 +428,7 @@ class PicksService:
             bucket[run.agent_name] = report.payload
         return out
 
-    async def _intents_by_decision(
-        self, decision_ids: list[UUID]
-    ) -> dict[UUID, list[OrderIntent]]:
+    async def _intents_by_decision(self, decision_ids: list[UUID]) -> dict[UUID, list[OrderIntent]]:
         if not decision_ids:
             return {}
         rows = list(

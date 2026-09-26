@@ -159,7 +159,9 @@ def normalize_news_item(
         headline_hash=h,
         source=item.source.strip(),
         url=item.url,
-        published_at=item.published_at if item.published_at.tzinfo else item.published_at.replace(tzinfo=UTC),
+        published_at=item.published_at
+        if item.published_at.tzinfo
+        else item.published_at.replace(tzinfo=UTC),
         collected_at=collected,
         symbols=[s.upper() for s in item.symbols],
         category=item.category,

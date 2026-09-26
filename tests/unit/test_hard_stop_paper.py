@@ -8,10 +8,10 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.brokers.mock import MockBroker
 from app.core.config import Settings, TradingMode, clear_settings_cache
 from app.core.database import Base
-import app.models  # noqa: F401
 from app.execution.safety_controls import trading_controls
 from app.intraday.service import IntradayService
 from app.models import PositionLifecycle
@@ -156,9 +156,10 @@ async def test_hard_stop_pending_when_not_armed(session: AsyncSession) -> None:
 async def test_hard_stop_emits_ops_alert(
     session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from sqlalchemy import select
+
     from app.alerts.fake_provider import FakeAlertProvider
     from app.alerts.service import AlertService
-    from sqlalchemy import select
     from app.models import AlertRecordModel
 
     settings = Settings(
@@ -207,7 +208,9 @@ async def test_hard_stop_emits_ops_alert(
 
 
 @pytest.mark.asyncio
-async def test_monitor_emergency_emits_alert(session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_monitor_emergency_emits_alert(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from app.alerts.fake_provider import FakeAlertProvider
     from app.alerts.service import AlertService
 
@@ -244,8 +247,9 @@ async def test_monitor_emergency_emits_alert(session: AsyncSession, monkeypatch:
         )
     )
     # PortfolioSnapshot with huge daily loss so monitor hits daily_loss_limit
-    from app.models import PortfolioSnapshot
     from datetime import UTC, datetime
+
+    from app.models import PortfolioSnapshot
 
     session.add(
         PortfolioSnapshot(
@@ -464,7 +468,8 @@ async def test_resting_protection_stop_when_not_triggered(
     assert hit.get("protection_orders_submitted", 0) >= 1
     from sqlalchemy import select
 
-    from app.models import Order, PositionLifecycle as LC
+    from app.models import Order
+    from app.models import PositionLifecycle as LC
 
     lc = (await session.execute(select(LC).where(LC.symbol == "SPY"))).scalar_one()
     assert lc.protection_submitted is True
@@ -501,9 +506,7 @@ async def test_stop_triggered_does_not_queue_committee(session: AsyncSession) ->
         )
     )
     await session.flush()
-    await IntradayService(session, settings=settings).monitor_all(
-        prices={"BHP": 62.0}, venue="AU"
-    )
+    await IntradayService(session, settings=settings).monitor_all(prices={"BHP": 62.0}, venue="AU")
     events = list((await session.execute(select(IntradayEvent))).scalars().all())
     stops = [e for e in events if e.event_type == "STOP_TRIGGERED"]
     assert stops
@@ -533,9 +536,7 @@ async def test_stamps_take_profit_and_flattens_at_target(
         )
     )
     await session.flush()
-    rows = await IntradayService(session, settings=settings).monitor_all(
-        prices={"AAPL": 104.0}
-    )
+    rows = await IntradayService(session, settings=settings).monitor_all(prices={"AAPL": 104.0})
     hit = next(r for r in rows if r["symbol"] == "AAPL")
     assert "take_profit_triggered" in (hit["monitor"]["reasons"] or [])
     assert hit.get("exit_intent_id") or int(hit.get("orders_submitted") or 0) >= 1
@@ -570,9 +571,7 @@ async def test_giveback_to_loss_flattens_after_lock(
         )
     )
     await session.flush()
-    rows = await IntradayService(session, settings=settings).monitor_all(
-        prices={"CBA": 99.0}
-    )
+    rows = await IntradayService(session, settings=settings).monitor_all(prices={"CBA": 99.0})
     hit = next(r for r in rows if r["symbol"] == "CBA")
     assert "giveback_to_loss" in (hit["monitor"]["reasons"] or [])
     assert hit.get("exit_intent_id") or int(hit.get("orders_submitted") or 0) >= 1
@@ -609,4 +608,3 @@ async def test_trail_stop_to_breakeven_after_lock(
     lc = (await session.execute(select(LC).where(LC.symbol == "BHP"))).scalar_one()
     assert lc.take_profit_price == 103.0
     assert lc.stop_price == 100.0
-

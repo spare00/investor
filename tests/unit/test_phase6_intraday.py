@@ -9,14 +9,13 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.brokers.base import OrderRequest, OrderSide
 from app.brokers.mock import MockBroker
 from app.core.config import Settings
 from app.core.database import Base
 from app.execution.safety_controls import TradingControls
 from app.execution.service import ExecutionService
 from app.intraday.events import IntradayEventBus
-from app.intraday.exits import ExitPolicyEngine, StopKind
+from app.intraday.exits import ExitPolicyEngine
 from app.intraday.modes import IntradayOperationMode, ModeCapabilities, resolve_mode
 from app.intraday.monitor import EXIT_INTENT_REQUIRED, PositionMonitor
 from app.intraday.pnl import apply_fill_fifo
@@ -83,8 +82,9 @@ async def test_event_bus_dedup_and_priority(session: AsyncSession) -> None:
     assert b.status == "DEDUPLICATED"
     assert a.priority >= 60
     # Original row stays NEW so pending drains still see it.
-    from app.models import IntradayEvent
     from sqlalchemy import select
+
+    from app.models import IntradayEvent
 
     row = (await session.execute(select(IntradayEvent))).scalar_one()
     assert row.status == "NEW"
@@ -101,8 +101,9 @@ async def test_event_bus_sticky_new_beyond_window(session: AsyncSession) -> None
         deduplication_key="hold:bhp",
         requires_analysis=True,
     )
-    from app.models import IntradayEvent
     from sqlalchemy import select
+
+    from app.models import IntradayEvent
 
     row = (await session.execute(select(IntradayEvent))).scalar_one()
     row.detected_at = datetime.now(UTC) - timedelta(seconds=400)
@@ -172,7 +173,9 @@ async def test_position_monitor_stop_trigger(session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_stop_widening_blocked(session: AsyncSession) -> None:
-    eng = ExitPolicyEngine(session, settings=_settings(allow_stop_widening=False, allow_stop_tightening=True))
+    eng = ExitPolicyEngine(
+        session, settings=_settings(allow_stop_widening=False, allow_stop_tightening=True)
+    )
     assert eng.adjust_stop(current_stop=95.0, proposed_stop=90.0) == 95.0
     assert eng.adjust_stop(current_stop=95.0, proposed_stop=97.0) == 97.0
 
@@ -202,7 +205,13 @@ async def test_take_profit_partial(session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_dynamic_risk_exit(session: AsyncSession) -> None:
     lc = PositionLifecycle(
-        id=uuid4(), symbol="QQQ", status="OPEN", quantity=50, average_entry_price=100, stop_price=90, exit_policy={}
+        id=uuid4(),
+        symbol="QQQ",
+        status="OPEN",
+        quantity=50,
+        average_entry_price=100,
+        stop_price=90,
+        exit_policy={},
     )
     session.add(lc)
     await session.flush()
@@ -218,14 +227,16 @@ def test_fifo_pnl() -> None:
     lots = [Lot(10, 100, datetime.now(UTC))]
     r = apply_fill_fifo(lots, side="sell", quantity=4, price=110, equity=25_000)
     assert r.gross_realized_pl == 40.0
-    assert abs(sum(l.quantity for l in r.remaining_lots) - 6) < 1e-9
+    assert abs(sum(lot.quantity for lot in r.remaining_lots) - 6) < 1e-9
 
 
 @pytest.mark.asyncio
 async def test_closing_and_overnight(session: AsyncSession) -> None:
     settings = _settings(intraday_operation_mode="MANUAL_APPROVAL")
     svc = IntradayService(session, settings=settings)
-    await svc.monitor.ensure_lifecycle_from_broker(symbol="AAPL", quantity=5, avg_entry=150, stop_price=140)
+    await svc.monitor.ensure_lifecycle_from_broker(
+        symbol="AAPL", quantity=5, avg_entry=150, stop_price=140
+    )
     lc = (await svc.monitor.list_lifecycles())[0]
     lc.overnight_allowed = False
     closing = await svc.closing.run_closing()
@@ -239,7 +250,9 @@ async def test_closing_and_overnight(session: AsyncSession) -> None:
 async def test_reduce_close_via_intent_path(session: AsyncSession) -> None:
     settings = _settings(intraday_operation_mode="MANUAL_APPROVAL")
     svc = IntradayService(session, settings=settings)
-    lc = await svc.monitor.ensure_lifecycle_from_broker(symbol="MSFT", quantity=8, avg_entry=300, stop_price=280)
+    lc = await svc.monitor.ensure_lifecycle_from_broker(
+        symbol="MSFT", quantity=8, avg_entry=300, stop_price=280
+    )
     result = await svc.close_position(lc.id)
     assert result["broker_orders_submitted"] is False
     assert result["path"] == "intent_risk_approval_execution"
@@ -269,8 +282,9 @@ async def test_settlement_and_posttrade(session: AsyncSession) -> None:
 async def test_settlement_scopes_overnight_by_venue(
     session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app.intraday.settlement import SettlementService
     from sqlalchemy import select
+
+    from app.intraday.settlement import SettlementService
     from app.models import PostmarketSettlement
 
     async def _noop_sync(self):  # noqa: ANN001
@@ -323,8 +337,9 @@ async def test_settlement_trade_pnl_method_fits_varchar16(
     session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """AU session tags used to overflow Postgres VARCHAR(16) on trade_pnl.method."""
-    from app.intraday.settlement import SettlementService
     from sqlalchemy import select
+
+    from app.intraday.settlement import SettlementService
 
     async def _noop_sync(self):  # noqa: ANN001
         return {"skipped": True}

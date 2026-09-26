@@ -13,9 +13,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.intraday.pnl import lifecycle_pnl
 from app.models import PositionLifecycle, WatchlistSymbol
 from app.universe.horizons import UniverseHorizon
-from app.intraday.pnl import lifecycle_pnl
 
 
 def _horizon_from_lifecycle(lc: PositionLifecycle, watchlist_hz: dict[str, str]) -> str:
@@ -92,10 +92,7 @@ async def recent_outcome_stats(
         pack["signal"] = signal
         symbols_out.append(pack)
 
-    horizons_out = {
-        hz: _pack(pnls)
-        for hz, pnls in sorted(by_horizon.items())
-    }
+    horizons_out = {hz: _pack(pnls) for hz, pnls in sorted(by_horizon.items())}
 
     by_source_pnls: dict[str, list[float]] = defaultdict(list)
     for lc in rows:

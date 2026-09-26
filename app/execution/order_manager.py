@@ -124,7 +124,10 @@ class OrderManager:
             )
             return []
 
-        if self.settings.require_manual_order_approval and not self.settings.enable_automated_execution:
+        if (
+            self.settings.require_manual_order_approval
+            and not self.settings.enable_automated_execution
+        ):
             await self.events.record(
                 level="warning",
                 event_type="order_submit_blocked_manual_approval",
@@ -154,7 +157,11 @@ class OrderManager:
         if any(m in key for m in (*_FLATTEN_MARKERS, *_PARTIAL_MARKERS)):
             return True
         thesis = str(intent.thesis or "").lower()
-        return thesis.startswith("force_close") or thesis.startswith("hard_stop") or thesis.startswith("closing:")
+        return (
+            thesis.startswith("force_close")
+            or thesis.startswith("hard_stop")
+            or thesis.startswith("closing:")
+        )
 
     def _is_flatten_intent(self, intent: ValidatedOrderIntent) -> bool:
         key = str(intent.idempotency_key or "")
@@ -195,7 +202,9 @@ class OrderManager:
                         Order.status.in_(list(WORKING_ORDER_STATUSES)),
                     )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         return rows
 
@@ -310,7 +319,10 @@ class OrderManager:
             from app.brokers.venue_orders import apply_marketable_limit, uses_marketable_limit
 
             otype_l = str(order_type or "market").lower()
-            if uses_marketable_limit(str(venue) if venue else None) and otype_l not in _STOP_ORDER_TYPES:
+            if (
+                uses_marketable_limit(str(venue) if venue else None)
+                and otype_l not in _STOP_ORDER_TYPES
+            ):
                 from app.market.live_prices import fetch_live_last_prices
 
                 live: dict[str, float] = {}
@@ -492,9 +504,7 @@ class OrderManager:
             InternalOrderState.CANCEL_PENDING.value,
             InternalOrderState.REPLACE_PENDING.value,
         }
-        result = await self.session.execute(
-            select(Order).where(Order.status.in_(list(openish)))
-        )
+        result = await self.session.execute(select(Order).where(Order.status.in_(list(openish))))
         rows = list(result.scalars().all())
         updated = 0
         errors = 0

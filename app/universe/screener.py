@@ -90,9 +90,7 @@ def evaluate_liquidity(
     )
 
 
-async def _latest_snapshots(
-    session: AsyncSession, symbols: list[str]
-) -> dict[str, MarketSnapshot]:
+async def _latest_snapshots(session: AsyncSession, symbols: list[str]) -> dict[str, MarketSnapshot]:
     """Latest snapshot per symbol in one round-trip (S&P-sized pools cannot be N queries)."""
     if not symbols:
         return {}
@@ -128,7 +126,9 @@ async def _latest_snapshots(
     return out
 
 
-async def _fetch_missing_quotes(symbols: list[str], settings: Settings) -> dict[str, dict[str, float | None]]:
+async def _fetch_missing_quotes(
+    symbols: list[str], settings: Settings
+) -> dict[str, dict[str, float | None]]:
     if not symbols:
         return {}
     from app.collectors.market_data import get_market_data_provider

@@ -260,8 +260,7 @@ def quant_brief(payload: QuantStrategistInput) -> str:
         "ad": payload.advance_decline,
         "index": [_bar_row(b, payload.watchlist) for b in payload.index_bars[:6]],
         "symbols": [
-            _bar_row(b, payload.watchlist)
-            for b in (payload.symbol_bars or payload.index_bars)[:16]
+            _bar_row(b, payload.watchlist) for b in (payload.symbol_bars or payload.index_bars)[:16]
         ],
         "watch": _watch_rows(payload.watchlist),
         "books": _watch_by_book(payload.watchlist),
@@ -327,7 +326,9 @@ def risk_brief(payload: RiskManagerInput, engine_preview: dict[str, Any] | None 
             "providers": payload.price_providers[:4],
         },
         "regime": getattr(payload.macro.market_regime, "value", None) if payload.macro else None,
-        "themes": (payload.market_intelligence.top_market_themes[:4] if payload.market_intelligence else []),
+        "themes": (
+            payload.market_intelligence.top_market_themes[:4] if payload.market_intelligence else []
+        ),
     }
     return _ask(
         "Engine Hard Vetoes already stand. Name at most 3 extra soft risks, or [].",
@@ -390,7 +391,9 @@ def cio_brief(payload: CIOInput) -> str:
         "mi": _mi_summary(payload.market_intelligence),
         "macro": _drop_empty(
             {
-                "regime": getattr(payload.macro.market_regime, "value", payload.macro.market_regime),
+                "regime": getattr(
+                    payload.macro.market_regime, "value", payload.macro.market_regime
+                ),
                 "conf": payload.macro.confidence,
                 "bull": (payload.macro.bullish_factors or [])[:3],
                 "bear": (payload.macro.bearish_factors or [])[:3],

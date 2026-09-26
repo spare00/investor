@@ -127,9 +127,7 @@ class DataCollectionService:
                 )
 
         try:
-            raw_quotes = await get_market_data_provider().fetch_quotes(
-                universe, venue=venue
-            )
+            raw_quotes = await get_market_data_provider().fetch_quotes(universe, venue=venue)
             for raw in raw_quotes:
                 norm = normalize_market_quote(raw, now=now)
                 bundle.markets.append(norm)

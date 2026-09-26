@@ -14,13 +14,17 @@ PREMARKET_OPEN = time(4, 0)
 
 
 def is_weekday(dt: datetime) -> bool:
-    local = dt.astimezone(US_EASTERN) if dt.tzinfo else dt.replace(tzinfo=UTC).astimezone(US_EASTERN)
+    local = (
+        dt.astimezone(US_EASTERN) if dt.tzinfo else dt.replace(tzinfo=UTC).astimezone(US_EASTERN)
+    )
     return local.weekday() < 5
 
 
 def is_regular_session(dt: datetime) -> bool:
     """True during Mon–Fri 09:30–16:00 America/New_York (holiday-unaware stub)."""
-    local = dt.astimezone(US_EASTERN) if dt.tzinfo else dt.replace(tzinfo=UTC).astimezone(US_EASTERN)
+    local = (
+        dt.astimezone(US_EASTERN) if dt.tzinfo else dt.replace(tzinfo=UTC).astimezone(US_EASTERN)
+    )
     if local.weekday() >= 5:
         return False
     t = local.time()

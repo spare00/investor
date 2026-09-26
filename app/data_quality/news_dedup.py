@@ -50,7 +50,10 @@ def cluster_news(
         hh = normalize_headline(item.headline)
         if hh in by_headline:
             primary = by_headline[hh]
-            if abs((item.published_at - primary.published_at).total_seconds()) <= window.total_seconds():
+            if (
+                abs((item.published_at - primary.published_at).total_seconds())
+                <= window.total_seconds()
+            ):
                 item = _mark_dup(item, "headline_hash")
                 _add_to_cluster(clusters, primary, item, "headline_hash", now)
                 continue
@@ -58,9 +61,11 @@ def cluster_news(
         matched = None
         for other in unique:
             if set(s.upper() for s in other.symbols) & set(s.upper() for s in item.symbols):
-                if _similar(other.headline, item.headline) and abs(
-                    (item.published_at - other.published_at).total_seconds()
-                ) <= window.total_seconds():
+                if (
+                    _similar(other.headline, item.headline)
+                    and abs((item.published_at - other.published_at).total_seconds())
+                    <= window.total_seconds()
+                ):
                     matched = other
                     break
         if matched is not None:

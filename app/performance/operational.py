@@ -44,7 +44,9 @@ def aggregate_operational_kpis(counters: dict[str, Any]) -> dict[str, MetricResu
             status=MetricStatus.AVAILABLE if window > 0 else MetricStatus.INSUFFICIENT_DATA,
             method="operational_counters",
         ),
-        "manual_intervention_rate": rate("manual_intervention_rate", manual, wf_total or jobs_total),
+        "manual_intervention_rate": rate(
+            "manual_intervention_rate", manual, wf_total or jobs_total
+        ),
         "uptime_pct": metric_result(
             "uptime_pct",
             uptime / window if window > 0 else None,

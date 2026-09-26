@@ -23,8 +23,8 @@ from app.intraday.posttrade import PostTradeReviewService
 from app.intraday.recovery import IntradayRecoveryService
 from app.intraday.risk import DynamicRiskRevalidator
 from app.intraday.settlement import SettlementService
-from app.models import OrderIntent, PositionLifecycle, PositionSnapshotRecord
 from app.market.venues import venue_for_symbol
+from app.models import OrderIntent, PositionLifecycle, PositionSnapshotRecord
 
 
 class IntradayService:
@@ -109,7 +109,9 @@ class IntradayService:
                 price=prices.get(lc.symbol),
             )
             stop = await self.exits.check_stop(
-                lc, price=float(prices.get(lc.symbol) or lc.current_price or 0), kind=StopKind.FIXED_PRICE
+                lc,
+                price=float(prices.get(lc.symbol) or lc.current_price or 0),
+                kind=StopKind.FIXED_PRICE,
             )
             entry: dict[str, Any] = {
                 "position_id": str(lc.id),
@@ -135,29 +137,31 @@ class IntradayService:
                 )
             )
             if protective_exit:
-                reason = "hard_stop" if stop.triggered else str(
-                    next(
-                        (
-                            r
-                            for r in (result.reasons or [])
-                            if r
-                            in {
-                                "max_holding_time",
-                                "take_profit_triggered",
-                                "stop_triggered",
-                                "giveback_to_loss",
-                            }
-                        ),
-                        "monitor_exit",
+                reason = (
+                    "hard_stop"
+                    if stop.triggered
+                    else str(
+                        next(
+                            (
+                                r
+                                for r in (result.reasons or [])
+                                if r
+                                in {
+                                    "max_holding_time",
+                                    "take_profit_triggered",
+                                    "stop_triggered",
+                                    "giveback_to_loss",
+                                }
+                            ),
+                            "monitor_exit",
+                        )
                     )
                 )
                 if lc.status == "PENDING_CLOSE":
                     entry["exit_skipped"] = "already_pending_close"
                     intent = None
                 else:
-                    intent = await self._exit_intent(
-                        lc, reason=reason, qty=float(lc.quantity or 0)
-                    )
+                    intent = await self._exit_intent(lc, reason=reason, qty=float(lc.quantity or 0))
                 if intent is not None:
                     entry["exit_intent_id"] = str(intent.id)
                 # Unfilled ASX exits stay PENDING_CLOSE; still resubmit the daily key.
@@ -185,20 +189,16 @@ class IntradayService:
                             self.session,
                             self.settings,
                             symbol=lc.symbol,
-                            price=float(prices.get(lc.symbol) or lc.current_price or 0)
-                            or None,
-                            stop_price=float(lc.stop_price)
-                            if lc.stop_price is not None
-                            else None,
+                            price=float(prices.get(lc.symbol) or lc.current_price or 0) or None,
+                            stop_price=float(lc.stop_price) if lc.stop_price is not None else None,
                             submitted=bool(submitted),
                             intent_id=str(intent.id) if intent is not None else None,
                         )
                     except Exception:  # noqa: BLE001
                         pass
-            elif (
-                "protection_order_missing" in (result.reasons or [])
-                and self._should_auto_submit_hard_stops(caps)
-            ):
+            elif "protection_order_missing" in (
+                result.reasons or []
+            ) and self._should_auto_submit_hard_stops(caps):
                 submitted = await self._submit_protection_stop(lc)
                 entry["protection_orders_submitted"] = submitted
                 if submitted:
@@ -266,10 +266,11 @@ class IntradayService:
 
     async def _submit_protection_stop(self, lc: PositionLifecycle) -> int:
         """Rest a GTC stop on an open long so the next CBA does not wait for a committee."""
-        from app.execution.order_manager import OrderManager, WORKING_ORDER_STATUSES
+        from sqlalchemy import select as sa_select
+
+        from app.execution.order_manager import WORKING_ORDER_STATUSES, OrderManager
         from app.execution.validation import ExecutionValidationResult, ValidatedOrderIntent
         from app.models import Order
-        from sqlalchemy import select as sa_select
 
         if not self.controls.is_new_order_allowed():
             return 0
@@ -289,7 +290,9 @@ class IntradayService:
                         Order.status.in_(list(WORKING_ORDER_STATUSES)),
                     )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         if working:
             lc.protection_submitted = True
@@ -323,8 +326,7 @@ class IntradayService:
             live = [
                 o
                 for o in orders
-                if str(o.status or "").lower()
-                not in {"rejected", "cancelled", "canceled"}
+                if str(o.status or "").lower() not in {"rejected", "cancelled", "canceled"}
             ]
             if live:
                 lc.protection_submitted = True
@@ -332,9 +334,16 @@ class IntradayService:
         return len(orders)
 
     async def _exit_intent(
-        self, lc: PositionLifecycle, *, reason: str, qty: float, reduce_fraction: float | None = None
+        self,
+        lc: PositionLifecycle,
+        *,
+        reason: str,
+        qty: float,
+        reduce_fraction: float | None = None,
     ) -> OrderIntent | None:
-        mode = resolve_mode(self.settings, emergency=self.controls.snapshot().state.value == "emergency_stop")
+        mode = resolve_mode(
+            self.settings, emergency=self.controls.snapshot().state.value == "emergency_stop"
+        )
         caps = ModeCapabilities(mode)
         if not caps.can_create_intent and mode.value != "OBSERVE_ONLY":
             return None
@@ -344,7 +353,11 @@ class IntradayService:
             return None
         if caps.intents_are_draft_only or mode.value == "OBSERVE_ONLY":
             meta = dict(lc.metadata_json or {})
-            meta["exit_draft"] = {"reason": reason, "qty": exit_qty, "at": datetime.now(UTC).isoformat()}
+            meta["exit_draft"] = {
+                "reason": reason,
+                "qty": exit_qty,
+                "at": datetime.now(UTC).isoformat(),
+            }
             lc.metadata_json = meta
             from app.universe.entry_attribution import stamp_lifecycle_exit_reason
 
@@ -355,7 +368,9 @@ class IntradayService:
             id=uuid4(),
             decision_id=lc.decision_id,
             symbol=lc.symbol,
-            intent_type=IntentType.CLOSE_LONG.value if reduce_fraction is None else IntentType.REDUCE_LONG.value,
+            intent_type=IntentType.CLOSE_LONG.value
+            if reduce_fraction is None
+            else IntentType.REDUCE_LONG.value,
             side="sell",
             quantity=exit_qty,
             entry_price=lc.current_price,
@@ -387,7 +402,9 @@ class IntradayService:
         lc = await self.session.get(PositionLifecycle, position_id)
         if lc is None:
             raise ValueError("position_not_found")
-        intent = await self._exit_intent(lc, reason="operator_reduce", qty=float(lc.quantity or 0), reduce_fraction=fraction)
+        intent = await self._exit_intent(
+            lc, reason="operator_reduce", qty=float(lc.quantity or 0), reduce_fraction=fraction
+        )
         return {
             "position_id": str(position_id),
             "intent_id": None if intent is None else str(intent.id),
@@ -408,13 +425,19 @@ class IntradayService:
         }
 
     async def update_exit_policy(
-        self, position_id: UUID, *, stop_price: float | None = None, take_profit_targets: list | None = None
+        self,
+        position_id: UUID,
+        *,
+        stop_price: float | None = None,
+        take_profit_targets: list | None = None,
     ) -> dict[str, Any]:
         lc = await self.session.get(PositionLifecycle, position_id)
         if lc is None:
             raise ValueError("position_not_found")
         if stop_price is not None and lc.stop_price is not None:
-            lc.stop_price = self.exits.adjust_stop(current_stop=float(lc.stop_price), proposed_stop=stop_price)
+            lc.stop_price = self.exits.adjust_stop(
+                current_stop=float(lc.stop_price), proposed_stop=stop_price
+            )
         elif stop_price is not None:
             lc.stop_price = stop_price
         if take_profit_targets is not None:

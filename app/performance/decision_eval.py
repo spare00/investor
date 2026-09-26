@@ -119,7 +119,9 @@ def evaluate_decision(
     vs_bench = (
         metric_result("vs_benchmark", realized - benchmark_return, method="decision_eval")
         if benchmark_return is not None
-        else metric_result("vs_benchmark", None, status=MetricStatus.UNAVAILABLE, method="decision_eval")
+        else metric_result(
+            "vs_benchmark", None, status=MetricStatus.UNAVAILABLE, method="decision_eval"
+        )
     )
 
     directional: MetricResult

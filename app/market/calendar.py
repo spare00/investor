@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -118,9 +118,7 @@ class MarketCalendarService:
         # Keep ET label helpers for dashboards even on AU venue.
         self.display_et = ZoneInfo(self.settings.display_tz_us or "America/New_York")
 
-    def _resolve_spec(
-        self, *, calendar_name: str | None, venue: Venue | str | None
-    ) -> VenueSpec:
+    def _resolve_spec(self, *, calendar_name: str | None, venue: Venue | str | None) -> VenueSpec:
         if venue is not None:
             return resolve_venue_spec(self.settings, venue=venue)
         if calendar_name is not None:

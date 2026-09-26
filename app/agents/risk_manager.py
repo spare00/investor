@@ -11,7 +11,6 @@ from app.market.venues import combined_entry_allowlist
 from app.risk import (
     DeterministicRiskEngine,
     PortfolioRiskView,
-    PositionRiskView,
     TradeIntent,
     engine_from_settings,
 )
@@ -153,7 +152,9 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
                 TradeRiskAdjustment(
                     symbol=str(t["symbol"]),
                     original_quantity=None,
-                    approved_quantity=float(t["adjusted_quantity"] or 0) if t.get("approved") else 0.0,
+                    approved_quantity=float(t["adjusted_quantity"] or 0)
+                    if t.get("approved")
+                    else 0.0,
                     verdict=verdict,
                     reasons=[str(v) for v in vetoes] or ["ok"],
                 )
@@ -237,9 +238,7 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
             ),
         )
 
-    def fallback_output(
-        self, payload: RiskManagerInput, *, reason: str
-    ) -> RiskManagerOutput:
+    def fallback_output(self, payload: RiskManagerInput, *, reason: str) -> RiskManagerOutput:
         # run() already engine-first; fallback mirrors engine-only path.
         engine_data = self._run_engine(payload)
         trades = engine_data["trades"]
@@ -253,9 +252,9 @@ class RiskManagerAgent(BaseAgent[RiskManagerInput, RiskManagerOutput]):
         halt = halt or bool(self._price_integrity_vetoes(payload))
         return RiskManagerOutput(
             timestamp=datetime.now(UTC),
-            overall_verdict=RiskVerdict.HALT_DAY if halt else (
-                RiskVerdict.REJECTED if hard else RiskVerdict.APPROVED
-            ),
+            overall_verdict=RiskVerdict.HALT_DAY
+            if halt
+            else (RiskVerdict.REJECTED if hard else RiskVerdict.APPROVED),
             hard_vetoes=sorted(set(hard)),
             soft_warnings=[reason],
             trade_adjustments=[],

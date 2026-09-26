@@ -6,9 +6,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.core.config import Settings, clear_settings_cache
 from app.core.database import Base
-import app.models  # noqa: F401
 from app.universe.horizons import UniverseHorizon, policy_for
 from app.universe.service import UniverseService
 
@@ -382,4 +382,7 @@ async def test_fallback_refresh_reconstitutes_instead_of_keeping_seed(
     assert result["fallback"] is True
     assert "JPM" in {r.symbol for r in await svc.list_active()}
     assert "JPM" in await svc.entry_universe(venue="US")
-    assert "JPM" in (result["focus"] or {}).get("symbols", []) or "JPM" in result["reconstitute"]["active"]
+    assert (
+        "JPM" in (result["focus"] or {}).get("symbols", [])
+        or "JPM" in result["reconstitute"]["active"]
+    )

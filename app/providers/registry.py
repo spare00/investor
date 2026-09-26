@@ -20,8 +20,8 @@ from app.canonical.models import (
     PremarketAvailability,
     Provenance,
 )
-from app.collectors.base import RawMarketQuote, RawNewsItem
-from app.collectors.market_data import StubMarketDataProvider, _STUB_LAST
+from app.collectors.base import RawMarketQuote
+from app.collectors.market_data import StubMarketDataProvider
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.providers.base import ProviderCapabilities, ProviderRequestMeta, run_with_retry
@@ -59,6 +59,7 @@ class FixtureMarketDataProvider:
         venue: str | None = None,
     ) -> tuple[list[CanonicalQuote], ProviderRequestMeta]:
         from app.market.live_prices import requires_live_market_prices
+
         _ = venue
 
         cfg = settings or get_settings()
@@ -69,7 +70,9 @@ class FixtureMarketDataProvider:
                 request_id=str(uuid4()),
                 request_started_at=datetime.now(UTC),
                 request_completed_at=datetime.now(UTC),
-                status=__import__("app.providers.base", fromlist=["ProviderStatus"]).ProviderStatus.ERROR,
+                status=__import__(
+                    "app.providers.base", fromlist=["ProviderStatus"]
+                ).ProviderStatus.ERROR,
                 error_code="fixture_forbidden",
                 error_message="fixture quotes blocked while live market prices required",
             )
@@ -156,7 +159,6 @@ class FixtureMarketDataProvider:
                 )
             )
         return out, meta
-
 
 
 class IbkrMarketDataAdapter:
@@ -462,7 +464,9 @@ class SecEdgarAdapter:
                 cik = sym_to_cik.get(sym.upper())
                 if not cik:
                     continue
-                async with httpx.AsyncClient(timeout=cfg.provider_request_timeout_seconds) as client:
+                async with httpx.AsyncClient(
+                    timeout=cfg.provider_request_timeout_seconds
+                ) as client:
                     subs = await client.get(
                         f"https://data.sec.gov/submissions/CIK{cik}.json", headers=headers
                     )
@@ -521,7 +525,9 @@ class SecEdgarAdapter:
                                 source_timestamp=filed_at,
                                 collection_timestamp=now,
                             ),
-                            quality=DataQualityBreakdown(overall=0.92, completeness=0.8, source_reliability=0.95),
+                            quality=DataQualityBreakdown(
+                                overall=0.92, completeness=0.8, source_reliability=0.95
+                            ),
                         )
                     )
             return filings
@@ -563,7 +569,9 @@ class FixtureMacroProvider:
             is_fixture=True,
         )
 
-    async def fetch_macro(self, *, settings: Settings | None = None) -> tuple[dict[str, Any], ProviderRequestMeta]:
+    async def fetch_macro(
+        self, *, settings: Settings | None = None
+    ) -> tuple[dict[str, Any], ProviderRequestMeta]:
         cfg = settings or get_settings()
 
         async def _call() -> dict[str, Any]:
@@ -638,7 +646,9 @@ def _raw_quote_to_canonical(raw: RawMarketQuote, now: datetime, provider: str) -
         last=raw.last,
         bid=raw.bid,
         ask=raw.ask,
-        previous_close=raw.last / (1 + (raw.gap_pct or 0) / 100.0) if raw.gap_pct else raw.last * 0.998,
+        previous_close=raw.last / (1 + (raw.gap_pct or 0) / 100.0)
+        if raw.gap_pct
+        else raw.last * 0.998,
         session="fixture",
         spread_bps=spread_bps(raw.bid, raw.ask, raw.last),
         source_ids=[f"{provider}:{raw.symbol}"],
@@ -650,13 +660,18 @@ def _raw_quote_to_canonical(raw: RawMarketQuote, now: datetime, provider: str) -
             collection_timestamp=now,
             transformations_applied=["raw_to_canonical_quote"],
         ),
-        quality=DataQualityBreakdown(overall=0.88, freshness=0.95, completeness=0.9, source_reliability=0.7),
+        quality=DataQualityBreakdown(
+            overall=0.88, freshness=0.95, completeness=0.9, source_reliability=0.7
+        ),
     )
 
 
 def resolve_market_provider(settings: Settings | None = None) -> Any:
     cfg = settings or get_settings()
-    order = [str(x).lower() for x in (list(cfg.market_data_provider_priority) or [cfg.market_data_provider])]
+    order = [
+        str(x).lower()
+        for x in (list(cfg.market_data_provider_priority) or [cfg.market_data_provider])
+    ]
     provider = (cfg.market_data_provider or "").lower()
     if (cfg.broker_provider or "").lower() == "ibkr" and provider in {"auto", ""}:
         provider = "ibkr"

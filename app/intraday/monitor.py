@@ -62,15 +62,11 @@ class PositionMonitor:
         self.bus = IntradayEventBus(session, settings=self.settings)
 
     async def list_lifecycles(self, *, venue: str | None = None) -> list[PositionLifecycle]:
-        clauses = [
-            PositionLifecycle.status.in_(list(_ACTIVE_LIFECYCLE_STATUSES))
-        ]
+        clauses = [PositionLifecycle.status.in_(list(_ACTIVE_LIFECYCLE_STATUSES))]
         if venue:
             clauses.append(PositionLifecycle.venue == str(venue).upper())
         return list(
-            (await self.session.execute(select(PositionLifecycle).where(*clauses)))
-            .scalars()
-            .all()
+            (await self.session.execute(select(PositionLifecycle).where(*clauses))).scalars().all()
         )
 
     async def evaluate(
@@ -97,7 +93,10 @@ class PositionMonitor:
         if halted:
             verdict = RISK_REVIEW_REQUIRED
             reasons.append("trading_halt")
-        if quote_age_seconds is not None and quote_age_seconds > self.settings.latest_quote_max_age_seconds * 20:
+        if (
+            quote_age_seconds is not None
+            and quote_age_seconds > self.settings.latest_quote_max_age_seconds * 20
+        ):
             verdict = RISK_REVIEW_REQUIRED
             reasons.append("stale_quote")
         if spread_bps is not None and spread_bps > self.settings.max_order_spread_bps:
@@ -221,7 +220,11 @@ class PositionMonitor:
             if held >= lifecycle.max_holding_minutes:
                 hard_exit = flatten_on_max_holding(lifecycle)
                 if hard_exit:
-                    verdict = EXIT_INTENT_REQUIRED if verdict not in {EMERGENCY_ACTION_REQUIRED} else verdict
+                    verdict = (
+                        EXIT_INTENT_REQUIRED
+                        if verdict not in {EMERGENCY_ACTION_REQUIRED}
+                        else verdict
+                    )
                     reasons.append("max_holding_time")
                 else:
                     verdict = (
@@ -273,9 +276,13 @@ class PositionMonitor:
         lifecycle.unrealized_pl = (price - entry) * qty if entry else 0.0
         lifecycle.last_monitor_verdict = verdict
         await self.session.flush()
-        return MonitorResult(verdict=verdict, symbol=lifecycle.symbol, reasons=reasons, snapshot_id=str(snap.id))
+        return MonitorResult(
+            verdict=verdict, symbol=lifecycle.symbol, reasons=reasons, snapshot_id=str(snap.id)
+        )
 
-    async def _snapshot(self, lifecycle: PositionLifecycle, *, price: float, equity: float) -> PositionSnapshotRecord:
+    async def _snapshot(
+        self, lifecycle: PositionLifecycle, *, price: float, equity: float
+    ) -> PositionSnapshotRecord:
         qty = float(lifecycle.quantity or 0)
         entry = float(lifecycle.average_entry_price or 0)
         mv = qty * price
@@ -530,9 +537,7 @@ class PositionMonitor:
             return None
         from app.universe.book_strategy import horizon_for_symbol, playbook_take_profit
 
-        hz = await self._watchlist_horizon(lifecycle.symbol) or horizon_for_symbol(
-            lifecycle.symbol
-        )
+        hz = await self._watchlist_horizon(lifecycle.symbol) or horizon_for_symbol(lifecycle.symbol)
         tp = playbook_take_profit(entry=ref, horizon=hz)
         if tp is None:
             return None
@@ -606,9 +611,7 @@ class PositionMonitor:
         await copy_entry_attribution_to_lifecycle(self.session, lifecycle)
         await self.session.flush()
 
-    async def stamp_horizon_stop_if_missing(
-        self, lifecycle: PositionLifecycle
-    ) -> float | None:
+    async def stamp_horizon_stop_if_missing(self, lifecycle: PositionLifecycle) -> float | None:
         """Attach the watchlist book's ATR/pct stop when the row has none.
 
         Broker sync never carries IBKR stop_price, so hard-stops were a no-op
@@ -622,9 +625,7 @@ class PositionMonitor:
         from app.universe.book_strategy import horizon_for_symbol
         from app.universe.horizons import policy_for, suggested_long_stop
 
-        hz = await self._watchlist_horizon(lifecycle.symbol) or horizon_for_symbol(
-            lifecycle.symbol
-        )
+        hz = await self._watchlist_horizon(lifecycle.symbol) or horizon_for_symbol(lifecycle.symbol)
         try:
             pol = policy_for(hz)
         except ValueError:

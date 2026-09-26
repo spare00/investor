@@ -60,7 +60,16 @@ def select_execution(inp: ExecutionPolicyInput) -> ExecutionPolicyResult:
         )
     if inp.minutes_to_close is not None and inp.minutes_to_close < 15 and inp.side.lower() == "buy":
         return ExecutionPolicyResult(
-            False, "limit", 0.0, None, inp.stop_price, "day", False, 30.0, "WAIT", ["near_close_block"]
+            False,
+            "limit",
+            0.0,
+            None,
+            inp.stop_price,
+            "day",
+            False,
+            30.0,
+            "WAIT",
+            ["near_close_block"],
         )
 
     order_type = inp.preferred_order_type or "limit"
@@ -78,12 +87,30 @@ def select_execution(inp: ExecutionPolicyInput) -> ExecutionPolicyResult:
     limit_price = inp.entry_price
     if order_type == "limit" and limit_price is None:
         return ExecutionPolicyResult(
-            False, "limit", 0.0, None, inp.stop_price, "day", False, 30.0, "WAIT", ["limit_price_required"]
+            False,
+            "limit",
+            0.0,
+            None,
+            inp.stop_price,
+            "day",
+            False,
+            30.0,
+            "WAIT",
+            ["limit_price_required"],
         )
 
     if qty <= 0:
         return ExecutionPolicyResult(
-            False, order_type, 0.0, limit_price, inp.stop_price, "day", False, 30.0, "WAIT", reasons + ["qty_zero"]
+            False,
+            order_type,
+            0.0,
+            limit_price,
+            inp.stop_price,
+            "day",
+            False,
+            30.0,
+            "WAIT",
+            reasons + ["qty_zero"],
         )
 
     cancel_policy = "WAIT"

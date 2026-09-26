@@ -76,8 +76,8 @@ async def resume_trading(reason: str = "manual_resume") -> dict[str, Any]:
 @router.post("/emergency-stop")
 async def emergency_stop(reason: str = "emergency_stop") -> dict[str, Any]:
     """Block new orders; cancel open orders by default; never auto-close positions unless configured."""
-    from app.core.database import get_session_factory
     from app.brokers.factory import get_broker
+    from app.core.database import get_session_factory
 
     settings = get_settings()
     snap = trading_controls.emergency_stop(reason=reason)
@@ -91,9 +91,7 @@ async def emergency_stop(reason: str = "emergency_stop") -> dict[str, Any]:
             await persist_trading_controls(session, trading_controls, changed_by="api")
             from app.alerts.ops import emit_emergency_stop_alert
 
-            await emit_emergency_stop_alert(
-                session, settings, reason=reason, source="trading_api"
-            )
+            await emit_emergency_stop_alert(session, settings, reason=reason, source="trading_api")
             broker = get_broker(settings)
             if settings.emergency_stop_cancel_open_orders and hasattr(broker, "cancel_all_orders"):
                 canceled = await broker.cancel_all_orders()

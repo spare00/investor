@@ -77,7 +77,9 @@ class UniverseService:
                 return UniverseHorizon.SHORT.value
             return UniverseHorizon.SHORT.value
 
-        seed_books: list[tuple[Venue, list[str]]] = [(Venue.US, list(self.settings.trade_allowlist))]
+        seed_books: list[tuple[Venue, list[str]]] = [
+            (Venue.US, list(self.settings.trade_allowlist))
+        ]
         if Venue.AU in enabled_venues(self.settings) or self.settings.trade_allowlist_au:
             # Always seed AU allowlist rows when configured so JPEQ etc. are entry-eligible
             # once ENABLED_VENUES includes AU (or allowlist is non-empty for manual books).
@@ -297,9 +299,7 @@ class UniverseService:
             self.settings, venue=want.value if want is not None else None
         )
         active_syms = {
-            row.symbol.upper()
-            for row in active
-            if is_active_strategy_horizon(row.horizon)
+            row.symbol.upper() for row in active if is_active_strategy_horizon(row.horizon)
         }
         return active_syms & membership
 
@@ -395,7 +395,9 @@ class UniverseService:
             return list(symbols)
         from app.market.book_context import index_symbols_for_venue
 
-        return sorted({str(s).upper() for s in symbols} | set(index_symbols_for_venue(venue, self.settings)))
+        return sorted(
+            {str(s).upper() for s in symbols} | set(index_symbols_for_venue(venue, self.settings))
+        )
 
     async def _filter_collection_symbols(
         self,
@@ -501,9 +503,7 @@ class UniverseService:
             "by_source": full.get("by_source"),
             "symbols_with_trades": len(full.get("by_symbol") or []),
             "negative_signals": [
-                s
-                for s in (full.get("by_symbol") or [])
-                if s.get("signal") == "negative"
+                s for s in (full.get("by_symbol") or []) if s.get("signal") == "negative"
             ][:12],
         }
 
@@ -579,9 +579,7 @@ class UniverseService:
     ) -> list[str]:
         from app.universe.candidates import ranked_candidate_pool
 
-        return ranked_candidate_pool(
-            self.settings, themes=themes, market_regime=market_regime
-        )
+        return ranked_candidate_pool(self.settings, themes=themes, market_regime=market_regime)
 
     async def _screened_candidate_pool(
         self,
@@ -729,9 +727,7 @@ class UniverseService:
         screened, screen_meta = await self._screened_candidate_pool(
             themes=themes, market_regime=market_regime
         )
-        recon = await self.reconstitute_watchlist(
-            holdings=holdings or [], screened=set(screened)
-        )
+        recon = await self.reconstitute_watchlist(holdings=holdings or [], screened=set(screened))
         paused = list(
             (
                 await self.session.execute(
@@ -781,9 +777,7 @@ class UniverseService:
             est_tokens=max(1, len(brief) // 4),
             candidates=len(screened),
             watch=len(payload.current_watchlist),
-            llm_timeout_s=role_for(AgentName.UNIVERSE_MANAGER).timeout_seconds_for(
-                self.settings
-            ),
+            llm_timeout_s=role_for(AgentName.UNIVERSE_MANAGER).timeout_seconds_for(self.settings),
         )
         out = await self.agent.run(payload)
         fallback = _is_fallback_output(out)
@@ -795,9 +789,7 @@ class UniverseService:
                 candidate_symbols=set(screened),
                 lock_membership=True,
             )
-        recon = await self.reconstitute_watchlist(
-            holdings=holdings or [], screened=set(screened)
-        )
+        recon = await self.reconstitute_watchlist(holdings=holdings or [], screened=set(screened))
         await self._stamp_outcome_stats(outcomes)
         hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
         focus_syms = list(out.focus_symbols or [])
@@ -886,7 +878,9 @@ class UniverseService:
             paused.append({"symbol": sym, "reasons": list(hit.reasons)})
         if paused:
             await self.session.flush()
-            logger.info("universe_hygiene_paused", count=len(paused), symbols=[p["symbol"] for p in paused])
+            logger.info(
+                "universe_hygiene_paused", count=len(paused), symbols=[p["symbol"] for p in paused]
+            )
         return {
             "skipped": False,
             "checked": len(symbols),
@@ -991,9 +985,7 @@ class UniverseService:
                 "themes": tags,
                 "boosted_count": boosted,
             }
-            latest.rationale = (
-                f"{latest.rationale} · regime={market_regime or 'n/a'} themes={','.join(tags[:4]) or 'none'}"
-            )
+            latest.rationale = f"{latest.rationale} · regime={market_regime or 'n/a'} themes={','.join(tags[:4]) or 'none'}"
             await self.session.flush()
         return {
             "boosted": boosted,
@@ -1012,9 +1004,7 @@ class UniverseService:
         now = utc_now()
         by_sym = {
             r.symbol.upper(): r
-            for r in (
-                await self.session.execute(select(WatchlistSymbol))
-            ).scalars().all()
+            for r in (await self.session.execute(select(WatchlistSymbol))).scalars().all()
         }
         # Cap active count after apply
         for prop in out.proposals:
@@ -1175,9 +1165,7 @@ class UniverseService:
         rows = list(
             (
                 await self.session.execute(
-                    select(FocusSetSnapshot)
-                    .order_by(FocusSetSnapshot.as_of.desc())
-                    .limit(lookback)
+                    select(FocusSetSnapshot).order_by(FocusSetSnapshot.as_of.desc()).limit(lookback)
                 )
             )
             .scalars()

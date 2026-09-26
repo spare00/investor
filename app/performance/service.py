@@ -11,6 +11,7 @@ from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.intraday.pnl import lifecycle_pnl
 from app.models import (
     AgentEvaluationRecord,
     AgentOutcomeEvaluation,
@@ -39,6 +40,7 @@ from app.performance.decision_eval import (
     universe_horizon_for_plan,
 )
 from app.performance.drawdown import compute_drawdowns, current_drawdown, max_drawdown
+from app.performance.entry_expectancy import compute_entry_reason_expectancy
 from app.performance.execution_quality import compute_execution_quality
 from app.performance.operational import aggregate_operational_kpis
 from app.performance.providers import compute_provider_reliability
@@ -59,12 +61,14 @@ from app.performance.risk import (
     sortino_ratio,
     tracking_error,
 )
-from app.performance.trades import ClosedTrade, compute_trade_metrics, group_trade_metrics_by_horizon
-from app.performance.entry_expectancy import compute_entry_reason_expectancy
-from app.intraday.pnl import lifecycle_pnl
-from app.universe.entry_attribution import classify_exit_reason, read_attribution
+from app.performance.trades import (
+    ClosedTrade,
+    compute_trade_metrics,
+    group_trade_metrics_by_horizon,
+)
 from app.performance.types import CALCULATION_VERSION, MetricResult
 from app.performance.valuation import build_portfolio_valuation, positions_from_snapshot_payload
+from app.universe.entry_attribution import classify_exit_reason, read_attribution
 
 
 def _jsonable(value: Any) -> Any:
@@ -134,7 +138,9 @@ class PerformanceService:
     def _period_key(self, period_start: datetime, period_end: datetime) -> str:
         return f"{period_start.date().isoformat()}:{period_end.date().isoformat()}"
 
-    def last_run_for_period(self, period_start: datetime, period_end: datetime) -> dict[str, Any] | None:
+    def last_run_for_period(
+        self, period_start: datetime, period_end: datetime
+    ) -> dict[str, Any] | None:
         return self._runs_by_key.get(self._period_key(period_start, period_end))
 
     async def recalculate(
@@ -155,9 +161,15 @@ class PerformanceService:
             "risk_free_rate": risk_free_rate,
             "status": "completed",
         }
-        run["portfolio_summary"] = await self.portfolio_summary(period_start, period_end, benchmark_name=benchmark_name)
-        run["returns"] = await self.returns_summary(period_start, period_end, benchmark_name=benchmark_name)
-        run["risk"] = await self.risk_summary(period_start, period_end, benchmark_name=benchmark_name, risk_free_rate=risk_free_rate)
+        run["portfolio_summary"] = await self.portfolio_summary(
+            period_start, period_end, benchmark_name=benchmark_name
+        )
+        run["returns"] = await self.returns_summary(
+            period_start, period_end, benchmark_name=benchmark_name
+        )
+        run["risk"] = await self.risk_summary(
+            period_start, period_end, benchmark_name=benchmark_name, risk_free_rate=risk_free_rate
+        )
         run["drawdowns"] = await self.drawdowns(period_start, period_end)
         run["trades"] = await self.trade_metrics(period_start, period_end)
         run["completed_at"] = datetime.now(UTC).isoformat()
@@ -165,7 +177,9 @@ class PerformanceService:
         self._runs_by_key[self._period_key(period_start, period_end)] = run
         return run
 
-    async def _equity_curve(self, period_start: datetime, period_end: datetime) -> list[tuple[datetime, float]]:
+    async def _equity_curve(
+        self, period_start: datetime, period_end: datetime
+    ) -> list[tuple[datetime, float]]:
         result = await self.session.execute(
             select(PortfolioSnapshot)
             .where(PortfolioSnapshot.as_of >= period_start)
@@ -263,20 +277,39 @@ class PerformanceService:
         rets = [r for _, r in daily_returns(curve)]
         dd = max_drawdown(curve)
         bench = load_and_align(benchmark_name, curve)
-        b_rets = [r for _, r in bench["aligned_returns"]] if bench and bench["aligned_returns"] else []
+        b_rets = (
+            [r for _, r in bench["aligned_returns"]] if bench and bench["aligned_returns"] else []
+        )
         years = max((period_end - period_start).total_seconds() / (365.25 * 86400), 1 / 365.25)
         start_eq = curve[0][1] if curve else 0.0
         end_eq = curve[-1][1] if curve else 0.0
         return {
-            "cagr": cagr(start_eq, end_eq, years=years, period_start=period_start, period_end=period_end),
-            "volatility": annualized_volatility(rets, period_start=period_start, period_end=period_end),
-            "sharpe": sharpe_ratio(rets, risk_free_rate=risk_free_rate, period_start=period_start, period_end=period_end),
+            "cagr": cagr(
+                start_eq, end_eq, years=years, period_start=period_start, period_end=period_end
+            ),
+            "volatility": annualized_volatility(
+                rets, period_start=period_start, period_end=period_end
+            ),
+            "sharpe": sharpe_ratio(
+                rets,
+                risk_free_rate=risk_free_rate,
+                period_start=period_start,
+                period_end=period_end,
+            ),
             "sortino": sortino_ratio(rets, risk_free_rate=risk_free_rate),
             "max_drawdown": dd,
             "beta": beta(rets, b_rets, benchmark_name=benchmark_name) if b_rets else None,
-            "alpha": alpha(rets, b_rets, risk_free_rate=risk_free_rate, benchmark_name=benchmark_name) if b_rets else None,
-            "tracking_error": tracking_error(rets, b_rets, benchmark_name=benchmark_name) if b_rets else None,
-            "information_ratio": information_ratio(rets, b_rets, benchmark_name=benchmark_name) if b_rets else None,
+            "alpha": alpha(
+                rets, b_rets, risk_free_rate=risk_free_rate, benchmark_name=benchmark_name
+            )
+            if b_rets
+            else None,
+            "tracking_error": tracking_error(rets, b_rets, benchmark_name=benchmark_name)
+            if b_rets
+            else None,
+            "information_ratio": information_ratio(rets, b_rets, benchmark_name=benchmark_name)
+            if b_rets
+            else None,
         }
 
     async def drawdowns(self, period_start: datetime, period_end: datetime) -> dict[str, Any]:
@@ -346,11 +379,19 @@ class PerformanceService:
             mae_pct = None
             if entry > 0:
                 try:
-                    peak = float(policy["peak_price"]) if policy.get("peak_price") is not None else None
+                    peak = (
+                        float(policy["peak_price"])
+                        if policy.get("peak_price") is not None
+                        else None
+                    )
                 except (TypeError, ValueError):
                     peak = None
                 try:
-                    trough = float(policy["trough_price"]) if policy.get("trough_price") is not None else None
+                    trough = (
+                        float(policy["trough_price"])
+                        if policy.get("trough_price") is not None
+                        else None
+                    )
                 except (TypeError, ValueError):
                     trough = None
                 if peak is not None:
@@ -680,9 +721,7 @@ class PerformanceService:
         if persist and rows:
             await self.session.execute(
                 delete(DecisionEvaluationRecord).where(
-                    DecisionEvaluationRecord.decision_id.in_(
-                        [row.decision_id for row in rows]
-                    ),
+                    DecisionEvaluationRecord.decision_id.in_([row.decision_id for row in rows]),
                     DecisionEvaluationRecord.status == "PENDING",
                 )
             )
@@ -719,7 +758,9 @@ class PerformanceService:
             )
             benchmark = _benchmark_for_venue(decision_venue, self.settings)
             plan_horizons = [
-                universe_horizon_for_plan(p if isinstance(p, dict) else {}, watchlist_horizon=watchlist_hz)
+                universe_horizon_for_plan(
+                    p if isinstance(p, dict) else {}, watchlist_horizon=watchlist_hz
+                )
                 for p in plans
                 if isinstance(p, dict)
             ]
@@ -813,7 +854,9 @@ class PerformanceService:
                     sym,
                     decision_ts,
                     book=hz,
-                    explicit=explicit_plan_px_f if explicit_plan_px_f and explicit_plan_px_f > 0 else None,
+                    explicit=explicit_plan_px_f
+                    if explicit_plan_px_f and explicit_plan_px_f > 0
+                    else None,
                     entry_zone=zone,
                 )
                 plan_hp_raw = plan.get("horizon_price")
@@ -878,7 +921,9 @@ class PerformanceService:
                     status = (
                         "PENDING"
                         if plan_hz.source == "pending"
-                        else ("AVAILABLE" if plan_hp is not None and plan_price > 0 else "UNAVAILABLE")
+                        else (
+                            "AVAILABLE" if plan_hp is not None and plan_price > 0 else "UNAVAILABLE"
+                        )
                     )
                     self.session.add(
                         DecisionEvaluationRecord(

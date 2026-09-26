@@ -9,9 +9,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.core.config import Settings, clear_settings_cache
 from app.core.database import Base
-import app.models  # noqa: F401
 from app.execution.safety_controls import TradingControls
 from app.execution.validation import ExecutionValidator
 from app.intraday.closing import ClosingService
@@ -19,10 +19,10 @@ from app.models import PositionLifecycle, WatchlistSymbol
 from app.risk import PortfolioRiskView, PositionRiskView
 from app.schemas.cio import CIODecision, SymbolActionPlan
 from app.schemas.common import MarketRegime, PortfolioAction, PriceZone, SymbolAction
+from app.schemas.universe_manager import UniverseManagerOutput, WatchlistProposal
 from app.universe.candidates import addable_universe, curated_candidate_pool
 from app.universe.horizons import UniverseHorizon
 from app.universe.service import UniverseService
-from app.schemas.universe_manager import UniverseManagerOutput, WatchlistProposal
 
 
 @pytest_asyncio.fixture
@@ -213,7 +213,9 @@ async def test_hygiene_pauses_illiquid_active(session: AsyncSession) -> None:
         WatchlistSymbol(symbol="SPY", horizon="scalp", status="active", priority=80, thesis="ok")
     )
     session.add(
-        WatchlistSymbol(symbol="THIN", horizon="day", status="active", priority=70, thesis="illiquid")
+        WatchlistSymbol(
+            symbol="THIN", horizon="day", status="active", priority=70, thesis="illiquid"
+        )
     )
     session.add(
         MarketSnapshot(
@@ -333,9 +335,7 @@ async def test_lock_membership_ignores_pause_and_remove(session: AsyncSession) -
         universe_screener_enabled=False,
     )
     session.add(
-        WatchlistSymbol(
-            symbol="JPM", horizon="short", status="active", priority=70, thesis="bank"
-        )
+        WatchlistSymbol(symbol="JPM", horizon="short", status="active", priority=70, thesis="bank")
     )
     await session.flush()
     svc = UniverseService(session, settings=settings)
@@ -498,7 +498,9 @@ def test_validator_skips_entries_keeps_exits_in_closing() -> None:
             cash_pct=50,
             gross_exposure_pct=50,
             positions=[
-                PositionRiskView(symbol="QQQ", quantity=10, market_value=5000, sector="ETF", weight_pct=5),
+                PositionRiskView(
+                    symbol="QQQ", quantity=10, market_value=5000, sector="ETF", weight_pct=5
+                ),
             ],
         ),
         latest_prices={"SPY": 450, "QQQ": 400},

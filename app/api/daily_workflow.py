@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -18,7 +19,6 @@ from app.models import DailyWorkflowRun
 from app.workflow.daily import DailyWorkflowError, DailyWorkflowService
 from app.workflow.recovery import RecoveryService
 from app.workflow.states import ClosingPolicy
-from sqlalchemy import select
 
 router = APIRouter(tags=["daily-workflow"])
 
@@ -59,7 +59,9 @@ async def daily_get(
     workflow_run_id: UUID, session: AsyncSession = Depends(get_db_session)
 ) -> dict[str, Any]:
     run = (
-        await session.execute(select(DailyWorkflowRun).where(DailyWorkflowRun.id == workflow_run_id))
+        await session.execute(
+            select(DailyWorkflowRun).where(DailyWorkflowRun.id == workflow_run_id)
+        )
     ).scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="not_found")
@@ -243,9 +245,7 @@ async def operations_emergency_clear(
     await persist_trading_controls(session, trading_controls, changed_by="operations")
     from app.alerts.ops import resolve_alerts_by_code
 
-    resolved = await resolve_alerts_by_code(
-        session, get_settings(), code="trading.emergency_stop"
-    )
+    resolved = await resolve_alerts_by_code(session, get_settings(), code="trading.emergency_stop")
     await session.commit()
     return {"state": snap.state.value, "alerts_resolved": resolved}
 

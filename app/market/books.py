@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.market.venues import Venue, venue_for_symbol
 from app.core.config import Settings, get_settings
+from app.market.venues import Venue, venue_for_symbol
 
 
 def summarize_venue_books(
@@ -39,9 +39,7 @@ def summarize_venue_books(
                 currency=str(raw.get("currency") or "") or None,
             ).value
         )
-        bucket = books.setdefault(
-            venue, {"market_value": 0.0, "positions": 0.0, "weight_pct": 0.0}
-        )
+        bucket = books.setdefault(venue, {"market_value": 0.0, "positions": 0.0, "weight_pct": 0.0})
         bucket["market_value"] += mv
         bucket["positions"] += 1.0
     if equity and equity > 0:

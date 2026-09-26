@@ -21,9 +21,7 @@ def _env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENABLE_BROKER_CONNECTION", "false")
     monkeypatch.setenv("BROKER_PROVIDER", "mock")
     monkeypatch.setenv("BROKER_ENVIRONMENT", "paper")
-    monkeypatch.setenv(
-        "DATABASE_URL", "sqlite+aiosqlite:///:memory:?cache=shared"
-    )
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:?cache=shared")
     monkeypatch.setenv("LLM_RUNTIME", "cloud")
     monkeypatch.setenv("LLM_BASE_URL", "https://api.openai.com/v1")
     monkeypatch.setenv("LLM_LOCAL_NUM_CTX", "8192")

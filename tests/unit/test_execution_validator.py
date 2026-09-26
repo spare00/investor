@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-import pytest
-
 from app.execution.safety_controls import TradingControls, TradingState
 from app.execution.validation import ExecutionValidator
 from app.risk import PortfolioRiskView, PositionRiskView
@@ -18,7 +16,6 @@ from app.schemas.common import (
     PriceZone,
     SymbolAction,
 )
-
 
 NOW = datetime(2026, 8, 3, 14, 0, tzinfo=UTC)
 
@@ -75,9 +72,7 @@ def test_validator_blocks_when_paused() -> None:
     validator = ExecutionValidator(controls=controls)
     result = validator.validate(
         _buy_decision(),
-        portfolio=PortfolioRiskView(
-            equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0
-        ),
+        portfolio=PortfolioRiskView(equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0),
         latest_prices={"QQQ": 100},
         data_quality_score=0.9,
     )
@@ -113,9 +108,7 @@ def test_validator_blocks_cio_buy_without_risk_approval() -> None:
     )
     result = ExecutionValidator(controls=TradingControls()).validate(
         decision,
-        portfolio=PortfolioRiskView(
-            equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0
-        ),
+        portfolio=PortfolioRiskView(equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0),
         latest_prices={"QQQ": 100},
         data_quality_score=0.9,
     )
@@ -126,9 +119,7 @@ def test_validator_blocks_cio_buy_without_risk_approval() -> None:
 def test_validator_approves_sized_buy() -> None:
     result = ExecutionValidator(controls=TradingControls()).validate(
         _buy_decision(risk_approval=True),
-        portfolio=PortfolioRiskView(
-            equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0
-        ),
+        portfolio=PortfolioRiskView(equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0),
         latest_prices={"QQQ": 100},
         data_quality_score=0.95,
     )
@@ -144,9 +135,7 @@ def test_validator_blocks_duplicate_idempotency() -> None:
     key = f"{decision.decision_id}:QQQ:buy:BUY"
     result = ExecutionValidator(controls=TradingControls()).validate(
         decision,
-        portfolio=PortfolioRiskView(
-            equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0
-        ),
+        portfolio=PortfolioRiskView(equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0),
         latest_prices={"QQQ": 100},
         data_quality_score=0.95,
         seen_idempotency_keys={key},
@@ -177,9 +166,7 @@ def test_validator_sell_requires_position() -> None:
     )
     empty = ExecutionValidator(controls=TradingControls()).validate(
         decision,
-        portfolio=PortfolioRiskView(
-            equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0
-        ),
+        portfolio=PortfolioRiskView(equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0),
         latest_prices={"QQQ": 100},
         data_quality_score=0.9,
     )
@@ -233,7 +220,11 @@ def test_validator_no_trade_still_honors_symbol_exits() -> None:
             gross_exposure_pct=20,
             positions=[
                 PositionRiskView(
-                    symbol="CORZ", quantity=11, market_value=220, sector="Technology", weight_pct=0.8
+                    symbol="CORZ",
+                    quantity=11,
+                    market_value=220,
+                    sector="Technology",
+                    weight_pct=0.8,
                 )
             ],
         ),
@@ -283,10 +274,20 @@ def test_validator_hold_submits_partial_sell() -> None:
             gross_exposure_pct=28,
             positions=[
                 PositionRiskView(
-                    symbol="VAS", quantity=876, market_value=800, sector="ETF", weight_pct=4, venue="AU"
+                    symbol="VAS",
+                    quantity=876,
+                    market_value=800,
+                    sector="ETF",
+                    weight_pct=4,
+                    venue="AU",
                 ),
                 PositionRiskView(
-                    symbol="BHP", quantity=1575, market_value=4000, sector="Materials", weight_pct=16, venue="AU"
+                    symbol="BHP",
+                    quantity=1575,
+                    market_value=4000,
+                    sector="Materials",
+                    weight_pct=16,
+                    venue="AU",
                 ),
             ],
         ),
@@ -337,10 +338,20 @@ def test_validator_exit_rejection_does_not_block_other_exits() -> None:
             gross_exposure_pct=28,
             positions=[
                 PositionRiskView(
-                    symbol="VAS", quantity=876, market_value=800, sector="ETF", weight_pct=4, venue="AU"
+                    symbol="VAS",
+                    quantity=876,
+                    market_value=800,
+                    sector="ETF",
+                    weight_pct=4,
+                    venue="AU",
                 ),
                 PositionRiskView(
-                    symbol="BHP", quantity=1575, market_value=4000, sector="Materials", weight_pct=16, venue="AU"
+                    symbol="BHP",
+                    quantity=1575,
+                    market_value=4000,
+                    sector="Materials",
+                    weight_pct=16,
+                    venue="AU",
                 ),
             ],
         ),
@@ -375,9 +386,7 @@ def test_validator_hold_skips_new_entries() -> None:
     )
     result = ExecutionValidator(controls=TradingControls()).validate(
         decision,
-        portfolio=PortfolioRiskView(
-            equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0
-        ),
+        portfolio=PortfolioRiskView(equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0),
         latest_prices={"QQQ": 100},
         data_quality_score=0.9,
         entry_universe={"QQQ"},
@@ -415,7 +424,11 @@ def test_validator_exits_use_market_orders() -> None:
             gross_exposure_pct=20,
             positions=[
                 PositionRiskView(
-                    symbol="CORZ", quantity=11, market_value=220, sector="Technology", weight_pct=0.8
+                    symbol="CORZ",
+                    quantity=11,
+                    market_value=220,
+                    sector="Technology",
+                    weight_pct=0.8,
                 )
             ],
         ),
@@ -538,7 +551,11 @@ def test_validator_allows_exit_for_off_allowlist_long() -> None:
             gross_exposure_pct=20,
             positions=[
                 PositionRiskView(
-                    symbol="CORZ", quantity=11, market_value=220, sector="Technology", weight_pct=0.8
+                    symbol="CORZ",
+                    quantity=11,
+                    market_value=220,
+                    sector="Technology",
+                    weight_pct=0.8,
                 )
             ],
         ),
@@ -618,9 +635,7 @@ def test_validator_blocks_buy_off_allowlist() -> None:
     )
     result = ExecutionValidator(controls=TradingControls()).validate(
         decision,
-        portfolio=PortfolioRiskView(
-            equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0
-        ),
+        portfolio=PortfolioRiskView(equity=25_000, cash=25_000, cash_pct=100, gross_exposure_pct=0),
         latest_prices={"GME": 20},
         data_quality_score=0.9,
     )
@@ -658,8 +673,12 @@ def test_validator_blocks_horizon_cap() -> None:
             cash_pct=50,
             gross_exposure_pct=50,
             positions=[
-                PositionRiskView(symbol="SPY", quantity=10, market_value=5000, sector="ETF", weight_pct=5),
-                PositionRiskView(symbol="QQQ", quantity=10, market_value=5000, sector="ETF", weight_pct=5),
+                PositionRiskView(
+                    symbol="SPY", quantity=10, market_value=5000, sector="ETF", weight_pct=5
+                ),
+                PositionRiskView(
+                    symbol="QQQ", quantity=10, market_value=5000, sector="ETF", weight_pct=5
+                ),
             ],
         ),
         latest_prices={"IWM": 200},

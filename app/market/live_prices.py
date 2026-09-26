@@ -6,8 +6,8 @@ quotes are allowed only for offline simulation when broker orders are off.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Iterable
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
@@ -128,9 +128,7 @@ async def resolve_execution_prices(
     syms = sorted({str(s).upper() for s in symbols if s})
     if not requires_live_market_prices(cfg):
         cleaned = {
-            k.upper(): float(v)
-            for k, v in (candidate_prices or {}).items()
-            if v and float(v) > 0
+            k.upper(): float(v) for k, v in (candidate_prices or {}).items() if v and float(v) > 0
         }
         notes.append("simulation_prices_allowed")
         return cleaned, notes

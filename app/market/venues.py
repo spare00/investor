@@ -284,10 +284,7 @@ def holdings_for_venue(
         if isinstance(raw, dict):
             symbol = str(raw.get("symbol") or "").upper()
             qty = float(
-                raw.get("quantity")
-                if raw.get("quantity") is not None
-                else raw.get("qty")
-                or 0
+                raw.get("quantity") if raw.get("quantity") is not None else raw.get("qty") or 0
             )
             row_venue = raw.get("venue")
             exchange = raw.get("exchange")

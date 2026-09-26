@@ -32,6 +32,7 @@ from app.performance.drawdown import (
     current_drawdown,
     max_drawdown,
 )
+from app.performance.entry_expectancy import compute_entry_reason_expectancy
 from app.performance.execution_quality import compute_execution_quality
 from app.performance.mae_mfe import MaeMfeResult, compute_mae_mfe
 from app.performance.operational import aggregate_operational_kpis
@@ -62,8 +63,11 @@ from app.performance.risk import (
     tracking_error,
 )
 from app.performance.service import PerformanceService
-from app.performance.trades import ClosedTrade, compute_trade_metrics, group_trade_metrics_by_horizon
-from app.performance.entry_expectancy import compute_entry_reason_expectancy
+from app.performance.trades import (
+    ClosedTrade,
+    compute_trade_metrics,
+    group_trade_metrics_by_horizon,
+)
 from app.performance.types import (
     ANNUALIZATION_FACTOR,
     CALCULATION_VERSION,

@@ -109,7 +109,9 @@ class BackupService:
         config_snapshot = {
             k: v
             for k, v in self.settings.model_dump(mode="json").items()
-            if "secret" not in k.lower() and "password" not in k.lower() and "token" not in k.lower()
+            if "secret" not in k.lower()
+            and "password" not in k.lower()
+            and "token" not in k.lower()
         }
         config_path = staging / "config.json"
         config_path.write_text(json.dumps(config_snapshot, indent=2), encoding="utf-8")

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import math
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Sequence
 
 from app.performance.types import (
     ANNUALIZATION_FACTOR,
-    CALCULATION_VERSION,
     MetricResult,
     MetricStatus,
     metric_result,
@@ -211,7 +209,9 @@ def excess_return(
             benchmark=benchmark_name,
             method="aligned_daily",
         )
-    avg_excess = sum(p - b - risk_free_rate / ANNUALIZATION_FACTOR for p, b in zip(p_rets, b_rets)) / len(p_rets)
+    avg_excess = sum(
+        p - b - risk_free_rate / ANNUALIZATION_FACTOR for p, b in zip(p_rets, b_rets, strict=True)
+    ) / len(p_rets)
     return metric_result(
         "excess_return",
         avg_excess * ANNUALIZATION_FACTOR,

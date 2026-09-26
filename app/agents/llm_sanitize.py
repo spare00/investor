@@ -401,9 +401,21 @@ def _split_scenarios_list(view: dict[str, Any]) -> None:
                     break
         if upside is not None and downside is not None:
             return
-        items = [v for k, v in raw.items() if k not in {
-            "upside", "downside", "upside_scenario", "downside_scenario", "bull", "bear", "positive", "negative"
-        }]
+        items = [
+            v
+            for k, v in raw.items()
+            if k
+            not in {
+                "upside",
+                "downside",
+                "upside_scenario",
+                "downside_scenario",
+                "bull",
+                "bear",
+                "positive",
+                "negative",
+            }
+        ]
     elif isinstance(raw, list):
         items = raw
     else:
@@ -465,7 +477,16 @@ def _normalize_market_event(ev: dict[str, Any]) -> dict[str, Any]:
             ev["headline"] = ev["facts"][0]
     if "headline" not in ev or not str(ev.get("headline") or "").strip():
         ev["headline"] = "Untitled market event"
-    for junk in ("themes", "conflicts", "missing_information", "data_quality_score", "as_of", "title", "summary", "text"):
+    for junk in (
+        "themes",
+        "conflicts",
+        "missing_information",
+        "data_quality_score",
+        "as_of",
+        "title",
+        "summary",
+        "text",
+    ):
         if junk == "headline":
             continue
         ev.pop(junk, None)
@@ -714,9 +735,7 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
         out.setdefault("risk_conditions", [])
         out["risk_conditions"] = _as_string_list(out.get("risk_conditions"))
         if explicit_regime is None:
-            out["risk_conditions"].append(
-                "market_regime omitted by model; defaulted to NEUTRAL"
-            )
+            out["risk_conditions"].append("market_regime omitted by model; defaulted to NEUTRAL")
         out.setdefault("symbol_actions", [])
         if "cash_target_pct" not in out:
             out["cash_target_pct"] = 50.0
@@ -767,14 +786,9 @@ def prune_to_model(data: dict[str, Any], model: type[Any]) -> dict[str, Any]:
             inner = _unwrap_annotation(inner) if inner is not None else None
             if inner is str:
                 out[name] = _as_string_list(val)
-            elif (
-                isinstance(val, list)
-                and isinstance(inner, type)
-                and issubclass(inner, BaseModel)
-            ):
+            elif isinstance(val, list) and isinstance(inner, type) and issubclass(inner, BaseModel):
                 out[name] = [
-                    prune_to_model(item, inner) if isinstance(item, dict) else item
-                    for item in val
+                    prune_to_model(item, inner) if isinstance(item, dict) else item for item in val
                 ]
             else:
                 out[name] = val
@@ -860,7 +874,8 @@ def sanitize_llm_payload(data: dict[str, Any]) -> dict[str, Any]:
                     kn == enum_cls.__name__.lower()
                     or kn.endswith(enum_cls.__name__.lower())
                     or name in kn
-                    or kn in {
+                    or kn
+                    in {
                         "category",
                         "sentiment",
                         "market_regime",

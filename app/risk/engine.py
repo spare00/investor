@@ -91,9 +91,7 @@ class DeterministicRiskEngine:
         if equity <= 0:
             return 0.0
         want = (venue or "US").upper()
-        current = sum(
-            abs(p.market_value) for p in positions if (p.venue or "US").upper() == want
-        )
+        current = sum(abs(p.market_value) for p in positions if (p.venue or "US").upper() == want)
         return (current + additional_notional) / equity * 100.0
 
     def position_size(
@@ -175,7 +173,10 @@ class DeterministicRiskEngine:
             add(VetoCode.TRADING_HALTED, False, "Trading is halted")
             halt_day = True
 
-        if abs(portfolio.daily_pnl_pct) >= self.limits.daily_max_loss_pct and portfolio.daily_pnl_pct < 0:
+        if (
+            abs(portfolio.daily_pnl_pct) >= self.limits.daily_max_loss_pct
+            and portfolio.daily_pnl_pct < 0
+        ):
             add(
                 VetoCode.DAILY_LOSS_LIMIT,
                 False,
@@ -209,9 +210,7 @@ class DeterministicRiskEngine:
             )
             halt_day = True
         elif portfolio.consecutive_losses >= self.limits.max_consecutive_losses:
-            in_cooldown = (
-                portfolio.cooldown_until is not None and now < portfolio.cooldown_until
-            )
+            in_cooldown = portfolio.cooldown_until is not None and now < portfolio.cooldown_until
             if in_cooldown and trade.side == "buy":
                 add(
                     VetoCode.CONSECUTIVE_LOSSES_COOLDOWN,
@@ -318,13 +317,10 @@ class DeterministicRiskEngine:
 
         from app.market.venues import get_venue_spec, venue_for_symbol
 
-        trade_venue = (
-            (trade.venue or "").upper()
-            or venue_for_symbol(
-                symbol,
-                currency=trade.currency,
-            ).value
-        )
+        trade_venue = (trade.venue or "").upper() or venue_for_symbol(
+            symbol,
+            currency=trade.currency,
+        ).value
         try:
             venue_ccy = get_venue_spec(trade_venue).currency
         except ValueError:
@@ -353,8 +349,10 @@ class DeterministicRiskEngine:
                     fx_rate=rate,
                 )
 
-        can_size = trade.side == "buy" and trade.stop_loss is not None and (
-            trade_ccy == base_ccy or rate is not None
+        can_size = (
+            trade.side == "buy"
+            and trade.stop_loss is not None
+            and (trade_ccy == base_ccy or rate is not None)
         )
         if can_size:
             assert trade.stop_loss is not None
@@ -371,8 +369,7 @@ class DeterministicRiskEngine:
                 (
                     p.market_value
                     for p in portfolio.positions
-                    if p.symbol.upper() == symbol
-                    and (p.venue or "US").upper() == trade_venue
+                    if p.symbol.upper() == symbol and (p.venue or "US").upper() == trade_venue
                 ),
                 0.0,
             )
@@ -397,7 +394,9 @@ class DeterministicRiskEngine:
                 add(VetoCode.RISK_PER_TRADE, True, "Risk per trade sizing OK")
 
             notional = (adjusted_qty or 0.0) * entry_base
-            projected_weight = (existing + notional) / portfolio.equity * 100.0 if portfolio.equity else 0.0
+            projected_weight = (
+                (existing + notional) / portfolio.equity * 100.0 if portfolio.equity else 0.0
+            )
             add(
                 VetoCode.MAX_POSITION_PCT,
                 projected_weight <= self.limits.max_position_pct + 1e-9,

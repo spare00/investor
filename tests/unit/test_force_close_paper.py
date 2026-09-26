@@ -8,11 +8,11 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.brokers.mock import MockBroker
 from app.core.config import Settings, TradingMode, clear_settings_cache
 from app.core.database import Base
-import app.models  # noqa: F401
-from app.execution.safety_controls import TradingControls, trading_controls
+from app.execution.safety_controls import trading_controls
 from app.intraday.closing import ClosingService
 from app.models import PositionLifecycle, WatchlistSymbol
 

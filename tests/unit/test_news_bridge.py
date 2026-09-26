@@ -10,9 +10,9 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.core.config import clear_settings_cache, get_settings
 from app.core.database import Base
-import app.models  # noqa: F401
 from app.execution.safety_controls import trading_controls
 from app.intraday.news_bridge import classify_news_importance, ingest_high_importance_news
 from app.models import IntradayEvent, NewsItem
@@ -128,9 +128,7 @@ async def test_ingest_scopes_symbol_news_to_venue(
     )
     await session.flush()
 
-    au = await ingest_high_importance_news(
-        session, settings=settings, now=now, venue="AU"
-    )
+    au = await ingest_high_importance_news(session, settings=settings, now=now, venue="AU")
     assert au["published"] == 1
     assert au["venue"] == "AU"
     events = list((await session.execute(select(IntradayEvent))).scalars().all())

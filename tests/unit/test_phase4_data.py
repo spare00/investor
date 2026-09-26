@@ -8,18 +8,22 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.canonical.models import CanonicalQuote, DataQualityBreakdown, Provenance
+from app.canonical.models import CanonicalQuote, DataQualityBreakdown, FreshnessState, Provenance
 from app.context_builders.builders import MarketIntelligenceContextBuilder
 from app.core.config import clear_settings_cache, get_settings
 from app.core.database import Base
 from app.data_quality.news_dedup import cluster_news
-from app.data_quality.service import compare_quotes, freshness_state_for_quote, validate_bar, validate_quote
+from app.data_quality.service import (
+    compare_quotes,
+    freshness_state_for_quote,
+    validate_bar,
+    validate_quote,
+)
 from app.ingestion.pipeline import DataCollectionPipeline
+from app.models import DataCollectionRun  # noqa: F401
 from app.providers.base import redact_secrets, reset_breakers, run_with_retry
 from app.providers.registry import FixtureMarketDataProvider, FixtureNewsProvider
 from app.security.untrusted_text import sanitize_external_text, wrap_untrusted
-from app.canonical.models import FreshnessState
-from app.models import DataCollectionRun  # noqa: F401
 
 
 @pytest_asyncio.fixture

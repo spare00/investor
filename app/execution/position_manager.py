@@ -289,9 +289,7 @@ class PositionManager:
                 snap.daily_pnl = equity - prior
                 snap.daily_pnl_pct = ((equity - prior) / prior * 100.0) if prior else 0.0
             if snap.peak_equity > 0:
-                snap.drawdown_pct = max(
-                    0.0, (snap.peak_equity - equity) / snap.peak_equity * 100.0
-                )
+                snap.drawdown_pct = max(0.0, (snap.peak_equity - equity) / snap.peak_equity * 100.0)
             self.session.add(snap)
             snapshot_written = True
             await self.session.flush()

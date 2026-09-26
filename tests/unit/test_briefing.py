@@ -39,7 +39,6 @@ from app.services.briefing import (
     summarize_mi,
 )
 
-
 NOW = datetime(2026, 8, 6, 14, 0, tzinfo=UTC)
 
 
@@ -248,7 +247,7 @@ async def test_briefing_prefers_asx_intraday_over_premarket(session: AsyncSessio
     pre_at = datetime(2026, 8, 11, 22, 1, tzinfo=UTC)  # 08:01 BNE
     intra_at = datetime(2026, 8, 12, 0, 19, tzinfo=UTC)  # 10:19 BNE
 
-    for wf, ts, action in (
+    for wf, _ts, action in (
         (pre_wf, pre_at, PortfolioAction.NO_TRADE),
         (intra_wf, intra_at, PortfolioAction.HOLD),
     ):
@@ -275,9 +274,7 @@ async def test_briefing_prefers_asx_intraday_over_premarket(session: AsyncSessio
     session.add(run)
     await session.flush()
 
-    briefing = await BriefingService(session).build(
-        session_date="2026-08-12", calendar_name="ASX"
-    )
+    briefing = await BriefingService(session).build(session_date="2026-08-12", calendar_name="ASX")
     assert briefing["materials"]["kind"] == "intraday"
     assert briefing["materials"]["workflow_id"] == str(intra_wf)
     assert briefing["daily_workflow"]["cio_action"] == "HOLD"

@@ -109,7 +109,12 @@ def classify_agent_lamp(
 
     status = (last_run_status or "").lower()
     if status in {"failed", "error"}:
-        return {"lamp": "failed", "label": "failed", "detail": "last persisted run failed", "live": False}
+        return {
+            "lamp": "failed",
+            "label": "failed",
+            "detail": "last persisted run failed",
+            "live": False,
+        }
 
     if last_started_at is None and not live:
         return {"lamp": "silent", "label": "inactive", "detail": "no runs yet", "live": False}

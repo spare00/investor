@@ -127,7 +127,9 @@ async def _recovery() -> dict:
         return result
 
 
-async def _collect(kind: str, *, fixture: bool, symbols: list[str] | None, since_h: int | None) -> dict:
+async def _collect(
+    kind: str, *, fixture: bool, symbols: list[str] | None, since_h: int | None
+) -> dict:
     factory = get_session_factory()
     async with factory() as session:
         mapping = {
@@ -139,9 +141,9 @@ async def _collect(kind: str, *, fixture: bool, symbols: list[str] | None, since
             "revalidation": "PREOPEN_REVALIDATION",
             "postmarket": "POSTMARKET",
         }
-        result = await DataCollectionPipeline(
-            session, fixture_mode=fixture
-        ).collect(mapping.get(kind, "ON_DEMAND"), symbols=symbols)
+        result = await DataCollectionPipeline(session, fixture_mode=fixture).collect(
+            mapping.get(kind, "ON_DEMAND"), symbols=symbols
+        )
         await session.commit()
         return result.to_dict()
 
@@ -181,7 +183,11 @@ async def _broker_cmd(action: str) -> dict:
         return dict(await broker.get_account())
     if action == "positions":
         if hasattr(broker, "get_positions_canonical"):
-            return {"positions": [p.model_dump(mode="json") for p in await broker.get_positions_canonical()]}
+            return {
+                "positions": [
+                    p.model_dump(mode="json") for p in await broker.get_positions_canonical()
+                ]
+            }
         return {"positions": await broker.get_positions()}
     if action == "orders":
         orders = await broker.get_open_orders() if hasattr(broker, "get_open_orders") else []
@@ -265,7 +271,9 @@ async def _execution_cmd(action: str, **kwargs: object) -> dict:
             intent = await svc.approve_intent(UUID(str(kwargs["intent_id"])))
             result = {"intent_id": str(intent.id), "status": intent.status}
         elif action == "reject":
-            intent = await svc.reject_intent(UUID(str(kwargs["intent_id"])), reason=str(kwargs.get("reason") or ""))
+            intent = await svc.reject_intent(
+                UUID(str(kwargs["intent_id"])), reason=str(kwargs.get("reason") or "")
+            )
             result = {"intent_id": str(intent.id), "status": intent.status}
         elif action == "submit":
             order = await svc.submit_intent(UUID(str(kwargs["intent_id"])))
@@ -493,14 +501,21 @@ def main(argv: list[str] | None = None) -> int:
             else None
         )
         result = asyncio.run(
-            _collect(args.collect_cmd, fixture=getattr(args, "fixture", True), symbols=syms, since_h=None)
+            _collect(
+                args.collect_cmd, fixture=getattr(args, "fixture", True), symbols=syms, since_h=None
+            )
         )
     elif args.cmd == "data-quality" and args.dq_cmd == "report":
         result = asyncio.run(_collect("premarket", fixture=True, symbols=None, since_h=None))
-        result = {"quality_summary": result.get("quality_summary"), "fail_closed": result.get("fail_closed")}
+        result = {
+            "quality_summary": result.get("quality_summary"),
+            "fail_closed": result.get("fail_closed"),
+        }
     elif args.cmd == "data-conflicts" and args.dc_cmd == "list":
         raw = asyncio.run(_collect("premarket", fixture=True, symbols=None, since_h=None))
-        result = {"conflicts": raw.get("provider_metas")}  # lightweight; full conflicts in API cache
+        result = {
+            "conflicts": raw.get("provider_metas")
+        }  # lightweight; full conflicts in API cache
     elif args.cmd == "build-context":
         result = asyncio.run(_build_context(args.context_kind))
     elif args.cmd == "broker":
@@ -515,7 +530,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.execution_cmd == "approve":
             result = asyncio.run(_execution_cmd("approve", intent_id=args.intent_id))
         elif args.execution_cmd == "reject":
-            result = asyncio.run(_execution_cmd("reject", intent_id=args.intent_id, reason=args.reason))
+            result = asyncio.run(
+                _execution_cmd("reject", intent_id=args.intent_id, reason=args.reason)
+            )
         elif args.execution_cmd == "submit":
             result = asyncio.run(_execution_cmd("submit", intent_id=args.intent_id))
         elif args.execution_cmd == "reconcile":
@@ -571,7 +588,11 @@ async def _intraday_cmd(args: argparse.Namespace) -> dict:
             result = svc.status()
         elif args.intraday_cmd == "events" and args.events_cmd == "list":
             rows = await svc.bus.list_events()
-            result = {"events": [{"id": str(e.id), "type": e.event_type, "status": e.status} for e in rows]}
+            result = {
+                "events": [
+                    {"id": str(e.id), "type": e.event_type, "status": e.status} for e in rows
+                ]
+            }
         elif args.intraday_cmd == "evaluate":
             result = await svc.agents.evaluate(fake_llm=True)
         elif args.intraday_cmd == "recovery":
@@ -583,9 +604,10 @@ async def _intraday_cmd(args: argparse.Namespace) -> dict:
 
 
 async def _positions_cmd(args: argparse.Namespace) -> dict:
+    from sqlalchemy import select
+
     from app.intraday.service import IntradayService
     from app.models import PositionLifecycle
-    from sqlalchemy import select
 
     factory = get_session_factory()
     async with factory() as session:
@@ -595,17 +617,23 @@ async def _positions_cmd(args: argparse.Namespace) -> dict:
         elif args.positions_cmd == "review":
             row = (
                 await session.execute(
-                    select(PositionLifecycle).where(PositionLifecycle.symbol == args.symbol.upper()).limit(1)
+                    select(PositionLifecycle)
+                    .where(PositionLifecycle.symbol == args.symbol.upper())
+                    .limit(1)
                 )
             ).scalar_one_or_none()
             if row is None:
                 raise SystemExit("position_not_found")
-            mon = await svc.monitor.evaluate(row, current_price=row.current_price, equity=get_settings().starting_cash)
+            mon = await svc.monitor.evaluate(
+                row, current_price=row.current_price, equity=get_settings().starting_cash
+            )
             result = {"verdict": mon.verdict, "reasons": mon.reasons}
         elif args.positions_cmd == "close":
             row = (
                 await session.execute(
-                    select(PositionLifecycle).where(PositionLifecycle.symbol == args.symbol.upper()).limit(1)
+                    select(PositionLifecycle)
+                    .where(PositionLifecycle.symbol == args.symbol.upper())
+                    .limit(1)
                 )
             ).scalar_one_or_none()
             if row is None:
@@ -674,7 +702,7 @@ async def _providers_reliability() -> dict:
 
 
 async def _performance_cmd(cmd: str) -> dict:
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, datetime
 
     from app.performance.service import PerformanceService
 
@@ -721,7 +749,12 @@ async def _alerts_cmd(args: argparse.Namespace) -> dict:
             alerts = await svc.list_alerts()
             return {
                 "alerts": [
-                    {"id": str(a.id), "code": a.code, "severity": a.severity.value, "status": a.status.value}
+                    {
+                        "id": str(a.id),
+                        "code": a.code,
+                        "severity": a.severity.value,
+                        "status": a.status.value,
+                    }
                     for a in alerts
                 ]
             }
@@ -765,7 +798,12 @@ async def _simulation_cmd(args: argparse.Namespace) -> dict:
             row = await session.get(SimulationRunRecord, UUID(args.id))
             if row is None:
                 raise SystemExit("simulation_not_found")
-            return {"id": str(row.id), "scenario": row.scenario, "payload": row.payload, "status": row.status}
+            return {
+                "id": str(row.id),
+                "scenario": row.scenario,
+                "payload": row.payload,
+                "status": row.status,
+            }
         raise SystemExit("unknown simulation command")
 
 
@@ -809,7 +847,11 @@ async def _backup_cmd(args: argparse.Namespace) -> dict:
             }
         if args.backup_cmd == "verify":
             verified = svc.verify(args.path)
-            return {"valid": verified.valid, "errors": verified.errors, "backup_id": verified.backup_id}
+            return {
+                "valid": verified.valid,
+                "errors": verified.errors,
+                "backup_id": verified.backup_id,
+            }
         raise SystemExit("unknown backup command")
 
 
@@ -831,9 +873,7 @@ async def _universe_cmd(cmd: str, *, force: bool = False) -> dict:
             await session.commit()
             return snap
         if cmd == "refresh":
-            holdings = [
-                p.symbol for p in (await session.execute(select(Position))).scalars().all()
-            ]
+            holdings = [p.symbol for p in (await session.execute(select(Position))).scalars().all()]
             result = await svc.refresh(holdings=holdings, force=force)
             await session.commit()
             return result

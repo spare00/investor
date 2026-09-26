@@ -10,7 +10,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.execution.safety_controls import TradingControlState, TradingControls, TradingState
+from app.execution.safety_controls import TradingControls, TradingControlState, TradingState
 from app.models import ConfigurationHistory
 
 OPS_KEY = "ops.trading_controls"

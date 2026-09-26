@@ -107,10 +107,14 @@ class ReconciliationService:
         if not remote_ids:
             return set()
         rows = (
-            await self.session.execute(
-                select(Order.broker_order_id).where(Order.broker_order_id.in_(list(remote_ids)))
+            (
+                await self.session.execute(
+                    select(Order.broker_order_id).where(Order.broker_order_id.in_(list(remote_ids)))
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return {str(oid) for oid in rows if oid}
 
     async def _adopt_remote_orders(self, remotes: list[Any]) -> int:
@@ -154,9 +158,7 @@ class ReconciliationService:
         streak = 0
         for run in rows:
             kinds = {
-                str(item.get("type") or "")
-                for item in (run.issues or [])
-                if isinstance(item, dict)
+                str(item.get("type") or "") for item in (run.issues or []) if isinstance(item, dict)
             }
             if "stale_local_open_cleared" in kinds:
                 break
@@ -275,7 +277,11 @@ class ReconciliationService:
             material = any(
                 i["type"].startswith("remote_") or i["type"].startswith("local_") for i in issues
             )
-            result = ReconciliationResult.MATERIAL_DRIFT if material else ReconciliationResult.MINOR_DRIFT
+            result = (
+                ReconciliationResult.MATERIAL_DRIFT
+                if material
+                else ReconciliationResult.MINOR_DRIFT
+            )
 
         run = BrokerReconciliationRun(
             id=uuid4(),

@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import MarketSnapshot
 from app.universe.horizons import policy_for
 
-
 _BOOK_LABELS = {
     "scalp": "4h",
     "day": "1session",
@@ -220,9 +219,7 @@ class DecisionPriceResolver:
         if self.now < horizon_end:
             return None
         points = await self._load_points(benchmark)
-        p0, _ = pick_price_at_or_before(
-            points, decision_ts, max_skew=decision_price_max_skew(book)
-        )
+        p0, _ = pick_price_at_or_before(points, decision_ts, max_skew=decision_price_max_skew(book))
         p1, _ = pick_price_in_window(points, decision_ts, horizon_end)
         if p0 is None or p1 is None or p0 <= 0:
             return None

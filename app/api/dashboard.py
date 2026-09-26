@@ -23,7 +23,6 @@ from app.core.metrics import (
     WATCHLIST_SYMBOLS,
     metrics_payload,
 )
-from app.ops.committee_watch import build_committee_watch, job_duration_seconds
 from app.core.scheduler import upcoming_jobs
 from app.core.timeutils import dual_timezone_labels, utc_now
 from app.execution.order_manager import OrderManager
@@ -49,11 +48,12 @@ from app.models import (
     ScheduledJobRecord,
     SystemEvent,
 )
+from app.office.gossip import desk_facts_from_summary, next_office_gossip, remember_office_desk
+from app.office.week import load_office_week
+from app.ops.committee_watch import build_committee_watch, job_duration_seconds
 from app.services.briefing import BriefingService
 from app.services.llm_budget import snapshot_llm_budget
 from app.services.picks import PicksService
-from app.office.gossip import desk_facts_from_summary, next_office_gossip, remember_office_desk
-from app.office.week import load_office_week
 from app.universe.reeval import effective_max_intraday_reanalyses
 from app.workflow.daily import DailyWorkflowService
 
@@ -365,9 +365,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     # Latest report per agent
     agent_latest: dict[str, Any] = {}
     runs = list(
-        (
-            await session.execute(select(AgentRun).order_by(desc(AgentRun.started_at)).limit(48))
-        )
+        (await session.execute(select(AgentRun).order_by(desc(AgentRun.started_at)).limit(48)))
         .scalars()
         .all()
     )
@@ -476,9 +474,10 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     }
     primary = resolve_venue(settings).value
     ops_target = active_session_summary(settings, now=now)
-    us_session = venue_sessions.get("US") or MarketCalendarService(
-        settings, venue="US"
-    ).get_market_status(now).to_dict()
+    us_session = (
+        venue_sessions.get("US")
+        or MarketCalendarService(settings, venue="US").get_market_status(now).to_dict()
+    )
     au_session = venue_sessions.get("AU")
     workflow_summary: dict[str, Any] | None = None
     workflows_by_venue: dict[str, Any] = {}
@@ -499,9 +498,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 "venue": venue.value,
                 "calendar_name": run.calendar_name,
                 "intraday_reanalysis_count": int(run.intraday_reanalysis_count or 0),
-                "max_intraday_reanalyses": int(
-                    effective_max_intraday_reanalyses(settings)
-                ),
+                "max_intraday_reanalyses": int(effective_max_intraday_reanalyses(settings)),
                 "last_intraday_eval_at": meta.get("last_intraday_eval_at"),
                 "last_intraday_result": meta.get("last_intraday_result"),
                 "last_force_close": meta.get("last_force_close"),
@@ -661,10 +658,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 await session.execute(
                     select(IntradayEvent)
                     .where(IntradayEvent.status == "NEW")
-                    .where(
-                        (IntradayEvent.expires_at.is_(None))
-                        | (IntradayEvent.expires_at > now)
-                    )
+                    .where((IntradayEvent.expires_at.is_(None)) | (IntradayEvent.expires_at > now))
                     .order_by(desc(IntradayEvent.detected_at))
                     .limit(12)
                 )
@@ -690,7 +684,9 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     latest_closing: dict[str, Any] | None = None
     try:
         crow = (
-            await session.execute(select(ClosingReview).order_by(desc(ClosingReview.created_at)).limit(1))
+            await session.execute(
+                select(ClosingReview).order_by(desc(ClosingReview.created_at)).limit(1)
+            )
         ).scalar_one_or_none()
         if crow is not None:
             latest_closing = {
@@ -699,7 +695,9 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
                 "created_at": crow.created_at.isoformat() if crow.created_at else None,
                 "intent_drafts": crow.intent_drafts or [],
                 "notes": crow.notes or [],
-                "plans": (crow.payload or {}).get("plans") if isinstance(crow.payload, dict) else [],
+                "plans": (crow.payload or {}).get("plans")
+                if isinstance(crow.payload, dict)
+                else [],
             }
     except Exception:  # noqa: BLE001
         latest_closing = None
@@ -708,7 +706,9 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     try:
         srow = (
             await session.execute(
-                select(PostmarketSettlement).order_by(desc(PostmarketSettlement.created_at)).limit(1)
+                select(PostmarketSettlement)
+                .order_by(desc(PostmarketSettlement.created_at))
+                .limit(1)
             )
         ).scalar_one_or_none()
         if srow is not None:
@@ -750,9 +750,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     try:
         rec_row = (
             await session.execute(
-                select(IntradayRecoveryRun)
-                .order_by(desc(IntradayRecoveryRun.created_at))
-                .limit(1)
+                select(IntradayRecoveryRun).order_by(desc(IntradayRecoveryRun.created_at)).limit(1)
             )
         ).scalar_one_or_none()
         if rec_row is not None:
@@ -807,9 +805,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
         orows = list(
             (
                 await session.execute(
-                    select(OvernightReview)
-                    .order_by(desc(OvernightReview.created_at))
-                    .limit(12)
+                    select(OvernightReview).order_by(desc(OvernightReview.created_at)).limit(12)
                 )
             )
             .scalars()
@@ -897,16 +893,16 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
             if str(intent.symbol or "").upper() not in open_syms:
                 continue
             hard_stop_intents.append(
-                    {
-                        "id": str(intent.id),
-                        "symbol": intent.symbol,
-                        "side": intent.side,
-                        "quantity": intent.quantity,
-                        "status": intent.status,
-                        "thesis": intent.thesis,
-                        "created_at": intent.created_at.isoformat() if intent.created_at else None,
-                    }
-                )
+                {
+                    "id": str(intent.id),
+                    "symbol": intent.symbol,
+                    "side": intent.side,
+                    "quantity": intent.quantity,
+                    "status": intent.status,
+                    "thesis": intent.thesis,
+                    "created_at": intent.created_at.isoformat() if intent.created_at else None,
+                }
+            )
         hard_stop_intents = hard_stop_intents[:8]
     except Exception:  # noqa: BLE001
         hard_stop_intents = []

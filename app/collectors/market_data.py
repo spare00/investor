@@ -289,11 +289,7 @@ class IbkrMarketDataProvider:
         # Brief settle for delayed ticks, then retry only names still missing a last.
         await asyncio.sleep(0.4)
         have = {str(t.contract.symbol).upper() for t in tickers if t.contract}
-        missing = [
-            c
-            for c in contracts
-            if str(getattr(c, "symbol", "") or "").upper() not in have
-        ]
+        missing = [c for c in contracts if str(getattr(c, "symbol", "") or "").upper() not in have]
         if missing:
             try:
                 extra = await asyncio.wait_for(
@@ -364,9 +360,7 @@ class IbkrMarketDataProvider:
                 stock_cls=stock_cls,
             )
         except LookupError:
-            logger.warning(
-                "ibkr_md_qualify_failed", symbol=symbol, con_id=con_id, venue=venue
-            )
+            logger.warning("ibkr_md_qualify_failed", symbol=symbol, con_id=con_id, venue=venue)
             return None
 
     @staticmethod

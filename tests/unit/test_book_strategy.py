@@ -38,7 +38,6 @@ from app.universe.book_strategy import (
     structure_allows_entry,
 )
 
-
 NOW = datetime(2026, 8, 18, 16, 0, tzinfo=UTC)
 
 
@@ -294,12 +293,8 @@ def test_risk_budget_equalizes_horizons_and_inverts_stop() -> None:
     assert risk_mult_for_horizon("scalp", firm_risk_pct=0.5) == 0.3
     assert risk_mult_for_horizon("day", firm_risk_pct=0.5) == 0.3
     assert risk_mult_for_horizon("short", firm_risk_pct=0.5) == 0.3
-    tight = notional_pct_for_risk(
-        horizon="scalp", entry=100.0, stop=99.0, max_position_pct=15.0
-    )
-    wide = notional_pct_for_risk(
-        horizon="short", entry=100.0, stop=97.0, max_position_pct=15.0
-    )
+    tight = notional_pct_for_risk(horizon="scalp", entry=100.0, stop=99.0, max_position_pct=15.0)
+    wide = notional_pct_for_risk(horizon="short", entry=100.0, stop=97.0, max_position_pct=15.0)
     # 0.15% / 1% = 15% raw, capped at scalp 8%. Wider 3% stop → 5% notional.
     assert tight == 8.0
     assert wide == 5.0
@@ -597,9 +592,7 @@ def test_reconcile_nameless_entry_drops_empty_scale_in() -> None:
 
 def test_portfolio_action_promotes_hold_when_partial_sell() -> None:
     assert (
-        portfolio_action_from_symbol_actions(
-            [{"action": "HOLD"}, {"action": "PARTIAL_SELL"}]
-        )
+        portfolio_action_from_symbol_actions([{"action": "HOLD"}, {"action": "PARTIAL_SELL"}])
         == PortfolioAction.REDUCE
     )
 
@@ -906,14 +899,16 @@ def test_ensure_playbook_exits_sells_sideways_loser() -> None:
         positions=[pos],
     )
     assert out.symbol_actions[0].action == SymbolAction.SELL
-    assert BookExit.SELL.value in {exit_action(
-        horizon="short",
-        trend=TrendState.SIDEWAYS,
-        momentum=MomentumState.STEADY,
-        liquidity=LiquidityState.NORMAL,
-        last=153,
-        entry=155,
-    ).value}
+    assert BookExit.SELL.value in {
+        exit_action(
+            horizon="short",
+            trend=TrendState.SIDEWAYS,
+            momentum=MomentumState.STEADY,
+            liquidity=LiquidityState.NORMAL,
+            last=153,
+            entry=155,
+        ).value
+    }
 
 
 def test_align_honors_short_sell() -> None:
@@ -966,4 +961,3 @@ def test_align_honors_short_sell() -> None:
         held_symbols=["AAPL"],
     )
     assert out.symbol_actions[0].action == SymbolAction.SELL
-

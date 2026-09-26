@@ -6,16 +6,14 @@ from pathlib import Path
 
 import pytest
 
+from app.agents.market_intelligence import MarketIntelligenceAgent
 from app.agents.prompts import (
     AGENT_PROMPT_KEYS,
     REQUIRED_PROMPT_SECTIONS,
     load_agent_prompt,
     load_shared,
 )
-from app.agents.base import BaseAgent
-from app.agents.market_intelligence import MarketIntelligenceAgent
 from app.services.llm import FakeLLMProvider, StubLLMClient
-
 
 PROMPTS = Path(__file__).resolve().parents[2] / "prompts"
 
@@ -50,7 +48,9 @@ def test_loaded_prompt_includes_common_rules_and_hash(agent_key: str) -> None:
     assert "Data use" in loaded.common_rules or "provided input" in loaded.common_rules.lower()
     assert "Broker" in loaded.system_prompt or "broker" in loaded.system_prompt
     assert "JSON" in loaded.system_prompt
-    assert "never call Broker" in loaded.system_prompt.lower() or "Broker API" in loaded.system_prompt
+    assert (
+        "never call Broker" in loaded.system_prompt.lower() or "Broker API" in loaded.system_prompt
+    )
 
 
 def test_fake_llm_alias() -> None:

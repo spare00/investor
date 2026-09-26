@@ -116,13 +116,20 @@ def compute_entry_reason_expectancy(trades: list[ClosedTrade]) -> dict[str, Any]
         for t in trades
         if t.entry_timing or t.entry_source or t.exit_reason or t.mfe_pct is not None
     ]
-    by_reason = {reason: gate_expectancy([t for t in trades if _matches_reason(t, reason)]) for reason in ENTRY_REASONS}
+    by_reason = {
+        reason: gate_expectancy([t for t in trades if _matches_reason(t, reason)])
+        for reason in ENTRY_REASONS
+    }
     cohorts = {
         COHORT_INJECTED_SIDEWAYS: gate_expectancy(
             [t for t in trades if _in_cohort(t, COHORT_INJECTED_SIDEWAYS)]
         ),
-        COHORT_SHORT_BOUNCE: gate_expectancy([t for t in trades if _in_cohort(t, COHORT_SHORT_BOUNCE)]),
-        COHORT_SCALP_FLATTEN: gate_expectancy([t for t in trades if _in_cohort(t, COHORT_SCALP_FLATTEN)]),
+        COHORT_SHORT_BOUNCE: gate_expectancy(
+            [t for t in trades if _in_cohort(t, COHORT_SHORT_BOUNCE)]
+        ),
+        COHORT_SCALP_FLATTEN: gate_expectancy(
+            [t for t in trades if _in_cohort(t, COHORT_SCALP_FLATTEN)]
+        ),
     }
     untagged = sum(
         1

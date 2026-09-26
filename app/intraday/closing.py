@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -14,7 +15,6 @@ from app.intraday.modes import ModeCapabilities, resolve_mode
 from app.models import ClosingReview, OvernightReview, PositionLifecycle
 from app.workflow.closing import ClosingPolicyEngine
 from app.workflow.states import ClosingPolicy
-from sqlalchemy import select
 
 
 class ClosingService:
@@ -87,7 +87,11 @@ class ClosingService:
                 bypass_cooldown=True,
                 payload={"venue": self.venue.value},
             )
-            notes.append("new_entries_blocked" if not self.settings.allow_new_positions_in_closing_window else "entries_allowed")
+            notes.append(
+                "new_entries_blocked"
+                if not self.settings.allow_new_positions_in_closing_window
+                else "entries_allowed"
+            )
             if self.settings.cancel_entry_orders_at_closing_window:
                 notes.append("entry_orders_should_cancel")
 
@@ -131,13 +135,17 @@ class ClosingService:
             from app.models import OrderIntent as _OrderIntent
 
             prior = (
-                await self.session.execute(
-                    select(_OrderIntent).where(
-                        _OrderIntent.symbol == lc.symbol,
-                        _OrderIntent.status == _IntentStatus.CREATED.value,
+                (
+                    await self.session.execute(
+                        select(_OrderIntent).where(
+                            _OrderIntent.symbol == lc.symbol,
+                            _OrderIntent.status == _IntentStatus.CREATED.value,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if prior is not None and str(prior.thesis or "").startswith("closing:"):
                 draft["skipped"] = "already_created"
                 draft["intent_id"] = str(prior.id)
@@ -180,9 +188,10 @@ class ClosingService:
             submitted = await self._submit_close_intents(lifecycles, decision.plans)
             notes.append(f"force_close_orders_submitted={submitted}")
             if submitted:
+                from uuid import UUID as _UUID
+
                 from app.brokers.models import IntentStatus as _IntentStatus
                 from app.models import OrderIntent as _OrderIntent
-                from uuid import UUID as _UUID
 
                 for raw_id in intent_ids:
                     try:
@@ -240,9 +249,7 @@ class ClosingService:
             return None
         is_short = float(lc.quantity or 0) < 0
         if action == "close":
-            intent_type = (
-                IntentType.CLOSE_SHORT.value if is_short else IntentType.CLOSE_LONG.value
-            )
+            intent_type = IntentType.CLOSE_SHORT.value if is_short else IntentType.CLOSE_LONG.value
         else:
             intent_type = (
                 IntentType.REDUCE_SHORT.value if is_short else IntentType.REDUCE_LONG.value
@@ -321,9 +328,7 @@ class ClosingService:
         )
         return len(orders)
 
-    async def _horizons_for_lifecycles(
-        self, lifecycles: list[PositionLifecycle]
-    ) -> dict[str, str]:
+    async def _horizons_for_lifecycles(self, lifecycles: list[PositionLifecycle]) -> dict[str, str]:
         """Prefer lifecycle exit_policy.horizon; fall back to watchlist."""
         from app.models import WatchlistSymbol
 
@@ -341,10 +346,14 @@ class ClosingService:
                 need_watch.add(sym)
         if need_watch:
             rows = (
-                await self.session.execute(
-                    select(WatchlistSymbol).where(WatchlistSymbol.symbol.in_(need_watch))
+                (
+                    await self.session.execute(
+                        select(WatchlistSymbol).where(WatchlistSymbol.symbol.in_(need_watch))
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for r in rows:
                 out.setdefault(r.symbol.upper(), str(r.horizon))
         return out
@@ -382,7 +391,9 @@ class ClosingService:
                     event_strict = False
             if not lc.overnight_allowed or hz in {"scalp", "day"}:
                 status = "CLOSE_BEFORE_MARKET_CLOSE"
-                reasons.append("overnight_not_allowed" if not lc.overnight_allowed else f"horizon_{hz}")
+                reasons.append(
+                    "overnight_not_allowed" if not lc.overnight_allowed else f"horizon_{hz}"
+                )
             # Short book: overnight ok in quiet tape, but events/holidays → flatten preference.
             # Medium book: review/reduce rather than automatic flatten.
             if earnings or economic_event:
@@ -422,6 +433,8 @@ class ClosingService:
                 payload={},
             )
             self.session.add(row)
-            results.append({"symbol": lc.symbol, "status": status, "reasons": reasons, "valid_for": valid_for})
+            results.append(
+                {"symbol": lc.symbol, "status": status, "reasons": reasons, "valid_for": valid_for}
+            )
         await self.session.flush()
         return {"reviews": results}

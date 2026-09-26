@@ -66,7 +66,9 @@ def load_agent_prompt(agent_key: str, *, filename: str = "system_v1.md") -> Load
         path = legacy
         body = _read(legacy)
     else:
-        raise FileNotFoundError(f"No prompt file for agent {agent_key}: tried {primary} and {legacy}")
+        raise FileNotFoundError(
+            f"No prompt file for agent {agent_key}: tried {primary} and {legacy}"
+        )
 
     rules, contract = load_shared()
     version = extract_prompt_version(body)

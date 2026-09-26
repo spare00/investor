@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.agents.roles import ROLES, role_for, roles_snapshot
 from app.agents.quant_strategist import QuantStrategistAgent
 from app.agents.risk_manager import RiskManagerAgent
+from app.agents.roles import ROLES, role_for, roles_snapshot
 from app.core.config import Settings
 from app.schemas.common import AgentName
 from app.schemas.quant_strategist import BarSnapshot, QuantStrategistInput
@@ -122,7 +122,11 @@ async def test_local_pipeline_quant_and_risk_are_python() -> None:
 
     from app.agents import AgentPipeline
     from app.services.collection import CollectionBundle
-    from app.services.normalize import NormalizedMacroSnapshot, NormalizedMarketSnapshot, NormalizedNews
+    from app.services.normalize import (
+        NormalizedMacroSnapshot,
+        NormalizedMarketSnapshot,
+        NormalizedNews,
+    )
 
     settings = Settings(llm_runtime="local", llm_api_key=None)
     stub = StubLLMClient(payload={})

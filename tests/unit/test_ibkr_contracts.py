@@ -9,7 +9,9 @@ from app.brokers.ibkr_contracts import cache_contract, clear_contract_cache, con
 
 def test_cache_and_lookup_by_con_id() -> None:
     clear_contract_cache()
-    contract = SimpleNamespace(conId=265598, symbol="AAPL", currency="USD", primaryExchange="NASDAQ")
+    contract = SimpleNamespace(
+        conId=265598, symbol="AAPL", currency="USD", primaryExchange="NASDAQ"
+    )
     cache_contract(contract)
     assert contract_from_con_id(265598) is contract
     clear_contract_cache()

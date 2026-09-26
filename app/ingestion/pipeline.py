@@ -18,7 +18,6 @@ from app.canonical.models import (
     CanonicalSecFiling,
     ConflictState,
     FreshnessState,
-    PremarketAvailability,
 )
 from app.collectors.base import RawMacroSnapshot, RawMarketQuote, RawNewsItem
 from app.context_builders.builders import (
@@ -32,7 +31,6 @@ from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.data_quality.news_dedup import cluster_news
 from app.data_quality.service import (
-    compare_quotes,
     freshness_state_for_quote,
     score_quality,
     session_phase_now,
@@ -47,12 +45,11 @@ from app.providers.registry import (
     resolve_news_provider,
     resolve_sec_provider,
 )
-from app.services.collection import CollectionBundle, DataCollectionService
+from app.services.collection import CollectionBundle
 from app.services.normalize import (
     normalize_macro,
     normalize_market_quote,
     normalize_news_item,
-    spread_bps,
 )
 
 logger = get_logger(__name__)
@@ -161,17 +158,19 @@ class DataCollectionPipeline:
         metas: list[dict[str, Any]] = []
 
         # Market
-        market = resolve_market_provider(self.settings) if not self.fixture_mode else resolve_market_provider(
-            # force fixture by temporarily treating as disabled path
-            self.settings
+        market = (
+            resolve_market_provider(self.settings)
+            if not self.fixture_mode
+            else resolve_market_provider(
+                # force fixture by temporarily treating as disabled path
+                self.settings
+            )
         )
         if self.fixture_mode:
             from app.providers.registry import FixtureMarketDataProvider
 
             market = FixtureMarketDataProvider(allow_offline=True)
-        quotes, meta_q = await market.fetch_quotes(
-            universe, settings=self.settings, venue=venue
-        )
+        quotes, meta_q = await market.fetch_quotes(universe, settings=self.settings, venue=venue)
         metas.append(meta_q.to_dict())
         bars, meta_b = await market.fetch_daily_bars(
             universe[:8], settings=self.settings, venue=venue
@@ -188,7 +187,9 @@ class DataCollectionPipeline:
             from app.providers.registry import FixtureNewsProvider
 
             news_p = FixtureNewsProvider()
-        news_raw, meta_n = await news_p.fetch_news(symbols=universe, limit=50, settings=self.settings)
+        news_raw, meta_n = await news_p.fetch_news(
+            symbols=universe, limit=50, settings=self.settings
+        )
         metas.append(meta_n.to_dict())
         news, clusters = cluster_news(news_raw)
 
@@ -215,7 +216,9 @@ class DataCollectionPipeline:
                 from app.providers.registry import FixtureSecProvider
 
                 sec_p = FixtureSecProvider()
-            filings, meta_s = await sec_p.fetch_filings(symbols=universe[:5], settings=self.settings)
+            filings, meta_s = await sec_p.fetch_filings(
+                symbols=universe[:5], settings=self.settings
+            )
         metas.append(meta_s.to_dict())
 
         # Macro
@@ -234,7 +237,9 @@ class DataCollectionPipeline:
         stale_symbols: list[str] = []
         for q in quotes:
             ok, issues = validate_quote(q)
-            fres = freshness_state_for_quote(q.as_of, now=started, settings=self.settings, session_phase=phase)
+            fres = freshness_state_for_quote(
+                q.as_of, now=started, settings=self.settings, session_phase=phase
+            )
             q.freshness = fres
             q.quality = score_quality(
                 freshness=fres,
@@ -266,7 +271,9 @@ class DataCollectionPipeline:
                             symbol_or_key=q.symbol,
                             state=ConflictState.SINGLE_SOURCE_ONLY,
                             primary_value=q.last,
-                            provider_names=[q.provenance.provider_name if q.provenance else "unknown"],
+                            provider_names=[
+                                q.provenance.provider_name if q.provenance else "unknown"
+                            ],
                         )
                     )
 
@@ -315,7 +322,9 @@ class DataCollectionPipeline:
         mi = MarketIntelligenceContextBuilder(self.settings).build(
             news=news, filings=filings, conflicts=conflicts, cutoff=cutoff
         )
-        macro_ctx = MacroContextBuilder().build(macro=macro_dict, economic_events=economic, cutoff=cutoff)
+        macro_ctx = MacroContextBuilder().build(
+            macro=macro_dict, economic_events=economic, cutoff=cutoff
+        )
         quant_ctx = QuantContextBuilder().build(
             snapshots=[
                 CanonicalMarketSnapshot(
@@ -326,7 +335,11 @@ class DataCollectionPipeline:
                     indicators={
                         "spread_bps": q.spread_bps,
                         "gap_pct": next(
-                            (p.gap_from_previous_close_pct for p in premarket if p.symbol == q.symbol),
+                            (
+                                p.gap_from_previous_close_pct
+                                for p in premarket
+                                if p.symbol == q.symbol
+                            ),
                             None,
                         ),
                     },
@@ -370,7 +383,9 @@ class DataCollectionPipeline:
             "overall": sum(qualities) / len(qualities) if qualities else 0.0,
             "warning_threshold": self.settings.data_quality_warning_threshold,
             "hard_fail_threshold": hard,
-            "components_sample": quotes[0].quality.to_dict() if quotes and quotes[0].quality else {},
+            "components_sample": quotes[0].quality.to_dict()
+            if quotes and quotes[0].quality
+            else {},
         }
         result.legacy_bundle = legacy
         if paper_relaxed_data_gates(self.settings) and quotes:
@@ -381,8 +396,10 @@ class DataCollectionPipeline:
             result.fail_closed_reasons = reasons or (
                 list(legacy.errors) if legacy and legacy.fail_closed else []
             )
-        result.status = "failed" if result.fail_closed and "providers_failed" in ",".join(reasons) else (
-            "completed_with_warnings" if result.fail_closed else "completed"
+        result.status = (
+            "failed"
+            if result.fail_closed and "providers_failed" in ",".join(reasons)
+            else ("completed_with_warnings" if result.fail_closed else "completed")
         )
         if result.fail_closed and not reasons and legacy:
             result.status = "completed_fail_closed"
@@ -408,7 +425,9 @@ class DataCollectionPipeline:
             try:
                 await repo.add(item)
             except Exception:  # noqa: BLE001
-                logger.exception("market_snapshot_persist_failed", symbol=getattr(item, "symbol", None))
+                logger.exception(
+                    "market_snapshot_persist_failed", symbol=getattr(item, "symbol", None)
+                )
 
     async def _to_legacy_bundle(
         self,
@@ -437,7 +456,10 @@ class DataCollectionPipeline:
                 url=n.source_url_reference,
                 symbols=n.symbols,
                 category=n.categories[0] if n.categories else None,
-                raw_payload={"canonical_id": str(n.id), "provenance": n.provenance.model_dump(mode="json") if n.provenance else {}},
+                raw_payload={
+                    "canonical_id": str(n.id),
+                    "provenance": n.provenance.model_dump(mode="json") if n.provenance else {},
+                },
             )
             norm_news.append(normalize_news_item(raw, collected_at=now, now=now, seen_hashes=seen))
 
@@ -486,9 +508,7 @@ class DataCollectionPipeline:
         from app.services.normalize import aggregate_data_quality
         from app.services.universe import evaluate_symbol_eligibility
 
-        eligibility = [
-            evaluate_symbol_eligibility(m, settings=self.settings) for m in markets
-        ]
+        eligibility = [evaluate_symbol_eligibility(m, settings=self.settings) for m in markets]
         bundle = CollectionBundle(
             workflow_id=workflow_id,
             collected_at=now,

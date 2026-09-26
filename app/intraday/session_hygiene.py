@@ -60,9 +60,7 @@ async def fold_session_residue(
     open_lcs = await open_lifecycles(session)
     held = {str(lc.symbol).upper() for lc in open_lcs if lc.symbol}
     review_hold = {
-        str(lc.symbol).upper()
-        for lc in open_lcs
-        if lc.symbol and not flatten_on_max_holding(lc)
+        str(lc.symbol).upper() for lc in open_lcs if lc.symbol and not flatten_on_max_holding(lc)
     }
     out = {"events": 0, "intents": 0, "alerts": 0}
 
@@ -87,8 +85,8 @@ async def fold_session_residue(
             expires = expires.replace(tzinfo=UTC)
         expired = expires is not None and expires <= now
         names = {str(s).upper() for s in (ev.symbols or []) if s}
-        monitor_done = ev.event_type in MONITOR_EXECUTED_EVENT_TYPES and bool(names) and not (
-            names & held
+        monitor_done = (
+            ev.event_type in MONITOR_EXECUTED_EVENT_TYPES and bool(names) and not (names & held)
         )
         session_marker = ev.event_type in _SESSION_MARKER_EVENTS and not keep_session_markers
         if not (expired or monitor_done or session_marker):
@@ -118,11 +116,7 @@ async def fold_session_residue(
             out["events"] += 1
 
     intents = list(
-        (
-            await session.execute(
-                select(OrderIntent).where(OrderIntent.status == "CREATED")
-            )
-        )
+        (await session.execute(select(OrderIntent).where(OrderIntent.status == "CREATED")))
         .scalars()
         .all()
     )
@@ -145,9 +139,7 @@ async def fold_session_residue(
         intent.status = "EXPIRED"
         out["intents"] += 1
 
-    out["alerts"] = await _fold_stale_alerts(
-        session, held=held, session_date=session_date, now=now
-    )
+    out["alerts"] = await _fold_stale_alerts(session, held=held, session_date=session_date, now=now)
     if any(out.values()):
         await session.flush()
         logger.info("session_residue_folded", **out)
@@ -164,7 +156,9 @@ async def _fold_stale_alerts(
     rows = list(
         (
             await session.execute(
-                select(AlertRecordModel).where(AlertRecordModel.status.in_(["active", "acknowledged"]))
+                select(AlertRecordModel).where(
+                    AlertRecordModel.status.in_(["active", "acknowledged"])
+                )
             )
         )
         .scalars()

@@ -6,10 +6,10 @@ import os
 
 import pytest
 
+from app.brokers.base import OrderStatus
 from app.brokers.errors import BrokerError
 from app.brokers.factory import get_broker
 from app.brokers.ibkr import IbkrBroker, _map_status
-from app.brokers.base import OrderStatus
 from app.core.config import Settings, clear_settings_cache
 
 

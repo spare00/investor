@@ -126,7 +126,9 @@ def desk_facts_from_summary(
     losers = [
         p
         for p in positions
-        if isinstance(p, dict) and _num(p.get("unrealized_pnl")) is not None and _num(p.get("unrealized_pnl")) < 0
+        if isinstance(p, dict)
+        and _num(p.get("unrealized_pnl")) is not None
+        and _num(p.get("unrealized_pnl")) < 0
     ]
     losers.sort(key=lambda p: _num(p.get("unrealized_pnl")) or 0)
     worst = str((losers[0] or {}).get("symbol") or "") if losers else ""
@@ -210,7 +212,9 @@ def role_thoughts_from_facts(facts: dict[str, Any] | None) -> dict[str, str]:
     elif rec in {"NO_TRADE", "WAIT"} and action in _BUYISH:
         out["devils_advocate"] = f"난 {rec}인데 왜 또 사자고 해."
     elif _num(devil.get("challenge")) is not None and (_num(devil.get("challenge")) or 0) >= 0.55:
-        out["devils_advocate"] = _clip(devil.get("why") or f"반론 {(_num(devil.get('challenge')) or 0):.2f}.", 48)
+        out["devils_advocate"] = _clip(
+            devil.get("why") or f"반론 {(_num(devil.get('challenge')) or 0):.2f}.", 48
+        )
     elif devil.get("prefer_no_trade"):
         out["devils_advocate"] = "오늘은 안 사는 게 맞아."
 
@@ -225,7 +229,9 @@ def role_thoughts_from_facts(facts: dict[str, Any] | None) -> dict[str, str]:
     elif action in _BUYISH and pnl is not None and pnl < 0:
         out["risk_manager"] = "승인했어도 손실이 계속이야."
     elif verdict:
-        out["risk_manager"] = f"판결 {verdict} · 현금 {_pct(cash, False) if cash is not None else '?'}."
+        out["risk_manager"] = (
+            f"판결 {verdict} · 현금 {_pct(cash, False) if cash is not None else '?'}."
+        )
 
     macro = agents.get("macro_strategist") or {}
     mreg = str(macro.get("regime") or regime)
@@ -736,8 +742,12 @@ def dialogue_threads(
         used.add(sym)
         return True
 
-    blocked = _uniq_syms(list(clips.get("blocked") or []) + list(week.get("blocked") or []), limit=2)
-    missed = _uniq_syms(list(clips.get("missed") or []) + list(week.get("suggested") or []), limit=6)
+    blocked = _uniq_syms(
+        list(clips.get("blocked") or []) + list(week.get("blocked") or []), limit=2
+    )
+    missed = _uniq_syms(
+        list(clips.get("missed") or []) + list(week.get("suggested") or []), limit=6
+    )
     for tick in blocked:
         if not _claim(tick):
             continue
@@ -803,11 +813,15 @@ def dialogue_threads(
                 topic="week",
                 tick="",
                 who="macro_strategist",
-                line="주말이야. 한 주 리뷰하자." if book.get("camp") else f"한 주는 {(week.get('regimes') or ['장'])[0]}이었어.",
+                line="주말이야. 한 주 리뷰하자."
+                if book.get("camp")
+                else f"한 주는 {(week.get('regimes') or ['장'])[0]}이었어.",
                 reply_who="cio",
                 reply=reply,
                 close_who="universe_manager",
-                close="장은 쉬니까 워치만 다시 보자." if book.get("camp") else "워치 다시 맞춰보자.",
+                close="장은 쉬니까 워치만 다시 보자."
+                if book.get("camp")
+                else "워치 다시 맞춰보자.",
             )
         )
     for tick in missed:
@@ -1000,8 +1014,12 @@ def _desk_prompt(facts: dict[str, Any]) -> str:
         f"why={clips.get('why') or '-'}",
     ]
     if week:
-        wins = [(w.get("s"), w.get("pnl")) for w in (week.get("winners") or []) if isinstance(w, dict)]
-        losses = [(w.get("s"), w.get("pnl")) for w in (week.get("losers") or []) if isinstance(w, dict)]
+        wins = [
+            (w.get("s"), w.get("pnl")) for w in (week.get("winners") or []) if isinstance(w, dict)
+        ]
+        losses = [
+            (w.get("s"), w.get("pnl")) for w in (week.get("losers") or []) if isinstance(w, dict)
+        ]
         bits.append(
             f"Week pnl={week.get('pnl')} closes={week.get('n_closes')} "
             f"bought={week.get('bought') or []} sold={week.get('sold') or []} "

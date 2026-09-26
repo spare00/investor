@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Awaitable, Callable, TypeVar
+from typing import Any
 from uuid import uuid4
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
-T = TypeVar("T")
 
 
 class ProviderStatus(StrEnum):
@@ -52,7 +52,9 @@ class ProviderRequestMeta:
             "request_completed_at": self.request_completed_at.isoformat()
             if self.request_completed_at
             else None,
-            "source_timestamp": self.source_timestamp.isoformat() if self.source_timestamp else None,
+            "source_timestamp": self.source_timestamp.isoformat()
+            if self.source_timestamp
+            else None,
             "collection_timestamp": self.collection_timestamp.isoformat()
             if self.collection_timestamp
             else None,
@@ -154,7 +156,7 @@ class ProviderCapabilities:
         }
 
 
-async def run_with_retry(
+async def run_with_retry[T](
     *,
     provider_name: str,
     provider_version: str,

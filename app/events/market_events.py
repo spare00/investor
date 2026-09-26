@@ -84,7 +84,9 @@ def build_market_events(
             _add(
                 {
                     "event_id": str(uuid4()),
-                    "event_type": "FED_EVENT" if "fed" in e.event_name.lower() else "ECONOMIC_RELEASE",
+                    "event_type": "FED_EVENT"
+                    if "fed" in e.event_name.lower()
+                    else "ECONOMIC_RELEASE",
                     "importance": "high",
                     "detected_at": now.isoformat(),
                     "effective_at": (e.released_at or e.scheduled_at).isoformat(),
@@ -101,7 +103,11 @@ def build_market_events(
 
     for p in premarket:
         gap = p.gap_from_previous_close_pct
-        if gap is not None and abs(gap) >= 1.5 and p.availability == PremarketAvailability.AVAILABLE:
+        if (
+            gap is not None
+            and abs(gap) >= 1.5
+            and p.availability == PremarketAvailability.AVAILABLE
+        ):
             _add(
                 {
                     "event_id": str(uuid4()),

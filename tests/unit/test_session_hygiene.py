@@ -42,8 +42,12 @@ def _reset() -> None:
 def test_committee_only_during_regular() -> None:
     assert committee_allowed_for_phase("REGULAR", in_force_close=False, in_closing=False) is True
     assert committee_allowed_for_phase("REGULAR", in_force_close=True, in_closing=False) is False
-    assert committee_allowed_for_phase("AFTER_HOURS", in_force_close=False, in_closing=False) is False
-    assert committee_allowed_for_phase("POSTMARKET", in_force_close=False, in_closing=False) is False
+    assert (
+        committee_allowed_for_phase("AFTER_HOURS", in_force_close=False, in_closing=False) is False
+    )
+    assert (
+        committee_allowed_for_phase("POSTMARKET", in_force_close=False, in_closing=False) is False
+    )
 
 
 @pytest.mark.asyncio
@@ -114,9 +118,7 @@ async def test_fold_expires_orphan_hard_stop_and_cba_event(session: AsyncSession
         )
     )
     await session.flush()
-    out = await fold_session_residue(
-        session, now=now, phase="REGULAR", session_date="2026-08-21"
-    )
+    out = await fold_session_residue(session, now=now, phase="REGULAR", session_date="2026-08-21")
     assert out["events"] >= 2
     assert out["intents"] == 1
     assert out["alerts"] == 1
@@ -182,14 +184,15 @@ async def test_fold_expires_overnight_max_holding_intents(session: AsyncSession)
         )
     )
     await session.flush()
-    out = await fold_session_residue(
-        session, now=now, phase="REGULAR", session_date="2026-08-24"
-    )
+    out = await fold_session_residue(session, now=now, phase="REGULAR", session_date="2026-08-24")
     assert out["intents"] == 1
     assert out["events"] >= 1
     intent = (await session.execute(select(OrderIntent))).scalar_one()
     assert intent.status == "EXPIRED"
-    evs = {e.deduplication_key: e.status for e in (await session.execute(select(IntradayEvent))).scalars()}
+    evs = {
+        e.deduplication_key: e.status
+        for e in (await session.execute(select(IntradayEvent))).scalars()
+    }
     assert evs["hold:bhp:old"] == "PROCESSED"
     assert evs["hold:bhp:new"] == "NEW"
 

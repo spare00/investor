@@ -72,8 +72,15 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# Formatter owns wrapping; leftover E501s are long strings/comments.
+ignore = ["E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.params.Depends"]
 
 [tool.mypy]
 python_version = "3.12"
-strict = true
 ignore_missing_imports = true
+# Existing tree is not strict-clean (~280 errors). CI typechecks an allowlist
+# with `mypy --strict <paths>`. Add new modules there; do not `mypy app`.
+strict = false

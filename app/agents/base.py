@@ -6,15 +6,15 @@ import json
 import time
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
-from typing import Any, Generic, TypeVar
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
+from app.agents.activity import mark_agent_finished, mark_agent_started
 from app.agents.llm_sanitize import sanitize_for_model, schema_enum_hint
 from app.agents.prompts import LoadedPrompt, load_agent_prompt
-from app.agents.activity import mark_agent_finished, mark_agent_started
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.schemas.common import AgentName, TraceMetadata
@@ -22,15 +22,12 @@ from app.services.llm import LLMClient, LLMError, get_llm_client
 
 logger = get_logger(__name__)
 
-InputT = TypeVar("InputT", bound=BaseModel)
-OutputT = TypeVar("OutputT", bound=BaseModel)
-
 
 class AgentExecutionError(Exception):
     """Raised when an agent cannot produce a validated output."""
 
 
-class BaseAgent(ABC, Generic[InputT, OutputT]):
+class BaseAgent[InputT: BaseModel, OutputT: BaseModel](ABC):
     name: AgentName
     agent_version: str = "0.1.0"
     prompt_version: str = "1.0.0"
@@ -113,9 +110,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
             mark_agent_finished(self.name.value, outcome="failed", error=str(exc))
             raise AgentExecutionError(f"{self.name.value} failed: {exc}") from exc
 
-    async def _run_validated(
-        self, payload: InputT, *, run_id: Any, started: float
-    ) -> OutputT:
+    async def _run_validated(self, payload: InputT, *, run_id: Any, started: float) -> OutputT:
         loaded = self.load_prompt()
         system_prompt = self.load_system_prompt()
         base_user_prompt = self.build_user_prompt(payload)

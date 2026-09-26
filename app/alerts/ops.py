@@ -13,9 +13,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-_RECON_ALERT_RESULTS = frozenset(
-    {"MATERIAL_DRIFT", "BROKER_UNAVAILABLE", "LOCAL_STATE_INVALID"}
-)
+_RECON_ALERT_RESULTS = frozenset({"MATERIAL_DRIFT", "BROKER_UNAVAILABLE", "LOCAL_STATE_INVALID"})
 
 
 async def emit_reconciliation_alert(
@@ -52,8 +50,7 @@ async def emit_reconciliation_alert(
     try:
         return await AlertService(session, settings=cfg).emit(
             code=f"recon.{result.lower()}",
-            message=f"Broker reconciliation {result}"
-            + (f" ({sync_type})" if sync_type else ""),
+            message=f"Broker reconciliation {result}" + (f" ({sync_type})" if sync_type else ""),
             severity=severity,
             source="reconciliation",
             context={"result": result, "sync_type": sync_type, "issues": (issues or [])[:20]},
@@ -187,7 +184,11 @@ async def emit_overnight_review_alert(
         r
         for r in reviews
         if str(r.get("status") or "")
-        in {"MANUAL_REVIEW_REQUIRED", "CLOSE_BEFORE_MARKET_CLOSE", "OVERNIGHT_APPROVED_WITH_REDUCTION"}
+        in {
+            "MANUAL_REVIEW_REQUIRED",
+            "CLOSE_BEFORE_MARKET_CLOSE",
+            "OVERNIGHT_APPROVED_WITH_REDUCTION",
+        }
     ]
     if not flagged:
         return None

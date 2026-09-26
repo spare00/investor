@@ -8,8 +8,9 @@ prefer total-return or adjusted series for relative performance metrics.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 from app.performance.returns import daily_returns, simple_return
 from app.performance.types import MetricResult, MetricStatus, metric_result

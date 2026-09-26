@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
@@ -14,7 +16,6 @@ from app.execution.position_manager import PositionManager
 from app.execution.reconciliation import BrokerBook, ReconciliationService
 from app.intraday.broker_updates import BrokerUpdateProcessor
 from app.models import Order, PortfolioSnapshot
-from uuid import uuid4
 
 
 @pytest_asyncio.fixture
@@ -35,7 +36,9 @@ async def test_sync_skips_unchanged_snapshot(session: AsyncSession) -> None:
     pm = PositionManager(session, settings=settings, broker=broker)
     first = await pm.sync_from_broker()
     assert first["snapshot_written"] is True
-    second = await pm.sync_from_broker(account=broker.account, positions=list(broker.positions.values()))
+    second = await pm.sync_from_broker(
+        account=broker.account, positions=list(broker.positions.values())
+    )
     assert second["snapshot_written"] is False
     snaps = list((await session.execute(select(PortfolioSnapshot))).scalars().all())
     assert len(snaps) == 1

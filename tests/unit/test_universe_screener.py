@@ -9,9 +9,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.core.config import Settings, clear_settings_cache
 from app.core.database import Base
-import app.models  # noqa: F401
 from app.models import MarketSnapshot
 from app.universe.screener import evaluate_liquidity, screen_candidates
 

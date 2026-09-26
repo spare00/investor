@@ -168,9 +168,7 @@ class LLMBudgetSnapshot:
             "month_aud_estimate": round(self.month_aud_estimate, 4),
             "month_aud_budget": self.month_aud_budget,
             "month_aud_remaining": (
-                None
-                if self.month_aud_remaining is None
-                else round(self.month_aud_remaining, 4)
+                None if self.month_aud_remaining is None else round(self.month_aud_remaining, 4)
             ),
             "month_blocked": self.month_blocked,
             "month_soft_warned": self.month_soft_warned,

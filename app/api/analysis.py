@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,9 @@ router = APIRouter(prefix="/workflow", tags=["workflow"])
 _ANALYSIS_IDEMPOTENCY: dict[str, dict[str, Any]] = {}
 
 
-def _analysis_payload(analysis: Any, collection: Any, *, broker_orders: bool = False) -> dict[str, Any]:
+def _analysis_payload(
+    analysis: Any, collection: Any, *, broker_orders: bool = False
+) -> dict[str, Any]:
     return {
         "workflow_id": str(analysis.workflow_id),
         "broker_orders_submitted": broker_orders,
@@ -93,7 +95,9 @@ async def _run_analysis(
     from app.execution.position_manager import PositionManager
 
     try:
-        portfolio, portfolio_note = await PositionManager(session, settings=settings).load_for_risk()
+        portfolio, portfolio_note = await PositionManager(
+            session, settings=settings
+        ).load_for_risk()
     except Exception as exc:  # noqa: BLE001
         logger.exception("analysis_portfolio_failed", workflow_id=str(workflow_id))
         raise HTTPException(status_code=503, detail=f"portfolio_sync_failed:{exc}") from exc

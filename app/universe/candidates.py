@@ -86,12 +86,40 @@ DEFAULT_CANDIDATE_POOL: tuple[str, ...] = DEFAULT_CANDIDATE_POOL_US
 # Theme tag → symbols to boost (must still be in candidate / seed to be addable).
 THEME_SYMBOLS: dict[str, tuple[str, ...]] = {
     "tech": (
-        "XLK", "SMH", "SOXX", "NVDA", "AMD", "AVGO", "AAPL", "MSFT",
-        "GOOGL", "META", "CRM", "ORCL", "NOW", "SNOW", "XRO",
+        "XLK",
+        "SMH",
+        "SOXX",
+        "NVDA",
+        "AMD",
+        "AVGO",
+        "AAPL",
+        "MSFT",
+        "GOOGL",
+        "META",
+        "CRM",
+        "ORCL",
+        "NOW",
+        "SNOW",
+        "XRO",
     ),
     "semiconductor": ("SMH", "SOXX", "NVDA", "AMD", "AVGO", "MU", "INTC"),
     "ai": ("NVDA", "MSFT", "GOOGL", "META", "PLTR", "AMD", "AVGO", "SMH", "CRWD", "XRO"),
-    "finance": ("XLF", "JPM", "GS", "V", "MA", "PYPL", "COIN", "WBC", "NAB", "ANZ", "MQG", "CBA", "QBE", "SUN"),
+    "finance": (
+        "XLF",
+        "JPM",
+        "GS",
+        "V",
+        "MA",
+        "PYPL",
+        "COIN",
+        "WBC",
+        "NAB",
+        "ANZ",
+        "MQG",
+        "CBA",
+        "QBE",
+        "SUN",
+    ),
     "energy": ("XLE", "XOM", "STO", "ORG", "WDS"),
     "biotech": ("XBI", "UNH", "CSL"),
     "consumer": ("COST", "WMT", "HD", "DIS", "NFLX", "UBER", "SHOP", "WES", "WOW", "COL"),
@@ -352,10 +380,7 @@ def ranked_membership_book(
     buckets = membership_by_sector(settings)
     if eligible is not None:
         allow = {s.upper() for s in eligible}
-        buckets = {
-            sector: [n for n in names if n in allow]
-            for sector, names in buckets.items()
-        }
+        buckets = {sector: [n for n in names if n in allow] for sector, names in buckets.items()}
     items = [(sector, names) for sector, names in buckets.items() if names]
     if not items:
         return book[:cap]
@@ -388,9 +413,7 @@ def rotating_working_set(
     now: datetime | None = None,
 ) -> list[str]:
     """Deterministic working set: holdings plus sector-rotated membership."""
-    return ranked_membership_book(
-        settings, holdings=holdings, limit=limit, now=now
-    )
+    return ranked_membership_book(settings, holdings=holdings, limit=limit, now=now)
 
 
 def addable_universe(

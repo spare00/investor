@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.ingestion.pipeline import DataCollectionPipeline
-from app.providers.base import get_breaker, reset_breakers
-from app.providers.registry import list_providers, resolve_market_provider, resolve_news_provider, resolve_sec_provider
+from app.providers.base import get_breaker
+from app.providers.registry import (
+    list_providers,
+)
 from app.workflow.lease import LeaseError, LeaseService
 
 router = APIRouter(prefix="/data", tags=["data"])
@@ -22,7 +23,10 @@ _LAST_RUNS: dict[str, dict[str, Any]] = {}
 
 @router.get("/providers")
 async def providers() -> dict[str, Any]:
-    return {"providers": list_providers(get_settings()), "enable_external_data": get_settings().enable_external_data}
+    return {
+        "providers": list_providers(get_settings()),
+        "enable_external_data": get_settings().enable_external_data,
+    }
 
 
 @router.get("/providers/health")
@@ -46,7 +50,10 @@ async def providers_health() -> dict[str, Any]:
 @router.get("/market/quotes")
 async def market_quotes(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     run = _LAST_RUNS.get("latest")
-    return {"quotes": [] if not run else run.get("quotes", []), "note": "from_last_collection_cache"}
+    return {
+        "quotes": [] if not run else run.get("quotes", []),
+        "note": "from_last_collection_cache",
+    }
 
 
 @router.get("/market/bars")
@@ -119,9 +126,7 @@ async def _collect(
     idempotency_key: str | None,
 ) -> dict[str, Any]:
     settings = get_settings()
-    use_fixture = (
-        bool(fixture) if fixture is not None else not settings.enable_external_data
-    )
+    use_fixture = bool(fixture) if fixture is not None else not settings.enable_external_data
     leases = LeaseService(session, settings)
     key = f"collect:{collection_type}:{idempotency_key or 'default'}"
     try:

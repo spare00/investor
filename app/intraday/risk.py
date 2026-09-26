@@ -50,7 +50,10 @@ class DynamicRiskRevalidator:
         if broker_drift:
             status = "TRADING_PAUSE_REQUIRED"
             reasons.append("broker_drift")
-        if quote_age_seconds is not None and quote_age_seconds > self.settings.latest_quote_max_age_seconds * 20:
+        if (
+            quote_age_seconds is not None
+            and quote_age_seconds > self.settings.latest_quote_max_age_seconds * 20
+        ):
             status = "TRADING_PAUSE_REQUIRED"
             reasons.append("data_stale")
         if daily_pnl_pct <= -self.settings.daily_max_loss_pct:
@@ -97,7 +100,11 @@ class DynamicRiskRevalidator:
         await self.session.flush()
 
         if status in {"EXIT_REQUIRED", "EMERGENCY_STOP_REQUIRED", "TRADING_PAUSE_REQUIRED"}:
-            critical = status in {"EXIT_REQUIRED", "EMERGENCY_STOP_REQUIRED", "TRADING_PAUSE_REQUIRED"}
+            critical = status in {
+                "EXIT_REQUIRED",
+                "EMERGENCY_STOP_REQUIRED",
+                "TRADING_PAUSE_REQUIRED",
+            }
             etype = "RISK_LIMIT_BREACH" if critical else "RISK_LIMIT_WARNING"
             await self.bus.publish(
                 event_type=etype,

@@ -9,10 +9,10 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.brokers.mock import MockBroker
 from app.brokers.base import OrderRequest, OrderSide, OrderStatus
 from app.brokers.errors import BrokerError
 from app.brokers.factory import get_broker
+from app.brokers.mock import MockBroker
 from app.brokers.models import (
     BrokerOrderRequest,
     InternalOrderState,
@@ -359,7 +359,7 @@ async def test_execution_e2e_intent_approve_submit(session: AsyncSession) -> Non
     assert result.status == PretradeStatus.REQUIRES_MANUAL_APPROVAL
     assert intent.status == "PENDING_APPROVAL"
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match="submit_not_allowed_from"):
         await svc.submit_intent(intent.id)
 
     await svc.approve_intent(intent.id)
@@ -481,7 +481,6 @@ def test_client_order_id_stable() -> None:
 
 @pytest.mark.asyncio
 async def test_approval_expiry(session: AsyncSession) -> None:
-    settings = _settings(order_approval_expiry_minutes=0)
     # Force expiry by setting expires_at in the past after validate
     svc = ExecutionService(session, settings=_settings(), controls=TradingControls())
     from app.models import OrderApproval, OrderIntent

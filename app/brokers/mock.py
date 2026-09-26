@@ -16,8 +16,6 @@ from app.brokers.models import (
     BrokerClock,
     BrokerEnvironment,
     BrokerHealth,
-    BrokerOrder,
-    BrokerOrderRequest,
     BrokerPosition,
     redact_account_id,
 )
@@ -364,9 +362,18 @@ class MockBroker:
             )
         return out
 
-    async def get_calendar(self, start: str | None = None, end: str | None = None) -> list[dict[str, object]]:
+    async def get_calendar(
+        self, start: str | None = None, end: str | None = None
+    ) -> list[dict[str, object]]:
         now = datetime.now(UTC).date()
-        return [{"date": now.isoformat(), "open": "09:30", "close": "16:00", "session_open": self.market_open}]
+        return [
+            {
+                "date": now.isoformat(),
+                "open": "09:30",
+                "close": "16:00",
+                "session_open": self.market_open,
+            }
+        ]
 
     async def get_activities(self) -> list[dict[str, object]]:
         return [

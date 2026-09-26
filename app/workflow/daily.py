@@ -95,7 +95,9 @@ class DailyWorkflowService:
         self.run_calendar_name = run_calendar_name(self.venue, self.settings)
         self.calendar = MarketCalendarService(self.settings, venue=self.venue)
         self.leases = LeaseService(session, self.settings)
-        self.revalidation = RevalidationService(session, settings=self.settings, calendar=self.calendar)
+        self.revalidation = RevalidationService(
+            session, settings=self.settings, calendar=self.calendar
+        )
         self.closing = ClosingPolicyEngine()
         self.owner = owner
 
@@ -129,7 +131,9 @@ class DailyWorkflowService:
             )
         ).scalar_one_or_none()
 
-    async def prepare(self, *, session_date: str | None = None, now: datetime | None = None) -> dict[str, Any]:
+    async def prepare(
+        self, *, session_date: str | None = None, now: datetime | None = None
+    ) -> dict[str, Any]:
         self._broker_guard()
         now = now or datetime.now(UTC)
         day = (
@@ -227,12 +231,8 @@ class DailyWorkflowService:
 
             llm = FakeLLMProvider({}) if fake_llm else get_llm_client(self.settings)
             use_fixtures = not bool(self.settings.enable_external_data)
-            if (
-                use_fixtures
-                and (
-                    self.settings.enable_broker_orders
-                    or self.settings.enable_automated_execution
-                )
+            if use_fixtures and (
+                self.settings.enable_broker_orders or self.settings.enable_automated_execution
             ):
                 raise DailyWorkflowError("external_data_required_when_execution_armed")
             from app.execution.position_manager import PositionManager
@@ -308,8 +308,7 @@ class DailyWorkflowService:
                 workflow_id=run.id,
                 entry_universe=sorted(entry_universe),
                 watchlist_context=[
-                    {"symbol": s, "horizon": hz_map.get(s, "short")}
-                    for s in sorted(entry_universe)
+                    {"symbol": s, "horizon": hz_map.get(s, "short")} for s in sorted(entry_universe)
                 ],
                 book=book,
                 recent_lessons=await load_committee_lessons(self.session),
@@ -362,7 +361,9 @@ class DailyWorkflowService:
             )
             if data.fail_closed or collection.fail_closed:
                 # Force NO_TRADE path visibility without broker
-                meta["no_trade_reason"] = ",".join(data.fail_closed_reasons) or "collection_fail_closed"
+                meta["no_trade_reason"] = (
+                    ",".join(data.fail_closed_reasons) or "collection_fail_closed"
+                )
             run.metadata_json = meta
             run.analysis_workflow_run_id = analysis.workflow_id
             run.latest_decision_id = analysis.cio.decision_id
@@ -492,9 +493,7 @@ class DailyWorkflowService:
             )
         return {**self._run_dict(run), "revalidation": report.to_dict()}
 
-    async def _mark_reanalysis_incorporated(
-        self, run: DailyWorkflowRun, *, now: datetime
-    ) -> None:
+    async def _mark_reanalysis_incorporated(self, run: DailyWorkflowRun, *, now: datetime) -> None:
         meta = dict(run.metadata_json or {})
         events = list(meta.get("market_events") or [])
         changed = False
@@ -587,9 +586,7 @@ class DailyWorkflowService:
                 reason="analysis_failed_enter",
             )
         if run.current_state == DailyWorkflowState.PREOPEN_REVALIDATION.value:
-            await self.revalidate(
-                session_date=run.session_date, fake_llm=fake_llm, now=now
-            )
+            await self.revalidate(session_date=run.session_date, fake_llm=fake_llm, now=now)
         return await self._require_run(run.session_date)
 
     async def catch_up_to_intraday(
@@ -648,7 +645,11 @@ class DailyWorkflowService:
                 if gap_min < max(5, self.settings.min_reevaluation_gap_minutes):
                     return {
                         **self._run_dict(run),
-                        "catch_up": {"skipped": True, "reason": "catch_up_cooldown", "gap_min": gap_min},
+                        "catch_up": {
+                            "skipped": True,
+                            "reason": "catch_up_cooldown",
+                            "gap_min": gap_min,
+                        },
                     }
             except ValueError:
                 pass
@@ -663,9 +664,7 @@ class DailyWorkflowService:
             DailyWorkflowState.PREMARKET_ANALYSIS.value,
         }:
             try:
-                await self.run_analysis(
-                    session_date=run.session_date, fake_llm=fake_llm, now=now
-                )
+                await self.run_analysis(session_date=run.session_date, fake_llm=fake_llm, now=now)
                 steps.append("analysis")
                 run = await self._require_run(run.session_date)
             except DailyWorkflowError as exc:
@@ -732,9 +731,7 @@ class DailyWorkflowService:
             if self._jk("premarket_analysis") not in keys:
                 keys.append(self._jk("premarket_analysis"))
             keys.append(self._jk("preopen_revalidation"))
-        return await self._complete_planned_jobs(
-            session_date, keys, now=now, note="catch_up"
-        )
+        return await self._complete_planned_jobs(session_date, keys, now=now, note="catch_up")
 
     async def _complete_planned_jobs(
         self,
@@ -830,7 +827,9 @@ class DailyWorkflowService:
                         run,
                         now=now,
                         fake_llm=fake_llm,
-                        reason=str((catch.get("catch_up") or {}).get("reason") or "catch_up_incomplete"),
+                        reason=str(
+                            (catch.get("catch_up") or {}).get("reason") or "catch_up_incomplete"
+                        ),
                     )
             if run.current_state not in {
                 DailyWorkflowState.INTRADAY.value,
@@ -958,11 +957,7 @@ class DailyWorkflowService:
                 if mon_prices:
                     from app.market.paper_gates import paper_relaxed_data_gates
 
-                    reasons = [
-                        str(r)
-                        for r in (meta.get("data_fail_closed_reasons") or [])
-                        if r
-                    ]
+                    reasons = [str(r) for r in (meta.get("data_fail_closed_reasons") or []) if r]
                     if (
                         paper_relaxed_data_gates(self.settings)
                         and meta.get("data_fail_closed")
@@ -995,13 +990,9 @@ class DailyWorkflowService:
                     )
                 ]
                 cio_actionable = [
-                    r
-                    for r in actionable
-                    if (r.get("monitor") or {}).get("verdict") in cio_escalate
+                    r for r in actionable if (r.get("monitor") or {}).get("verdict") in cio_escalate
                 ]
-                pending = await intra.bus.list_pending_actionable(
-                    limit=40, venue=self.venue.value
-                )
+                pending = await intra.bus.list_pending_actionable(limit=40, venue=self.venue.value)
                 pending = [
                     e
                     for e in pending
@@ -1052,9 +1043,7 @@ class DailyWorkflowService:
                 ).run_closing(in_closing_window=False)
                 meta["leftover_intraday_flatten_at"] = now.isoformat()
                 meta["leftover_intraday_flatten"] = {
-                    "orders_submitted": int(
-                        leftover_flatten_result.get("orders_submitted") or 0
-                    ),
+                    "orders_submitted": int(leftover_flatten_result.get("orders_submitted") or 0),
                     "intent_ids": list(leftover_flatten_result.get("intent_ids") or []),
                     "notes": list(leftover_flatten_result.get("notes") or [])[:12],
                 }
@@ -1102,9 +1091,7 @@ class DailyWorkflowService:
                     .all()
                 ]
                 try:
-                    univ = UniverseService(
-                        self.session, settings=self.settings
-                    )
+                    univ = UniverseService(self.session, settings=self.settings)
                     horizons = await univ.horizon_by_symbol()
                     if not open_syms:
                         open_syms = await univ.collection_universe(
@@ -1119,14 +1106,8 @@ class DailyWorkflowService:
                     for s, h in (horizons or {}).items()
                     if is_active_strategy_horizon(h)
                 }
-                cadence_syms = [
-                    str(s).upper()
-                    for s in open_syms
-                    if str(s).upper() in cadence_map
-                ]
-                need_gap = global_reeval_gap_minutes(
-                    cadence_syms, cadence_map, self.settings
-                )
+                cadence_syms = [str(s).upper() for s in open_syms if str(s).upper() in cadence_map]
+                need_gap = global_reeval_gap_minutes(cadence_syms, cadence_map, self.settings)
                 if (
                     gap < need_gap
                     and effective_trigger == "interval"
@@ -1151,9 +1132,7 @@ class DailyWorkflowService:
         if status.in_force_close_window or status.in_closing_window:
             result = IntradayEvalResult.NO_CHANGE
             reason = "closing_window_limit_new_analysis"
-        elif run.intraday_reanalysis_count >= effective_max_intraday_reanalyses(
-            self.settings
-        ):
+        elif run.intraday_reanalysis_count >= effective_max_intraday_reanalyses(self.settings):
             # Risk escalations still reanalyze even at the soft cap.
             if effective_trigger == "risk_change":
                 result = IntradayEvalResult.REANALYZE
@@ -1182,7 +1161,10 @@ class DailyWorkflowService:
             result = IntradayEvalResult.NO_CHANGE
             reason = f"committee_skipped_phase:{status.phase}"
 
-        if result == IntradayEvalResult.REANALYZE and self.settings.enable_intraday_agent_reanalysis:
+        if (
+            result == IntradayEvalResult.REANALYZE
+            and self.settings.enable_intraday_agent_reanalysis
+        ):
             from uuid import UUID as _UUID
 
             from app.intraday.agents import IntradayAgentService
@@ -1328,9 +1310,7 @@ class DailyWorkflowService:
         )
         if not open_rows:
             return {"skipped": True, "reason": "flat"}
-        intra = IntradayService(
-            self.session, settings=self.settings, controls=self.controls
-        )
+        intra = IntradayService(self.session, settings=self.settings, controls=self.controls)
         monitor_rows = await intra.monitor_all(venue=self.venue.value)
         closing = await ClosingService(
             self.session, settings=self.settings, venue=self.venue.value
@@ -1558,9 +1538,7 @@ class DailyWorkflowService:
 
         # Settlement + light performance eval (fail-soft; never block session complete).
         # Each step is time-bounded so IBKR/perf cannot pin the scheduler job.
-        prior_overnight = ((run.metadata_json or {}).get("closing") or {}).get(
-            "overnight_review"
-        )
+        prior_overnight = ((run.metadata_json or {}).get("closing") or {}).get("overnight_review")
         if isinstance(prior_overnight, dict) and prior_overnight.get("reviews") is not None:
             review["overnight_review"] = prior_overnight
             review["overnight_review_reused"] = True
@@ -1657,9 +1635,7 @@ class DailyWorkflowService:
                         review_ids.append(str(out["review_id"]))
                 return review_ids
 
-            review["posttrade_review_ids"] = await _await_postmarket_step(
-                "posttrade", _posttrade()
-            )
+            review["posttrade_review_ids"] = await _await_postmarket_step("posttrade", _posttrade())
         except TimeoutError as exc:
             review["posttrade_error"] = str(exc)[:240]
         except Exception as exc:  # noqa: BLE001
@@ -1781,9 +1757,7 @@ class DailyWorkflowService:
                 nonlocal pending_refreshed, recalc_id
                 out: dict[str, Any] = {}
                 if not pending_refreshed:
-                    await perf.refresh_pending_evaluations(
-                        eval_start, eval_end, venue=book
-                    )
+                    await perf.refresh_pending_evaluations(eval_start, eval_end, venue=book)
                     pending_refreshed = True
                     out["pending_refreshed"] = True
                 if not recalc_id:
@@ -1808,9 +1782,7 @@ class DailyWorkflowService:
             except TimeoutError as exc:
                 timed_out = True
                 payload["error"] = (
-                    str(exc)[:240]
-                    if str(exc)
-                    else f"timeout:performance:{int(slice_timeout)}s"
+                    str(exc)[:240] if str(exc) else f"timeout:performance:{int(slice_timeout)}s"
                 )
                 remaining = max(remaining, 1)
                 break
@@ -1921,13 +1893,17 @@ class DailyWorkflowService:
         q = select(ScheduledJobRecord)
         if session_date:
             q = q.where(ScheduledJobRecord.session_date == session_date)
-        rows = list((await self.session.execute(q.order_by(ScheduledJobRecord.planned_at))).scalars())
+        rows = list(
+            (await self.session.execute(q.order_by(ScheduledJobRecord.planned_at))).scalars()
+        )
         return [
             {
                 "job_key": r.job_key,
                 "session_date": r.session_date,
                 "planned_at": (
-                    r.planned_at.replace(tzinfo=UTC) if r.planned_at.tzinfo is None else r.planned_at
+                    r.planned_at.replace(tzinfo=UTC)
+                    if r.planned_at.tzinfo is None
+                    else r.planned_at
                 ).isoformat(),
                 "status": r.status,
             }
@@ -2036,9 +2012,7 @@ class DailyWorkflowService:
             if open_syms:
                 plan_horizons = [hz_map[s] for s in open_syms if s in hz_map]
             else:
-                focus_syms = await univ.collection_universe(
-                    holdings=[], venue=self.venue.value
-                )
+                focus_syms = await univ.collection_universe(holdings=[], venue=self.venue.value)
                 plan_horizons = [hz_map[s] for s in focus_syms if s in hz_map]
             from app.universe.book_strategy import filter_strategy_horizons
 
@@ -2192,7 +2166,10 @@ class DailyWorkflowService:
 
     def _assert_not_blocked(self, run: DailyWorkflowRun) -> None:
         snap = self.controls.snapshot()
-        if snap.state.value == "emergency_stop" or run.current_state == DailyWorkflowState.EMERGENCY_STOP.value:
+        if (
+            snap.state.value == "emergency_stop"
+            or run.current_state == DailyWorkflowState.EMERGENCY_STOP.value
+        ):
             raise DailyWorkflowError("emergency_stop_active")
         if snap.state.value == "paused" or run.current_state == DailyWorkflowState.PAUSED.value:
             raise DailyWorkflowError("workflow_paused")

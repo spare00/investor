@@ -136,7 +136,11 @@ class PreTradeRiskResult:
 
     @property
     def veto_codes(self) -> list[str]:
-        return [c.code if isinstance(c.code, str) else c.code.value for c in self.checks if not c.passed and c.hard]
+        return [
+            c.code if isinstance(c.code, str) else c.code.value
+            for c in self.checks
+            if not c.passed and c.hard
+        ]
 
 
 class RiskEngine(Protocol):

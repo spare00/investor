@@ -22,15 +22,11 @@ from app.market.live_prices import (
 
 def test_requires_live_when_broker_orders_on() -> None:
     assert (
-        requires_live_market_prices(
-            Settings(enable_broker_orders=True, broker_provider="ibkr")
-        )
+        requires_live_market_prices(Settings(enable_broker_orders=True, broker_provider="ibkr"))
         is True
     )
     assert (
-        requires_live_market_prices(
-            Settings(enable_broker_orders=True, broker_provider="mock")
-        )
+        requires_live_market_prices(Settings(enable_broker_orders=True, broker_provider="mock"))
         is False
     )
     assert (
@@ -209,8 +205,6 @@ async def test_fetch_live_last_prices_forwards_con_ids() -> None:
         "app.collectors.market_data.get_market_data_provider",
         return_value=prov,
     ):
-        prices = await fetch_live_last_prices(
-            ["BHP"], settings=settings, con_ids={"BHP": 42}
-        )
+        prices = await fetch_live_last_prices(["BHP"], settings=settings, con_ids={"BHP": 42})
     assert prices == {"BHP": 41.25}
     assert prov.seen["con_ids"] == {"BHP": 42}

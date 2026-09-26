@@ -83,7 +83,13 @@ def build_committee_watch(
     last = recent[-1] if recent else None
     last_s = float(last["duration_s"]) if last and last.get("duration_s") is not None else None
     timeout_n = sum(1 for j in evals if _is_timeout(j))
-    done_n = len([j for j in evals if str(j.get("status") or "").lower() in {"completed", "failed", "skipped"}])
+    done_n = len(
+        [
+            j
+            for j in evals
+            if str(j.get("status") or "").lower() in {"completed", "failed", "skipped"}
+        ]
+    )
     headroom_pct: float | None = None
     if last_s is not None:
         headroom_pct = max(0.0, round((1.0 - last_s / cap) * 100.0, 1))

@@ -79,7 +79,9 @@ async def list_intents(session: AsyncSession = Depends(get_db_session)) -> dict[
 
 
 @router.get("/intents/{intent_id}")
-async def get_intent(intent_id: UUID, session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def get_intent(
+    intent_id: UUID, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
     row = await session.get(OrderIntent, intent_id)
     if row is None:
         raise HTTPException(status_code=404, detail="intent_not_found")
@@ -88,7 +90,13 @@ async def get_intent(intent_id: UUID, session: AsyncSession = Depends(get_db_ses
 
 @router.get("/approvals")
 async def list_approvals(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
-    rows = list((await session.execute(select(OrderApproval).order_by(OrderApproval.created_at.desc()).limit(100))).scalars())
+    rows = list(
+        (
+            await session.execute(
+                select(OrderApproval).order_by(OrderApproval.created_at.desc()).limit(100)
+            )
+        ).scalars()
+    )
     return {
         "approvals": [
             {
@@ -107,7 +115,11 @@ async def list_approvals(session: AsyncSession = Depends(get_db_session)) -> dic
 @router.get("/risk-checks")
 async def list_risk_checks(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     rows = list(
-        (await session.execute(select(PretradeRiskCheck).order_by(PretradeRiskCheck.created_at.desc()).limit(100))).scalars()
+        (
+            await session.execute(
+                select(PretradeRiskCheck).order_by(PretradeRiskCheck.created_at.desc()).limit(100)
+            )
+        ).scalars()
     )
     return {
         "risk_checks": [
@@ -129,7 +141,9 @@ async def list_reconciliation(session: AsyncSession = Depends(get_db_session)) -
     rows = list(
         (
             await session.execute(
-                select(BrokerReconciliationRun).order_by(BrokerReconciliationRun.created_at.desc()).limit(20)
+                select(BrokerReconciliationRun)
+                .order_by(BrokerReconciliationRun.created_at.desc())
+                .limit(20)
             )
         )
         .scalars()
@@ -250,7 +264,9 @@ async def submit_intent(
 
 
 @router.post("/orders/{order_id}/cancel")
-async def cancel_order(order_id: str, session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def cancel_order(
+    order_id: str, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
     from app.brokers.factory import get_broker
 
     settings = get_settings()

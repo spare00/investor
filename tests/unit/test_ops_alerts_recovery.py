@@ -7,6 +7,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.alerts.base import AlertSeverity
 from app.alerts.ops import (
     emit_emergency_stop_alert,
@@ -16,7 +17,6 @@ from app.alerts.ops import (
 from app.brokers.mock import MockBroker
 from app.core.config import Settings, TradingMode, clear_settings_cache
 from app.core.database import Base
-import app.models  # noqa: F401
 from app.execution.ops_persistence import persist_trading_controls
 from app.execution.safety_controls import TradingControls, trading_controls
 from app.intraday.recovery import IntradayRecoveryService
@@ -96,7 +96,9 @@ async def test_recon_in_sync_auto_resolves_open_alerts(
     assert row.status == "active"
     assert row.alert_type == "recon.material_drift"
 
-    cleared = await emit_reconciliation_alert(session, settings, result="IN_SYNC", sync_type="SCHEDULED")
+    cleared = await emit_reconciliation_alert(
+        session, settings, result="IN_SYNC", sync_type="SCHEDULED"
+    )
     assert cleared is None
     await session.refresh(row)
     assert row.status == "resolved"
@@ -118,12 +120,15 @@ async def test_recon_alert_dedupes_across_service_instances(
     assert second is not None and second.emitted is False
     assert second.reason == "deduplicated_db"
 
-    from app.models import AlertRecordModel
     from sqlalchemy import func, select
+
+    from app.models import AlertRecordModel
 
     n = (
         await session.execute(
-            select(func.count()).select_from(AlertRecordModel).where(
+            select(func.count())
+            .select_from(AlertRecordModel)
+            .where(
                 AlertRecordModel.alert_type == "recon.material_drift",
                 AlertRecordModel.status == "active",
             )
@@ -134,9 +139,7 @@ async def test_recon_alert_dedupes_across_service_instances(
 
 @pytest.mark.asyncio
 async def test_emergency_and_llm_budget_alerts(settings: Settings) -> None:
-    emergency = await emit_emergency_stop_alert(
-        None, settings, reason="operator", source="test"
-    )
+    emergency = await emit_emergency_stop_alert(None, settings, reason="operator", source="test")
     assert emergency is not None and emergency.emitted is True
 
     soft = await emit_llm_budget_alert(

@@ -35,7 +35,6 @@ from app.schemas.common import (
 )
 from app.services.audit import AuditService
 
-
 NOW = datetime(2026, 8, 3, 16, 0, tzinfo=UTC)
 
 
@@ -144,8 +143,8 @@ def test_dashboard_routes_exist() -> None:
             dash = client.get("/dashboard")
             assert dash.status_code == 200
             assert b"Investor Ops" in dash.content
-            assert b"data-tab=\"picks\"" in dash.content
-            assert b"data-tab=\"office\"" in dash.content
+            assert b'data-tab="picks"' in dash.content
+            assert b'data-tab="office"' in dash.content
             assert b"officeFloor" in dash.content
             assert b"office-stage" in dash.content
             assert b"function renderOffice" in dash.content

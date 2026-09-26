@@ -35,9 +35,7 @@ async def universe_refresh(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     settings = get_settings()
-    holdings = [
-        p.symbol for p in (await session.execute(select(Position))).scalars().all()
-    ]
+    holdings = [p.symbol for p in (await session.execute(select(Position))).scalars().all()]
     req = body or UniverseRefreshRequest()
     svc = UniverseService(session, settings=settings)
     result = await svc.refresh(

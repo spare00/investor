@@ -156,7 +156,9 @@ def test_short_bounce_and_sideways_are_not_injected() -> None:
         max_position_pct=10.0,
         enabled=True,
     )
-    names = {p.symbol for p in out.symbol_actions if p.action.value in {"BUY", "SCALE_IN", "STRONG_BUY"}}
+    names = {
+        p.symbol for p in out.symbol_actions if p.action.value in {"BUY", "SCALE_IN", "STRONG_BUY"}
+    }
     assert "CBA" not in names
     assert "BHP" not in names
 

@@ -66,7 +66,9 @@ def _timing_from_notes(notes: list[Any] | None) -> str | None:
 
 
 def trend_value(view: Any) -> str | None:
-    trend = view.get("trend_state") if isinstance(view, dict) else getattr(view, "trend_state", None)
+    trend = (
+        view.get("trend_state") if isinstance(view, dict) else getattr(view, "trend_state", None)
+    )
     if trend is None:
         return None
     return str(getattr(trend, "value", trend) or "") or None
@@ -78,12 +80,18 @@ def timing_from_view(view: Any) -> str | None:
     stamped = _timing_from_notes(list(notes or []))
     if stamped:
         return stamped
-    explicit = view.get("entry_timing") if isinstance(view, dict) else getattr(view, "entry_timing", None)
+    explicit = (
+        view.get("entry_timing") if isinstance(view, dict) else getattr(view, "entry_timing", None)
+    )
     if explicit:
         return str(explicit).strip().lower() or None
-    trend = view.get("trend_state") if isinstance(view, dict) else getattr(view, "trend_state", None)
+    trend = (
+        view.get("trend_state") if isinstance(view, dict) else getattr(view, "trend_state", None)
+    )
     momentum = (
-        view.get("momentum_state") if isinstance(view, dict) else getattr(view, "momentum_state", None)
+        view.get("momentum_state")
+        if isinstance(view, dict)
+        else getattr(view, "momentum_state", None)
     )
     if trend is None or momentum is None:
         return None
@@ -120,7 +128,9 @@ def stamp_plan(plan: Any, *, view: Any | None = None, source: str | None = None)
     elif not current_source:
         patch["entry_source"] = SOURCE_CIO
     if view is not None:
-        attr = attribution_from_view(view, source=patch.get("entry_source") or current_source or SOURCE_CIO)
+        attr = attribution_from_view(
+            view, source=patch.get("entry_source") or current_source or SOURCE_CIO
+        )
         if not getattr(plan, "entry_timing", None) and attr.get("entry_timing"):
             patch["entry_timing"] = attr["entry_timing"]
         if not getattr(plan, "trend_at_entry", None) and attr.get("trend_at_entry"):
@@ -136,7 +146,9 @@ def stamp_cio_entry_attribution(decision: Any, quant: Any) -> Any:
 
     entry_actions = {SymbolAction.STRONG_BUY, SymbolAction.BUY, SymbolAction.SCALE_IN}
     views = list(getattr(quant, "symbol_views", None) or [])
-    by_sym = {str(getattr(v, "symbol", "") or "").upper(): v for v in views if getattr(v, "symbol", None)}
+    by_sym = {
+        str(getattr(v, "symbol", "") or "").upper(): v for v in views if getattr(v, "symbol", None)
+    }
     updated = []
     changed = False
     for plan in getattr(decision, "symbol_actions", None) or []:
@@ -144,7 +156,9 @@ def stamp_cio_entry_attribution(decision: Any, quant: Any) -> Any:
             updated.append(plan)
             continue
         view = by_sym.get(str(plan.symbol or "").upper())
-        stamped = stamp_plan(plan, view=view, source=getattr(plan, "entry_source", None) or SOURCE_CIO)
+        stamped = stamp_plan(
+            plan, view=view, source=getattr(plan, "entry_source", None) or SOURCE_CIO
+        )
         changed = changed or stamped is not plan
         updated.append(stamped)
     if not changed:
@@ -231,7 +245,9 @@ def classify_exit_reason(
     return EXIT_UNKNOWN
 
 
-def stamp_lifecycle_exit_reason(lc: Any, *, raw: str | None = None, thesis: str | None = None) -> str:
+def stamp_lifecycle_exit_reason(
+    lc: Any, *, raw: str | None = None, thesis: str | None = None
+) -> str:
     meta = dict(getattr(lc, "metadata_json", None) or {})
     existing = str(meta.get("exit_reason") or "")
     if existing and existing != EXIT_UNKNOWN:

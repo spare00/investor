@@ -228,9 +228,7 @@ class SettlementService:
         self, *, symbol: str, day: str, book: str, legacy_method: str
     ) -> TradePnL | None:
         rows = list(
-            (
-                await self.session.execute(select(TradePnL).where(TradePnL.symbol == symbol))
-            )
+            (await self.session.execute(select(TradePnL).where(TradePnL.symbol == symbol)))
             .scalars()
             .all()
         )
@@ -245,9 +243,7 @@ class SettlementService:
                 return row
         return None
 
-    async def _existing_settlement(
-        self, day: str, book: str
-    ) -> PostmarketSettlement | None:
+    async def _existing_settlement(self, day: str, book: str) -> PostmarketSettlement | None:
         rows = list(
             (
                 await self.session.execute(

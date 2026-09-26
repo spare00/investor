@@ -62,9 +62,7 @@ class Settings(BaseSettings):
     # Idle books generate no feedback. Hard vetoes still block.
     paper_aggressive_entries: bool = True
     live_trading_confirmation_token: SecretStr | None = None
-    expected_live_confirmation_token: SecretStr = SecretStr(
-        "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
-    )
+    expected_live_confirmation_token: SecretStr = SecretStr("CHANGE_ME_TO_A_LONG_RANDOM_SECRET")
 
     # Interactive Brokers (TWS API via local Gateway / TWS — paper first)
     ibkr_host: str = "127.0.0.1"
@@ -146,6 +144,7 @@ class Settings(BaseSettings):
     yfinance_enabled: bool = False
 
     # Risk policy
+    # Mock/sim fallback NAV. IBKR paper uses the broker account (AUD here).
     starting_cash: float = 25_000.0
     max_position_pct: float = 10.0
     max_sector_pct: float = 30.0
@@ -240,9 +239,7 @@ class Settings(BaseSettings):
     primary_venue: str = "US"  # US | AU
     # Scheduler prepares/dispatches each listed venue (non-overlapping sessions in BNE).
     # Dual-book is the default so ASX daytime + US overnight run in one 24h process.
-    enabled_venues: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["US", "AU"]
-    )
+    enabled_venues: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["US", "AU"])
     market_calendar: str = "NYSE"
     market_timezone: str = "America/New_York"
     operator_timezone: str = "Australia/Brisbane"

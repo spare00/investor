@@ -41,7 +41,7 @@ def apply_fill_fifo(
     broker_realized: float | None = None,
 ) -> PnLResult:
     """Buy adds lots; sell closes oldest lots (FIFO)."""
-    remaining = [Lot(l.quantity, l.price, l.opened_at) for l in lots]
+    remaining = [Lot(lot.quantity, lot.price, lot.opened_at) for lot in lots]
     realized = 0.0
     qty_left = quantity
     if side.lower() == "buy":
@@ -56,7 +56,7 @@ def apply_fill_fifo(
             if lot.quantity <= 1e-12:
                 remaining.pop(0)
     mark = mark_price if mark_price is not None else price
-    unrealized = sum((mark - l.price) * l.quantity for l in remaining)
+    unrealized = sum((mark - lot.price) * lot.quantity for lot in remaining)
     net = realized - fee - slippage
     ret = (net / equity * 100.0) if equity else 0.0
     conflict = False

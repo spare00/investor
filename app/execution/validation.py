@@ -12,7 +12,6 @@ from app.risk import DeterministicRiskEngine, PortfolioRiskView, TradeIntent, en
 from app.schemas.cio import CIODecision, SymbolActionPlan
 from app.schemas.common import PortfolioAction, SymbolAction
 
-
 ENTRY_ACTIONS = {
     SymbolAction.STRONG_BUY,
     SymbolAction.BUY,
@@ -115,9 +114,7 @@ class ExecutionValidator:
 
         # HOLD / NO_TRADE means no new risk. Per-symbol SELL / REDUCE / PARTIAL_SELL
         # still execute — local CIO often HOLDs the book while flattening 단타.
-        skip_entries = (
-            block_new_entries or decision.portfolio_action in ANALYSIS_ONLY_PORTFOLIO
-        )
+        skip_entries = block_new_entries or decision.portfolio_action in ANALYSIS_ONLY_PORTFOLIO
 
         if decision.portfolio_action == PortfolioAction.STAY_CASH and not decision.symbol_actions:
             return ExecutionValidationResult(approved=True, intents=[], rejections=[])
@@ -142,8 +139,7 @@ class ExecutionValidator:
             held_syms = [
                 p.symbol
                 for p in portfolio.positions
-                if p.quantity
-                and (getattr(p, "venue", None) or "US").upper() == plan_venue
+                if p.quantity and (getattr(p, "venue", None) or "US").upper() == plan_venue
             ]
             result = self._validate_plan(
                 decision,
@@ -185,9 +181,7 @@ class ExecutionValidator:
                 approved=True, intents=intents, rejections=exit_rejections
             )
         if exit_rejections:
-            return ExecutionValidationResult(
-                approved=False, intents=[], rejections=exit_rejections
-            )
+            return ExecutionValidationResult(approved=False, intents=[], rejections=exit_rejections)
         return ExecutionValidationResult(approved=True, intents=[], rejections=[])
 
     def _validate_plan(
@@ -221,7 +215,11 @@ class ExecutionValidator:
         if plan.action in ENTRY_ACTIONS and not decision.risk_approval:
             return f"{symbol}:entry_without_risk_approval"
 
-        if plan.action in ENTRY_ACTIONS and plan.stop_loss is None and not plan.invalidation.strip():
+        if (
+            plan.action in ENTRY_ACTIONS
+            and plan.stop_loss is None
+            and not plan.invalidation.strip()
+        ):
             return f"{symbol}:missing_stop_or_invalidation"
 
         horizons = horizon_by_symbol or {}
@@ -246,7 +244,9 @@ class ExecutionValidator:
 
         from app.market.live_prices import looks_like_stub_last, requires_live_market_prices
 
-        if requires_live_market_prices(self.settings) and looks_like_stub_last(symbol, float(price)):
+        if requires_live_market_prices(self.settings) and looks_like_stub_last(
+            symbol, float(price)
+        ):
             return f"{symbol}:stub_price_forbidden_for_orders"
 
         if plan.action in {SymbolAction.HOLD, SymbolAction.NO_TRADE, SymbolAction.STAY_CASH}:
@@ -288,11 +288,7 @@ class ExecutionValidator:
                 sector=sector,
                 idempotency_key=f"{decision.decision_id}:{symbol}:buy",
                 venue=venue,
-                currency=(
-                    get_venue_spec(venue).currency
-                    if venue
-                    else None
-                ),
+                currency=(get_venue_spec(venue).currency if venue else None),
             )
             pre = self.engine.evaluate_pretrade(
                 portfolio,
@@ -326,10 +322,15 @@ class ExecutionValidator:
         if plan.action not in ENTRY_ACTIONS:
             order_type = "market"
             limit_price = None
-        elif plan.action in ENTRY_ACTIONS and plan.entry_zone is None and order_type in {
-            "limit",
-            "stop_limit",
-        }:
+        elif (
+            plan.action in ENTRY_ACTIONS
+            and plan.entry_zone is None
+            and order_type
+            in {
+                "limit",
+                "stop_limit",
+            }
+        ):
             # CIO often omits entry_zone; a last-print limit sits unfilled through RTH.
             order_type = "market"
             limit_price = None
@@ -339,12 +340,7 @@ class ExecutionValidator:
             else:
                 return f"{symbol}:limit_order_missing_price"
 
-        if (
-            plan.action in ENTRY_ACTIONS
-            and limit_price is not None
-            and price
-            and price > 0
-        ):
+        if plan.action in ENTRY_ACTIONS and limit_price is not None and price and price > 0:
             drift_bps = abs(float(limit_price) - float(price)) / float(price) * 10_000.0
             max_drift = float(self.settings.max_entry_limit_drift_bps)
             if drift_bps > max_drift:
@@ -356,9 +352,7 @@ class ExecutionValidator:
         if limit_price is not None:
             limit_price = round_equity_price(float(limit_price))
         stop_for_intent = (
-            round_equity_price(float(plan.stop_loss))
-            if plan.stop_loss is not None
-            else None
+            round_equity_price(float(plan.stop_loss)) if plan.stop_loss is not None else None
         )
 
         key = f"{workflow_id or decision.decision_id}:{symbol}:{side}:{plan.action.value}"

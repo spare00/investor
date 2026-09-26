@@ -141,7 +141,9 @@ class UniverseManagerOutput(StrictModel):
         filled: list[object] = []
         for i, raw in enumerate(props):
             fallback = str(focus[i]).upper() if i < len(focus) else ""
-            filled.append(_proposal_row(raw, symbol_fallback=fallback) if isinstance(raw, dict) else raw)
+            filled.append(
+                _proposal_row(raw, symbol_fallback=fallback) if isinstance(raw, dict) else raw
+            )
         data["proposals"] = filled
         return data
 

@@ -6,7 +6,7 @@ Rates are quoted as ``CCY1CCY2`` meaning 1 unit of CCY1 equals N units of CCY2
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 
 def parse_fx_rates(raw: str | Mapping[str, float] | None) -> dict[str, float]:

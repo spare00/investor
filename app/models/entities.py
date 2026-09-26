@@ -16,9 +16,9 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
 )
-from sqlalchemy import Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
@@ -260,9 +260,7 @@ class Execution(Base, TimestampMixin):
 
 class Position(Base, TimestampMixin):
     __tablename__ = "positions"
-    __table_args__ = (
-        UniqueConstraint("symbol", "venue", name="uq_positions_symbol_venue"),
-    )
+    __table_args__ = (UniqueConstraint("symbol", "venue", name="uq_positions_symbol_venue"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -354,7 +352,9 @@ class ConfigurationHistory(Base, TimestampMixin):
 
 class DailyWorkflowRun(Base, TimestampMixin):
     __tablename__ = "daily_workflow_runs"
-    __table_args__ = (UniqueConstraint("session_date", "calendar_name", name="uq_daily_wf_session"),)
+    __table_args__ = (
+        UniqueConstraint("session_date", "calendar_name", name="uq_daily_wf_session"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
     session_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD ET
@@ -368,7 +368,9 @@ class DailyWorkflowRun(Base, TimestampMixin):
     market_open_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     market_close_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     early_close: Mapped[bool] = mapped_column(Boolean, default=False)
-    analysis_workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    analysis_workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
     latest_decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     pause_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -445,7 +447,9 @@ class DataCollectionRun(Base, TimestampMixin):
     __tablename__ = "data_collection_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
-    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, index=True
+    )
     collection_type: Mapped[str] = mapped_column(String(64), nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -500,8 +504,12 @@ class OrderIntent(Base, TimestampMixin):
     __tablename__ = "order_intents"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
-    decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
-    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, index=True
+    )
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, index=True
+    )
     symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     intent_type: Mapped[str] = mapped_column(String(32), nullable=False)
     side: Mapped[str] = mapped_column(String(8), nullable=False)
@@ -587,7 +595,9 @@ class BrokerOrderEvent(Base, TimestampMixin):
     __tablename__ = "broker_order_events"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
-    order_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, index=True
+    )
     broker_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     broker_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -663,7 +673,9 @@ class PositionRiskReview(Base, TimestampMixin):
     __tablename__ = "position_risk_reviews"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
-    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), nullable=False, index=True
+    )
     status: Mapped[str] = mapped_column(String(64), nullable=False)
     reasons: Mapped[list[Any]] = mapped_column(JSONType, default=list)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
@@ -673,7 +685,9 @@ class StopEvent(Base, TimestampMixin):
     __tablename__ = "stop_events"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
-    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), nullable=False, index=True
+    )
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -685,7 +699,9 @@ class TakeProfitEvent(Base, TimestampMixin):
     __tablename__ = "take_profit_events"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
-    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), nullable=False, index=True
+    )
     target_index: Mapped[int] = mapped_column(Integer, nullable=False)
     target_price: Mapped[float] = mapped_column(Float, nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
@@ -736,7 +752,9 @@ class OvernightReview(Base, TimestampMixin):
     __tablename__ = "overnight_reviews"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
-    position_lifecycle_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    position_lifecycle_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
     reasons: Mapped[list[Any]] = mapped_column(JSONType, default=list)
@@ -778,7 +796,9 @@ class PostTradeReviewRecord(Base, TimestampMixin):
     __tablename__ = "posttrade_reviews"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
-    position_lifecycle_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    position_lifecycle_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
     decision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     outcome: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -862,7 +882,9 @@ class PortfolioValuationRecord(Base, TimestampMixin):
 
 class PortfolioReturnRecord(Base, TimestampMixin):
     __tablename__ = "portfolio_returns"
-    __table_args__ = (Index("ix_portfolio_returns_period", "portfolio_id", "period_start", "period_end"),)
+    __table_args__ = (
+        Index("ix_portfolio_returns_period", "portfolio_id", "period_start", "period_end"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
     portfolio_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
@@ -1166,12 +1188,20 @@ class WatchlistSymbol(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     horizon: Mapped[str] = mapped_column(String(16), nullable=False)  # scalp|day|short|medium
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")  # active|paused|removed
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)  # 0–100, higher = more focus
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active"
+    )  # active|paused|removed
+    priority: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=50
+    )  # 0–100, higher = more focus
     thesis: Mapped[str] = mapped_column(Text, nullable=False, default="")
     invalidation: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    source: Mapped[str] = mapped_column(String(32), nullable=False, default="seed")  # seed|universe_manager|manual
-    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="seed"
+    )  # seed|universe_manager|manual
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
 
 
@@ -1213,4 +1243,3 @@ class EmbeddingChunk(Base, TimestampMixin):
     embedding: Mapped[list[Any]] = mapped_column(JSONType, default=list)
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
-

@@ -10,7 +10,9 @@ from app.performance.types import MetricResult, MetricStatus, metric_result
 
 def _rate(name: str, num: int, denom: int) -> MetricResult:
     if denom <= 0:
-        return metric_result(name, None, status=MetricStatus.INSUFFICIENT_DATA, method="order_stats")
+        return metric_result(
+            name, None, status=MetricStatus.INSUFFICIENT_DATA, method="order_stats"
+        )
     return metric_result(name, num / denom, observation_count=denom, method="order_stats")
 
 
@@ -20,13 +22,14 @@ def _latency_ms(start: datetime | None, end: datetime | None) -> float | None:
     return (end - start).total_seconds() * 1000.0
 
 
-def compute_execution_quality(order_stats: dict[str, Any]) -> dict[str, MetricResult | float | None]:
+def compute_execution_quality(
+    order_stats: dict[str, Any],
+) -> dict[str, MetricResult | float | None]:
     """order_stats keys: decision_at, submission_at, arrival_price, avg_fill_price,
     decision_price, total_orders, filled, partial, cancelled, rejected, latencies list."""
     decision_at = order_stats.get("decision_at")
     submission_at = order_stats.get("submission_at")
     first_fill_at = order_stats.get("first_fill_at")
-    last_fill_at = order_stats.get("last_fill_at")
 
     arrival = order_stats.get("arrival_price")
     decision_price = order_stats.get("decision_price")
@@ -69,7 +72,9 @@ def compute_execution_quality(order_stats: dict[str, Any]) -> dict[str, MetricRe
 
     latencies = order_stats.get("latencies_ms") or []
     avg_lat = sum(latencies) / len(latencies) if latencies else None
-    p95_lat = sorted(latencies)[int(0.95 * (len(latencies) - 1))] if len(latencies) >= 2 else avg_lat
+    p95_lat = (
+        sorted(latencies)[int(0.95 * (len(latencies) - 1))] if len(latencies) >= 2 else avg_lat
+    )
 
     return {
         "decision_to_submission_ms": decision_to_submission,

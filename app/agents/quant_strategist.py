@@ -166,6 +166,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
     def fallback_output(
         self, payload: QuantStrategistInput, *, reason: str
     ) -> QuantStrategistOutput:
+        from app.services.market_hours import minutes_to_close as minutes_to_close_fn
         from app.universe.accumulation import detect_stealth_accumulation
         from app.universe.book_strategy import (
             adjust_probability,
@@ -175,12 +176,13 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
             structure_allows_entry,
         )
         from app.universe.horizons import policy_by_symbol, suggested_long_stop
-        from app.services.market_hours import minutes_to_close as minutes_to_close_fn
 
         by_pol = policy_by_symbol(payload.watchlist)
         bars = payload.symbol_bars or payload.index_bars
         views: list[SymbolQuantView] = []
-        minutes_to_close = minutes_to_close_fn(payload.as_of) if getattr(payload, "as_of", None) else None
+        minutes_to_close = (
+            minutes_to_close_fn(payload.as_of) if getattr(payload, "as_of", None) else None
+        )
         for bar in bars:
             horizon = horizon_for_symbol(bar.symbol, payload.watchlist)
             trend = _trend(bar, horizon)
@@ -188,9 +190,7 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
             vol = _volatility(bar, payload.vix)
             liq = _liquidity(bar)
             base_prob, basis = _probability(trend, mom)
-            hit = detect_stealth_accumulation(
-                bar.session_history, avg_volume=bar.avg_volume_20d
-            )
+            hit = detect_stealth_accumulation(bar.session_history, avg_volume=bar.avg_volume_20d)
             acc = horizon == "short" and hit.detected
             prob, book_notes = adjust_probability(
                 base=base_prob,

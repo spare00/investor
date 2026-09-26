@@ -9,9 +9,10 @@ Medium is held if already open, but is not a research or entry book.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Iterable
+from typing import Any
 
 from app.schemas.common import (
     LiquidityState,
@@ -24,7 +25,6 @@ from app.schemas.common import (
     VolatilityState,
 )
 from app.universe.horizons import UniverseHorizon, policy_for
-
 
 ACTIVE_STRATEGY_HORIZONS: frozenset[str] = frozenset(
     {
@@ -231,10 +231,7 @@ def horizon_for_symbol(symbol: str, watchlist: list[dict] | None = None) -> str:
 
 def playbook_cards() -> list[dict[str, str]]:
     """Compact cards for LLM briefs — one strategy per book."""
-    return [
-        {"h": p.horizon, "ko": p.label_ko, "rule": p.summary}
-        for p in PLAYBOOKS.values()
-    ]
+    return [{"h": p.horizon, "ko": p.label_ko, "rule": p.summary} for p in PLAYBOOKS.values()]
 
 
 def risk_mult_for_horizon(horizon: str | None, *, firm_risk_pct: float) -> float:
@@ -608,7 +605,9 @@ def playbook_take_profit(*, entry: float, horizon: str | None) -> float | None:
     return round(float(entry) * (1.0 + float(book.target_pct)), 4)
 
 
-def lock_level(*, entry: float, take_profit: float | None, horizon: str | None = None) -> float | None:
+def lock_level(
+    *, entry: float, take_profit: float | None, horizon: str | None = None
+) -> float | None:
     """Price that must print before the trade is not allowed to close as a loss."""
     if entry <= 0:
         return None
@@ -638,10 +637,7 @@ def exit_action(
         # A downtrend "deceleration" is hope of a bounce, not a dip. Dump it.
         return BookExit.SELL
     underwater = (
-        last is not None
-        and entry is not None
-        and float(entry) > 0
-        and float(last) < float(entry)
+        last is not None and entry is not None and float(entry) > 0 and float(last) < float(entry)
     )
     if underwater and not up:
         # Sideways loser waiting for a reversal is the same hope trade.
@@ -672,9 +668,7 @@ def portfolio_action_from_symbol_actions(
         return getattr(item, "action", item)
 
     kinds = {_kind(a) for a in actions}
-    values = {
-        (k.value if hasattr(k, "value") else str(k)) for k in kinds
-    }
+    values = {(k.value if hasattr(k, "value") else str(k)) for k in kinds}
     if values & {"BUY", "STRONG_BUY", "SCALE_IN", "ADD"}:
         return PortfolioAction.SCALE_IN
     if values & {"SELL", "PARTIAL_SELL"}:
@@ -727,7 +721,10 @@ def align_cio_playbook_exits(
                     )
                 )
                 continue
-            if hz in {"scalp", "day"} and action in {SymbolAction.REDUCE, SymbolAction.PARTIAL_SELL}:
+            if hz in {"scalp", "day"} and action in {
+                SymbolAction.REDUCE,
+                SymbolAction.PARTIAL_SELL,
+            }:
                 changed = True
                 updated.append(
                     plan.model_copy(
@@ -779,9 +776,7 @@ def align_cio_playbook_exits(
     if not changed:
         return decision
     portfolio = portfolio_action_from_symbol_actions(updated)
-    return decision.model_copy(
-        update={"symbol_actions": updated, "portfolio_action": portfolio}
-    )
+    return decision.model_copy(update={"symbol_actions": updated, "portfolio_action": portfolio})
 
 
 def _position_entry_last(pos: Any) -> tuple[float | None, float | None]:
@@ -851,7 +846,9 @@ def ensure_playbook_exits(
             symbol=sym,
             action=want,
             confidence=70,
-            target_position_pct=0.0 if want == SymbolAction.SELL else abs(float(pos.weight_pct or 0)) * 0.5,
+            target_position_pct=0.0
+            if want == SymbolAction.SELL
+            else abs(float(pos.weight_pct or 0)) * 0.5,
             order_type=OrderType.MARKET,
             thesis=f"{hz}: {allowed.value} — do not wait for a reversal",
             invalidation="n/a",
@@ -946,7 +943,11 @@ def drop_blocked_entries(
         return decision
     portfolio = portfolio_action_from_symbol_actions(updated)
     reason = getattr(decision, "reason_not_to_trade", None)
-    if dropped_sideways and portfolio in {PortfolioAction.NO_TRADE, PortfolioAction.HOLD, PortfolioAction.STAY_CASH}:
+    if dropped_sideways and portfolio in {
+        PortfolioAction.NO_TRADE,
+        PortfolioAction.HOLD,
+        PortfolioAction.STAY_CASH,
+    }:
         reason = "sideways_stand_down"
     return decision.model_copy(
         update={

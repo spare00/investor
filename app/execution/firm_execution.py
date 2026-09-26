@@ -108,9 +108,7 @@ async def materialize_cio_decision(
     cfg = settings or get_settings()
     notes: list[str] = []
     risk_view = (
-        portfolio
-        if isinstance(portfolio, PortfolioRiskView)
-        else portfolio_to_risk_view(portfolio)
+        portfolio if isinstance(portfolio, PortfolioRiskView) else portfolio_to_risk_view(portfolio)
     )
 
     needed = {str(a.symbol).upper() for a in (decision.symbol_actions or []) if a.symbol}

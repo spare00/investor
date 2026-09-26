@@ -36,7 +36,9 @@ def is_sane_equity_price(value: float | None) -> bool:
     return math.isfinite(px) and 0.0 < px < _MAX_SANE_EQUITY_PX
 
 
-def reference_price(*, side: str, last: float | None, bid: float | None = None, ask: float | None = None) -> float:
+def reference_price(
+    *, side: str, last: float | None, bid: float | None = None, ask: float | None = None
+) -> float:
     """Price to lean through: bid for sells, ask for buys, else last."""
     sell = str(side).lower() == "sell"
     ordered = (bid, last, ask) if sell else (ask, last, bid)

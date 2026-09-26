@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Sequence
+from typing import Any
 
 from app.performance.calibration import calibration_gap, expected_calibration_error
 from app.performance.types import MetricResult, MetricStatus, metric_result
@@ -42,7 +43,8 @@ def directional_accuracy(predictions: Sequence[AgentPrediction]) -> MetricResult
     scored = [
         _dir_correct(Direction(p.predicted_direction), p.actual_return)
         for p in predictions
-        if p.actual_return is not None and not p.abstained
+        if p.actual_return is not None
+        and not p.abstained
         and Direction(p.predicted_direction) not in {Direction.ABSTAIN, Direction.NEUTRAL}
     ]
     scored = [s for s in scored if s is not None]
@@ -68,7 +70,9 @@ def brier_score(predictions: Sequence[AgentPrediction]) -> MetricResult:
         if p.confidence is not None and p.actual_return is not None and not p.abstained
     ]
     if not pairs:
-        return metric_result("brier_score", None, status=MetricStatus.INSUFFICIENT_DATA, method="agent_eval")
+        return metric_result(
+            "brier_score", None, status=MetricStatus.INSUFFICIENT_DATA, method="agent_eval"
+        )
     score = sum((c - o) ** 2 for c, o in pairs) / len(pairs)
     return metric_result("brier_score", score, observation_count=len(pairs), method="agent_eval")
 
@@ -210,4 +214,6 @@ def evaluate_agents_grouped(
     *,
     by: str,
 ) -> dict[str, dict[str, Any]]:
-    return {key: evaluate_agents(items) for key, items in group_predictions(predictions, by=by).items()}
+    return {
+        key: evaluate_agents(items) for key, items in group_predictions(predictions, by=by).items()
+    }

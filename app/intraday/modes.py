@@ -63,7 +63,9 @@ class ModeCapabilities:
         }
 
 
-def resolve_mode(settings: Settings, *, emergency: bool = False, paused: bool = False) -> IntradayOperationMode:
+def resolve_mode(
+    settings: Settings, *, emergency: bool = False, paused: bool = False
+) -> IntradayOperationMode:
     if emergency:
         return IntradayOperationMode.EMERGENCY_STOP
     if paused:

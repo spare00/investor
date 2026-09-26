@@ -15,7 +15,12 @@ from app.performance.agent_eval import (
 )
 from app.performance.calibration import calibration_gap, expected_calibration_error
 from app.performance.decision_eval import DecisionAction, evaluate_decision
-from app.performance.drawdown import DrawdownStatus, compute_drawdowns, current_drawdown, max_drawdown
+from app.performance.drawdown import (
+    DrawdownStatus,
+    compute_drawdowns,
+    current_drawdown,
+    max_drawdown,
+)
 from app.performance.execution_quality import compute_execution_quality
 from app.performance.mae_mfe import compute_mae_mfe
 from app.performance.providers import compute_provider_reliability
@@ -51,7 +56,9 @@ def test_simple_and_twr() -> None:
 def test_mwr_insufficient_without_cashflows() -> None:
     t0 = datetime(2024, 1, 1, tzinfo=UTC)
     t1 = datetime(2024, 2, 1, tzinfo=UTC)
-    mwr = money_weighted_return(start_value=100.0, end_value=110.0, period_start=t0, period_end=t1, cashflows=None)
+    mwr = money_weighted_return(
+        start_value=100.0, end_value=110.0, period_start=t0, period_end=t1, cashflows=None
+    )
     # Without external cashflows, MWR may still compute or mark insufficient — never invent flows
     assert mwr.status in {
         MetricStatus.INSUFFICIENT_DATA,
@@ -192,9 +199,9 @@ def test_decision_horizon_summary() -> None:
     )
 
     assert universe_horizon_for_plan({"symbol": "MSFT", "time_horizon": "position"}) == "medium"
-    assert universe_horizon_for_plan(
-        {"symbol": "QQQ"}, watchlist_horizon={"QQQ": "scalp"}
-    ) == "scalp"
+    assert (
+        universe_horizon_for_plan({"symbol": "QQQ"}, watchlist_horizon={"QQQ": "scalp"}) == "scalp"
+    )
     assert universe_horizon_for_plan({"universe_horizon": "day"}) == "day"
 
     buy = evaluate_decision(decision_price=100.0, action="BUY", horizon_price=110.0)
@@ -203,9 +210,10 @@ def test_decision_horizon_summary() -> None:
         {"universe_horizon": "scalp", "metrics": buy},
         {"universe_horizon": "scalp", "metrics": miss},
         {"universe_horizon": "medium", "metrics": buy},
-        {"universe_horizon": "unknown", "metrics": evaluate_decision(
-            decision_price=100.0, action="HOLD", horizon_price=None
-        )},
+        {
+            "universe_horizon": "unknown",
+            "metrics": evaluate_decision(decision_price=100.0, action="HOLD", horizon_price=None),
+        },
     ]
     summary = summarize_decision_evaluations(evals)
     assert summary["by_horizon"]["scalp"]["scored"] == 2
@@ -216,11 +224,36 @@ def test_decision_horizon_summary() -> None:
 
 def test_agent_calibration_and_roles() -> None:
     preds = [
-        AgentPrediction(predicted_direction=Direction.BULLISH, confidence=0.8, actual_return=0.02, abstained=False),
-        AgentPrediction(predicted_direction=Direction.BULLISH, confidence=0.7, actual_return=-0.01, abstained=False),
-        AgentPrediction(predicted_direction=Direction.BEARISH, confidence=0.6, actual_return=-0.02, abstained=False),
-        AgentPrediction(predicted_direction=Direction.BULLISH, confidence=0.55, actual_return=0.01, abstained=False),
-        AgentPrediction(predicted_direction=Direction.ABSTAIN, confidence=0.5, actual_return=0.03, abstained=True),
+        AgentPrediction(
+            predicted_direction=Direction.BULLISH,
+            confidence=0.8,
+            actual_return=0.02,
+            abstained=False,
+        ),
+        AgentPrediction(
+            predicted_direction=Direction.BULLISH,
+            confidence=0.7,
+            actual_return=-0.01,
+            abstained=False,
+        ),
+        AgentPrediction(
+            predicted_direction=Direction.BEARISH,
+            confidence=0.6,
+            actual_return=-0.02,
+            abstained=False,
+        ),
+        AgentPrediction(
+            predicted_direction=Direction.BULLISH,
+            confidence=0.55,
+            actual_return=0.01,
+            abstained=False,
+        ),
+        AgentPrediction(
+            predicted_direction=Direction.ABSTAIN,
+            confidence=0.5,
+            actual_return=0.03,
+            abstained=True,
+        ),
     ]
     summary = evaluate_agents(preds)
     assert summary["directional_accuracy"].status == MetricStatus.AVAILABLE

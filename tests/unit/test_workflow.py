@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.database import Base
 from app.decision.workflow import WorkflowService
-from app.execution.safety_controls import TradingControls, trading_controls
+from app.execution.safety_controls import trading_controls
 from app.services.llm import StubLLMClient
 
 ET = ZoneInfo("America/New_York")
@@ -52,9 +52,7 @@ async def test_premarket_workflow_validates(session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_intraday_respects_min_interval(session: AsyncSession) -> None:
     svc = WorkflowService(session, llm=StubLLMClient({}), persist=False)
-    first = await svc.run_intraday_evaluate(
-        force=True, now=datetime(2026, 8, 3, 12, 0, tzinfo=ET)
-    )
+    first = await svc.run_intraday_evaluate(force=True, now=datetime(2026, 8, 3, 12, 0, tzinfo=ET))
     assert first.skipped_reason is None
     second = await svc.run_intraday_evaluate(
         force=False, now=datetime(2026, 8, 3, 12, 1, tzinfo=ET)
@@ -65,9 +63,7 @@ async def test_intraday_respects_min_interval(session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_intraday_skips_outside_session(session: AsyncSession) -> None:
     svc = WorkflowService(session, llm=StubLLMClient({}), persist=False)
-    result = await svc.run_intraday_evaluate(
-        force=False, now=datetime(2026, 8, 3, 7, 0, tzinfo=ET)
-    )
+    result = await svc.run_intraday_evaluate(force=False, now=datetime(2026, 8, 3, 7, 0, tzinfo=ET))
     assert result.skipped_reason == "outside_regular_session"
 
 

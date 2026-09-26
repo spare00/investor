@@ -10,10 +10,10 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.brokers.mock import MockBroker
 from app.core.config import Settings, TradingMode, clear_settings_cache
 from app.core.database import Base
-import app.models  # noqa: F401
 from app.execution.position_manager import PositionManager
 from app.execution.safety_controls import trading_controls
 from app.intraday.closing import ClosingService
@@ -160,14 +160,14 @@ async def test_position_manager_sync_creates_lifecycle_for_closing(
     assert (sync.get("lifecycles") or {}).get("upserted") == 1
 
     lc = (
-        await session.execute(
-            select(PositionLifecycle).where(PositionLifecycle.symbol == "QQQ")
-        )
+        await session.execute(select(PositionLifecycle).where(PositionLifecycle.symbol == "QQQ"))
     ).scalar_one()
     assert lc.status == "OPEN"
 
     closing = await ClosingService(session, settings=settings).run_closing()
     assert any(p.get("symbol") == "QQQ" and p.get("action") == "close" for p in closing["plans"])
-    assert closing["intent_ids"] or any(
-        "pending" in n for n in (closing.get("notes") or [])
-    ) or closing.get("intent_drafts")
+    assert (
+        closing["intent_ids"]
+        or any("pending" in n for n in (closing.get("notes") or []))
+        or closing.get("intent_drafts")
+    )

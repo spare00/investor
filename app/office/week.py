@@ -64,7 +64,9 @@ def week_review_from_records(
     for rec in decisions:
         payload = rec.payload if isinstance(getattr(rec, "payload", None), dict) else {}
         pa = str(getattr(rec, "portfolio_action", "") or "").upper()
-        why = str(getattr(rec, "reason_not_to_trade", None) or payload.get("reason_not_to_trade") or "")
+        why = str(
+            getattr(rec, "reason_not_to_trade", None) or payload.get("reason_not_to_trade") or ""
+        )
         risk_ok = bool(getattr(rec, "risk_approval", True))
         regime = str(getattr(rec, "market_regime", "") or "")
         if regime and regime not in regimes:

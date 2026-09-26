@@ -43,7 +43,9 @@ async def test_premarket_collection_persists_and_scores(session: AsyncSession) -
 
 
 @pytest.mark.asyncio
-async def test_collection_fail_closed_on_empty_markets(session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_collection_fail_closed_on_empty_markets(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from app.collectors import market_data as md
 
     class EmptyProvider:
@@ -56,7 +58,9 @@ async def test_collection_fail_closed_on_empty_markets(session: AsyncSession, mo
     # Patch where collection imports it
     import app.services.collection as collection_mod
 
-    monkeypatch.setattr(collection_mod, "get_market_data_provider", lambda name=None: EmptyProvider())
+    monkeypatch.setattr(
+        collection_mod, "get_market_data_provider", lambda name=None: EmptyProvider()
+    )
 
     service = DataCollectionService(session, persist=True)
     bundle = await service.collect_premarket(symbols=["SPY"])

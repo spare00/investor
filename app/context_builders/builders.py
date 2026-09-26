@@ -15,7 +15,11 @@ def _cutoff_filter(items: list[Any], cutoff: datetime | None) -> list[Any]:
         return items
     out = []
     for item in items:
-        ts = getattr(item, "published_at", None) or getattr(item, "as_of", None) or getattr(item, "filed_at", None)
+        ts = (
+            getattr(item, "published_at", None)
+            or getattr(item, "as_of", None)
+            or getattr(item, "filed_at", None)
+        )
         if ts is None or ts <= cutoff:
             out.append(item)
     return out
@@ -58,9 +62,7 @@ class MarketIntelligenceContextBuilder:
                     "accession": getattr(f, "accession_number", None),
                     "form_type": getattr(f, "form_type", None),
                     "symbols": getattr(f, "symbols", []),
-                    "filed_at": getattr(f, "filed_at").isoformat()
-                    if getattr(f, "filed_at", None)
-                    else None,
+                    "filed_at": f.filed_at.isoformat() if getattr(f, "filed_at", None) else None,
                     "document_url_reference": getattr(f, "document_url_reference", None),
                     "importance_hints": getattr(f, "importance_hints", []),
                     "source_ids": getattr(f, "source_ids", []),
@@ -68,13 +70,17 @@ class MarketIntelligenceContextBuilder:
                 }
                 for f in filings
             ],
-            "conflicts": [c.model_dump(mode="json") if hasattr(c, "model_dump") else c for c in conflicts],
+            "conflicts": [
+                c.model_dump(mode="json") if hasattr(c, "model_dump") else c for c in conflicts
+            ],
             "provider_formats_exposed": False,
         }
 
 
 class MacroContextBuilder:
-    def build(self, *, macro: dict[str, Any], economic_events: list[Any], cutoff: datetime | None = None) -> dict[str, Any]:
+    def build(
+        self, *, macro: dict[str, Any], economic_events: list[Any], cutoff: datetime | None = None
+    ) -> dict[str, Any]:
         events = _cutoff_filter(economic_events, cutoff)
         return {
             "macro": macro,
@@ -106,12 +112,22 @@ class RevalidationContextBuilder:
         conflicts: list[Any],
     ) -> dict[str, Any]:
         return {
-            "quotes": [q.model_dump(mode="json") if hasattr(q, "model_dump") else q for q in quotes],
-            "premarket": [p.model_dump(mode="json") if hasattr(p, "model_dump") else p for p in premarket],
+            "quotes": [
+                q.model_dump(mode="json") if hasattr(q, "model_dump") else q for q in quotes
+            ],
+            "premarket": [
+                p.model_dump(mode="json") if hasattr(p, "model_dump") else p for p in premarket
+            ],
             "market_events": events,
             "freshness": freshness,
-            "conflicts": [c.model_dump(mode="json") if hasattr(c, "model_dump") else c for c in conflicts],
-            "stale_explicit": [k for k, v in freshness.items() if v in {FreshnessState.STALE.value, FreshnessState.EXPIRED.value}],
+            "conflicts": [
+                c.model_dump(mode="json") if hasattr(c, "model_dump") else c for c in conflicts
+            ],
+            "stale_explicit": [
+                k
+                for k, v in freshness.items()
+                if v in {FreshnessState.STALE.value, FreshnessState.EXPIRED.value}
+            ],
         }
 
 
@@ -119,5 +135,7 @@ class IntradayContextBuilder:
     def build(self, *, events: list[dict[str, Any]], quotes: list[Any]) -> dict[str, Any]:
         return {
             "events": events,
-            "quotes": [q.model_dump(mode="json") if hasattr(q, "model_dump") else q for q in quotes],
+            "quotes": [
+                q.model_dump(mode="json") if hasattr(q, "model_dump") else q for q in quotes
+            ],
         }

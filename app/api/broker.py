@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brokers.errors import BrokerError
@@ -12,7 +13,6 @@ from app.brokers.factory import get_broker
 from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.models import Order
-from sqlalchemy import select
 
 router = APIRouter(prefix="/broker", tags=["broker"])
 
@@ -80,7 +80,11 @@ async def broker_positions() -> dict[str, Any]:
 @router.get("/orders")
 async def broker_orders(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     settings = get_settings()
-    local = list((await session.execute(select(Order).order_by(Order.created_at.desc()).limit(100))).scalars())
+    local = list(
+        (
+            await session.execute(select(Order).order_by(Order.created_at.desc()).limit(100))
+        ).scalars()
+    )
     remote: list[Any] = []
     try:
         broker = get_broker(settings)

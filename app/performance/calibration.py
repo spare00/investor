@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import statistics
-from typing import Sequence
+from collections.abc import Sequence
 
 from app.performance.types import MetricResult, MetricStatus, metric_result
 

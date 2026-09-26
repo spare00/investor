@@ -15,7 +15,6 @@ from app.core.config import Settings, get_settings
 from app.intraday.events import IntradayEventBus
 from app.models import BrokerOrderEvent, Order
 
-
 _STATUS_MAP = {
     "new": InternalOrderState.ACCEPTED,
     "accepted": InternalOrderState.ACCEPTED,
@@ -68,9 +67,7 @@ class BrokerUpdateProcessor:
                 remote_orders = await self.broker.get_open_orders()
             # Only open-ish local rows — not the full order history.
             local = list(
-                (
-                    await self.session.execute(select(Order).where(Order.status.in_(list(_OPENISH))))
-                )
+                (await self.session.execute(select(Order).where(Order.status.in_(list(_OPENISH)))))
                 .scalars()
                 .all()
             )

@@ -16,7 +16,6 @@ from app.market.venues import (
     venue_for_calendar_name,
 )
 
-
 SYD = ZoneInfo("Australia/Sydney")
 ET = ZoneInfo("America/New_York")
 
@@ -112,8 +111,20 @@ def test_summarize_venue_books() -> None:
 
     books = summarize_venue_books(
         [
-            {"symbol": "AAPL", "quantity": 1, "market_value": 100, "venue": "US", "currency": "USD"},
-            {"symbol": "JPEQ", "quantity": 10, "market_value": 600, "exchange": "ASX", "currency": "AUD"},
+            {
+                "symbol": "AAPL",
+                "quantity": 1,
+                "market_value": 100,
+                "venue": "US",
+                "currency": "USD",
+            },
+            {
+                "symbol": "JPEQ",
+                "quantity": 10,
+                "market_value": 600,
+                "exchange": "ASX",
+                "currency": "AUD",
+            },
         ],
         settings=get_settings(),
         equity=1000,
@@ -223,13 +234,13 @@ def test_news_relevant_to_venue(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_positions_unique_per_symbol_venue(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sqlalchemy import select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.brokers.mock import MockBroker
     from app.core.database import Base
     from app.execution.position_manager import PositionManager
     from app.models import Position
-    from sqlalchemy import select
 
     monkeypatch.setenv("ENABLED_VENUES", "US,AU")
     monkeypatch.setenv("TRADE_ALLOWLIST_AU", "BHP,VAS")

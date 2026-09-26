@@ -94,9 +94,7 @@ async def resolve_stock_contract(
         bare = contract_from_con_id(cid)
         if bare is not None:
             try:
-                qualified = await _qualify_async(
-                    ib, bare, settings=cfg, label=f"conId:{cid}"
-                )
+                qualified = await _qualify_async(ib, bare, settings=cfg, label=f"conId:{cid}")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("ibkr_conid_qualify_failed", con_id=cid, error=str(exc)[:160])
                 qualified = None

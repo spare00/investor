@@ -161,8 +161,8 @@ class IbkrBroker:
         venue: str | None = None,
         con_id: int | None = None,
     ) -> Any:
-        from app.brokers.ibkr_contracts import resolve_stock_contract
         from app.brokers.errors import BrokerError
+        from app.brokers.ibkr_contracts import resolve_stock_contract
 
         try:
             return await resolve_stock_contract(
@@ -299,9 +299,10 @@ class IbkrBroker:
 
         exchange = getattr(contract, "primaryExchange", None) or getattr(contract, "exchange", None)
         currency = str(getattr(contract, "currency", "") or "")
-        au_book = uses_marketable_limit(
-            request.venue, str(exchange) if exchange else None
-        ) or currency.upper() == "AUD"
+        au_book = (
+            uses_marketable_limit(request.venue, str(exchange) if exchange else None)
+            or currency.upper() == "AUD"
+        )
         if au_book:
             try:
                 ib.reqMarketDataType(3)

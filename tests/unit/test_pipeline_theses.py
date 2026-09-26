@@ -23,7 +23,6 @@ from app.schemas.common import (
 )
 from app.schemas.quant_strategist import QuantStrategistOutput, SymbolQuantView
 
-
 NOW = datetime(2026, 8, 6, 15, 0, tzinfo=UTC)
 
 
@@ -73,9 +72,7 @@ def test_theses_from_quant_picks_allowlisted_entry_views() -> None:
             probability_basis="test",
         ),
     )
-    theses = theses_from_quant(
-        quant, entry_universe=["AAPL", "MSFT"], regime="RISK_ON"
-    )
+    theses = theses_from_quant(quant, entry_universe=["AAPL", "MSFT"], regime="RISK_ON")
     assert len(theses) == 1
     assert theses[0].symbol == "AAPL"
     assert theses[0].direction == "long"
@@ -166,9 +163,7 @@ def test_enrich_cio_entry_stops_from_quant_and_price() -> None:
         hard_veto_honored=True,
         trace=TraceMetadata(source_data_timestamp=NOW),
     )
-    out = enrich_cio_entry_stops(
-        decision, quant, latest_prices={"NVDA": 100.0, "AAPL": 100.5}
-    )
+    out = enrich_cio_entry_stops(decision, quant, latest_prices={"NVDA": 100.0, "AAPL": 100.5})
     by_sym = {p.symbol: p for p in out.symbol_actions}
     assert by_sym["AAPL"].stop_loss == 97.5
     assert by_sym["MSFT"].stop_loss == 392.0  # default 2% below entry min

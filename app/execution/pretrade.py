@@ -100,15 +100,42 @@ class PretradeRiskValidator:
         snap = self.controls.snapshot()
         if snap.state.value == "emergency_stop":
             return self._blocked(
-                rid, intent_id, decision_id, quantity, requested_notional, ["emergency_stop"], equity, cash, gross_exposure, position_qty
+                rid,
+                intent_id,
+                decision_id,
+                quantity,
+                requested_notional,
+                ["emergency_stop"],
+                equity,
+                cash,
+                gross_exposure,
+                position_qty,
             )
         if snap.state.value == "paused":
             return self._blocked(
-                rid, intent_id, decision_id, quantity, requested_notional, ["system_paused"], equity, cash, gross_exposure, position_qty
+                rid,
+                intent_id,
+                decision_id,
+                quantity,
+                requested_notional,
+                ["system_paused"],
+                equity,
+                cash,
+                gross_exposure,
+                position_qty,
             )
         if hard_vetoes:
             return self._blocked(
-                rid, intent_id, decision_id, quantity, requested_notional, [f"hard_veto:{v}" for v in hard_vetoes], equity, cash, gross_exposure, position_qty
+                rid,
+                intent_id,
+                decision_id,
+                quantity,
+                requested_notional,
+                [f"hard_veto:{v}" for v in hard_vetoes],
+                equity,
+                cash,
+                gross_exposure,
+                position_qty,
             )
         if decision_expired:
             violations.append("decision_expired")
@@ -126,13 +153,24 @@ class PretradeRiskValidator:
             violations.append("data_quality_hard_fail")
         elif data_quality_score < self.settings.data_quality_warning_threshold:
             warnings.append("data_quality_warning")
-        if quote_age_seconds is not None and quote_age_seconds > self.settings.latest_quote_max_age_seconds * 20:
+        if (
+            quote_age_seconds is not None
+            and quote_age_seconds > self.settings.latest_quote_max_age_seconds * 20
+        ):
             violations.append("stale_quote")
         if spread_bps is not None and spread_bps > self.settings.max_order_spread_bps:
             violations.append("spread_too_wide")
-        if open_positions >= self.settings.max_open_positions and side.lower() == "buy" and position_qty <= 0:
+        if (
+            open_positions >= self.settings.max_open_positions
+            and side.lower() == "buy"
+            and position_qty <= 0
+        ):
             violations.append("max_open_positions")
-        if side.lower() in {"sell"} and quantity > abs(position_qty) + 1e-9 and not self.settings.enable_short_selling:
+        if (
+            side.lower() in {"sell"}
+            and quantity > abs(position_qty) + 1e-9
+            and not self.settings.enable_short_selling
+        ):
             # closing only
             if position_qty <= 0:
                 violations.append("short_selling_disabled")
@@ -140,7 +178,16 @@ class PretradeRiskValidator:
         if stop_price is None and side.lower() == "buy":
             violations.append("stop_required")
             return self._blocked(
-                rid, intent_id, decision_id, quantity, requested_notional, violations, equity, cash, gross_exposure, position_qty
+                rid,
+                intent_id,
+                decision_id,
+                quantity,
+                requested_notional,
+                violations,
+                equity,
+                cash,
+                gross_exposure,
+                position_qty,
             )
 
         sizing = size_position(
@@ -166,7 +213,9 @@ class PretradeRiskValidator:
                 risk_check_id=rid,
                 intent_id=intent_id,
                 decision_id=decision_id,
-                status=PretradeStatus.REJECTED if "emergency_stop" not in violations else PretradeStatus.SYSTEM_BLOCKED,
+                status=PretradeStatus.REJECTED
+                if "emergency_stop" not in violations
+                else PretradeStatus.SYSTEM_BLOCKED,
                 requested_quantity=quantity,
                 approved_quantity=0.0,
                 requested_notional=requested_notional,
@@ -202,7 +251,10 @@ class PretradeRiskValidator:
             position_before=position_qty,
             position_after=position_qty + signed,
             cash_before=cash,
-            cash_after=cash - (approved_qty * entry_price if side.lower() == "buy" else -approved_qty * entry_price),
+            cash_after=cash
+            - (
+                approved_qty * entry_price if side.lower() == "buy" else -approved_qty * entry_price
+            ),
             gross_exposure_before=gross_exposure,
             gross_exposure_after=gross_exposure + approved_qty * entry_price,
             risk_amount=sizing.risk_amount,

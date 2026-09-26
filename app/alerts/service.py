@@ -222,7 +222,10 @@ class AlertService:
         now = datetime.now(UTC)
         count = 0
         for alert in list(self._alerts.values()):
-            if alert.code == code and alert.status in {AlertStatus.ACTIVE, AlertStatus.ACKNOWLEDGED}:
+            if alert.code == code and alert.status in {
+                AlertStatus.ACTIVE,
+                AlertStatus.ACKNOWLEDGED,
+            }:
                 alert.status = AlertStatus.RESOLVED
                 alert.resolved_at = now
                 count += 1

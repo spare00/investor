@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.agents.roles import roles_snapshot
 from app.api.analysis import router as analysis_router
 from app.api.broker import router as broker_router
 from app.api.collection import router as collection_router
@@ -26,7 +27,6 @@ from app.api.portfolio import router as portfolio_router
 from app.api.trading import router as trading_router
 from app.api.universe import router as universe_router
 from app.api.workflow import router as workflow_router
-from app.agents.roles import roles_snapshot
 from app.core.config import get_settings
 from app.core.database import get_session_factory
 from app.core.logging import get_logger, setup_logging

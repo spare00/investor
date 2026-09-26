@@ -14,12 +14,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.core.metrics import (
     HARD_VETOES,
-    OPEN_POSITIONS,
-    ORDERS_BLOCKED,
     ORDERS_SUBMITTED,
-    PORTFOLIO_CASH,
-    PORTFOLIO_DRAWDOWN_PCT,
-    PORTFOLIO_EQUITY,
     TRADING_STATE,
     WORKFLOW_DURATION,
     WORKFLOW_RUNS,
@@ -70,12 +65,8 @@ class WorkflowResult:
                 "news": len(self.collection.news),
                 "markets": len(self.collection.markets),
             },
-            "cio": None
-            if self.analysis is None
-            else self.analysis.cio.model_dump(mode="json"),
-            "risk": None
-            if self.analysis is None
-            else self.analysis.risk.model_dump(mode="json"),
+            "cio": None if self.analysis is None else self.analysis.cio.model_dump(mode="json"),
+            "risk": None if self.analysis is None else self.analysis.risk.model_dump(mode="json"),
             "validation": None
             if self.validation is None
             else {
@@ -343,9 +334,7 @@ class WorkflowService:
             applied = await univ.apply_session_context(
                 holdings=held, market_regime=regime, themes=themes
             )
-            notes.append(
-                f"universe_context_applied:{regime}:boosted={applied.get('boosted', 0)}"
-            )
+            notes.append(f"universe_context_applied:{regime}:boosted={applied.get('boosted', 0)}")
             # Refresh entry/horizon map after priority boosts (same symbols, updated focus).
             entry_universe = await univ.entry_universe()
             horizons = await univ.horizon_by_symbol()
@@ -419,9 +408,7 @@ class WorkflowService:
         for code in analysis.risk.hard_vetoes:
             HARD_VETOES.labels(code=str(code)[:64]).inc()
         for order in orders:
-            ORDERS_SUBMITTED.labels(
-                symbol=order.symbol, side=order.side, status=order.status
-            ).inc()
+            ORDERS_SUBMITTED.labels(symbol=order.symbol, side=order.side, status=order.status).inc()
 
         TRADING_STATE.set(trading_state_value(trading_controls.snapshot().state.value))
         finished = datetime.now(UTC)
@@ -434,9 +421,7 @@ class WorkflowService:
             risk_verdict=analysis.risk.overall_verdict.value,
             intent_count=int(execution.get("intent_count") or 0),
         )
-        WORKFLOW_DURATION.labels(kind="premarket").observe(
-            (finished - started).total_seconds()
-        )
+        WORKFLOW_DURATION.labels(kind="premarket").observe((finished - started).total_seconds())
         outcome = "ok"
         if collection.fail_closed:
             outcome = "fail_closed"
@@ -492,7 +477,9 @@ class WorkflowService:
             from app.universe.reeval import min_reeval_seconds_for_symbols
             from app.universe.service import UniverseService
 
-            horizons = await UniverseService(self.session, settings=self.settings).horizon_by_symbol()
+            horizons = await UniverseService(
+                self.session, settings=self.settings
+            ).horizon_by_symbol()
             min_secs = min_reeval_seconds_for_symbols(held_syms, horizons, self.settings)
         except Exception:  # noqa: BLE001
             min_secs = self.settings.intraday_min_reeval_seconds

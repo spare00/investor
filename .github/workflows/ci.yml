@@ -18,6 +18,13 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -e ".[dev]"
+      - name: Lint
+        run: |
+          ruff check app tests
+          ruff format --check app tests
+      - name: Typecheck (strict allowlist)
+        # Grow this list as modules are made strict-clean. Do not `mypy app`.
+        run: mypy --strict app/core/logging.py app/execution/sizing.py
       - name: Unit tests
         run: pytest tests/unit -q
         env:

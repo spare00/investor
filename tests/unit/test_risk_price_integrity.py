@@ -13,7 +13,6 @@ from app.risk.types import VetoCode
 from app.schemas.risk_manager import PortfolioStateInput, RiskManagerInput
 from app.services.llm import StubLLMClient
 
-
 NOW = datetime(2026, 8, 6, 16, 0, tzinfo=UTC)
 
 

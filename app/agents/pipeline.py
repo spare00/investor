@@ -16,7 +16,12 @@ from app.agents.quant_strategist import QuantStrategistAgent
 from app.agents.risk_manager import RiskManagerAgent
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
-from app.market.book_context import VenueBookContext, build_venue_book_context, index_symbols_for_venue
+from app.market.book_context import (
+    VenueBookContext,
+    build_venue_book_context,
+    index_symbols_for_venue,
+)
+from app.market.live_prices import assess_collection_price_integrity
 from app.schemas import (
     DevilsAdvocateOutput,
     MacroStrategistOutput,
@@ -37,7 +42,6 @@ from app.schemas.risk_manager import (
 )
 from app.services.collection import CollectionBundle
 from app.services.llm import LLMClient
-from app.market.live_prices import assess_collection_price_integrity
 from app.universe.horizons import (
     align_cio_horizons,
     enrich_watchlist_context,
@@ -311,7 +315,9 @@ class AgentPipeline:
                 dxy=collection.macro.dxy if collection.macro else None,
                 wti_oil=collection.macro.wti_oil if collection.macro else None,
                 gold=collection.macro.gold if collection.macro else None,
-                hy_credit_spread_bps=collection.macro.hy_credit_spread_bps if collection.macro else None,
+                hy_credit_spread_bps=collection.macro.hy_credit_spread_bps
+                if collection.macro
+                else None,
                 notes=list(collection.macro.notes) if collection.macro else [],
             ),
             market_intelligence_summary=mi_summary_for_downstream(mi_out),
@@ -501,11 +507,15 @@ class AgentPipeline:
         from app.agents.cio import ensure_cio_takes_setups, reconcile_nameless_entry
         from app.market.paper_gates import paper_aggressive_entries
 
-        risk_ok = risk_out.overall_verdict in {
-            RiskVerdict.APPROVED,
-            RiskVerdict.CONDITIONAL,
-            RiskVerdict.SIZE_REDUCED,
-        } and not risk_out.halt_new_trades
+        risk_ok = (
+            risk_out.overall_verdict
+            in {
+                RiskVerdict.APPROVED,
+                RiskVerdict.CONDITIONAL,
+                RiskVerdict.SIZE_REDUCED,
+            }
+            and not risk_out.halt_new_trades
+        )
         cio_out = ensure_cio_takes_setups(
             cio_out,
             quant=quant_out,

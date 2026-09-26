@@ -8,7 +8,7 @@ market changes.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 
 from app.core.config import Settings, get_settings
@@ -43,7 +43,9 @@ class VenueBookContext:
         )
 
 
-def index_symbols_for_venue(venue: Venue | str, settings: Settings | None = None) -> tuple[str, ...]:
+def index_symbols_for_venue(
+    venue: Venue | str, settings: Settings | None = None
+) -> tuple[str, ...]:
     cfg = settings or get_settings()
     v = parse_venue(venue) or Venue.US
     if v == Venue.AU:

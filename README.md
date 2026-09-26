@@ -249,9 +249,13 @@ IBKR Gateway must be running; set `BROKER_PROVIDER=ibkr` and IBKR_* in `.env` fo
 
 ## Risk policy defaults
 
+Percent caps apply to **current equity**. `STARTING_CASH=25000` is the mock/sim
+fallback when no broker NAV is available. IBKR paper uses the Gateway account
+(this firm is AUD, dual US/AU books) — do not size against 25,000.
+
 | Parameter | Default |
 |-----------|---------|
-| Starting cash | 25,000 |
+| Starting cash (mock/sim only) | 25,000 |
 | Max position | 10% |
 | Max sector | 30% |
 | Max gross exposure | 70% |

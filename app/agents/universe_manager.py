@@ -26,7 +26,9 @@ class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput
     def build_user_prompt(self, payload: UniverseManagerInput) -> str:
         return universe_brief(payload)
 
-    def fallback_output(self, payload: UniverseManagerInput, *, reason: str) -> UniverseManagerOutput:
+    def fallback_output(
+        self, payload: UniverseManagerInput, *, reason: str
+    ) -> UniverseManagerOutput:
         """Deterministic seed: keep allowlist/seed as short+day mix, focus = holdings ∪ top seed."""
         proposals: list[WatchlistProposal] = []
         seed = [s.upper() for s in payload.seed_pool] or [
@@ -45,7 +47,11 @@ class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput
                 WatchlistProposal(
                     symbol=sym,
                     horizon=horizon,
-                    action="keep" if any(str(w.get("symbol", "")).upper() == sym for w in payload.current_watchlist) else "add",
+                    action="keep"
+                    if any(
+                        str(w.get("symbol", "")).upper() == sym for w in payload.current_watchlist
+                    )
+                    else "add",
                     priority=max(10, 90 - i * 3),
                     thesis=f"Fallback seed for {horizon.value} book",
                     invalidation="Liquidity or thesis break",

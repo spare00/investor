@@ -141,7 +141,9 @@ class OpenAICompatibleClient:
             tok = cfg.llm_local_max_tokens
         else:
             tok = cfg.llm_max_tokens
-        ctx = num_ctx if num_ctx is not None else (cfg.llm_local_num_ctx if cfg.llm_is_local() else 0)
+        ctx = (
+            num_ctx if num_ctx is not None else (cfg.llm_local_num_ctx if cfg.llm_is_local() else 0)
+        )
         payload: dict[str, Any] = {
             "model": model or cfg.llm_model,
             "temperature": cfg.llm_temperature if temperature is None else temperature,
@@ -171,11 +173,7 @@ class OpenAICompatibleClient:
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, headers=headers, json=payload)
-            if (
-                response.status_code >= 400
-                and cfg.llm_is_local()
-                and "response_format" in payload
-            ):
+            if response.status_code >= 400 and cfg.llm_is_local() and "response_format" in payload:
                 # Some Ollama builds reject json_object; retry as plain chat.
                 payload = dict(payload)
                 payload.pop("response_format", None)

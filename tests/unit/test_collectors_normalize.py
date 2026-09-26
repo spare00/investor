@@ -77,9 +77,10 @@ def test_stale_news_lowers_quality() -> None:
         published_at=now - timedelta(minutes=5),
         provider="stub",
     )
-    assert normalize_news_item(stale, now=now).quality_score < normalize_news_item(
-        fresh, now=now
-    ).quality_score
+    assert (
+        normalize_news_item(stale, now=now).quality_score
+        < normalize_news_item(fresh, now=now).quality_score
+    )
 
 
 def test_universe_blocks_penny_and_non_allowlist() -> None:
@@ -137,9 +138,10 @@ def test_eligibility_uses_horizon_liquidity_bars() -> None:
         )
     )
     assert evaluate_symbol_eligibility(mid, settings=settings).eligible is True
-    assert "insufficient_volume" in evaluate_symbol_eligibility(
-        mid, settings=settings, horizon="scalp"
-    ).reasons
+    assert (
+        "insufficient_volume"
+        in evaluate_symbol_eligibility(mid, settings=settings, horizon="scalp").reasons
+    )
     assert evaluate_symbol_eligibility(mid, settings=settings, horizon="short").eligible is True
 
 

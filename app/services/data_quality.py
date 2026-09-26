@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 
-
 _WHITESPACE = re.compile(r"\s+")
 
 

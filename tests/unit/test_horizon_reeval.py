@@ -55,12 +55,8 @@ def test_horizon_stop_and_overnight_policy() -> None:
     assert closing_policy_for_horizon("short") == "OVERNIGHT_WITH_EVENT_REVIEW"
     assert closing_policy_for_horizon("medium") == "ALLOW_OVERNIGHT"
 
-    scalp_stop = suggested_long_stop(
-        reference=100.0, atr=1.0, policy=policy_for("scalp")
-    )
-    medium_stop = suggested_long_stop(
-        reference=100.0, atr=1.0, policy=policy_for("medium")
-    )
+    scalp_stop = suggested_long_stop(reference=100.0, atr=1.0, policy=policy_for("scalp"))
+    medium_stop = suggested_long_stop(reference=100.0, atr=1.0, policy=policy_for("medium"))
     assert scalp_stop == 99.0
     assert medium_stop == 96.5
     assert medium_stop < scalp_stop
@@ -68,9 +64,10 @@ def test_horizon_stop_and_overnight_policy() -> None:
     ctx = enrich_watchlist_context([{"symbol": "qqq", "horizon": "scalp"}])
     assert ctx[0]["stop_atr_mult"] == 1.0
     assert ctx[0]["overnight_default"] is False
-    assert news_lookback_minutes_for_symbols(
-        {"QQQ": "scalp", "MSFT": "medium"}, default_minutes=90
-    ) == 360
+    assert (
+        news_lookback_minutes_for_symbols({"QQQ": "scalp", "MSFT": "medium"}, default_minutes=90)
+        == 360
+    )
 
 
 def test_align_cio_horizons_from_watchlist() -> None:
@@ -106,9 +103,7 @@ def test_align_cio_horizons_from_watchlist() -> None:
         risk_approval=True,
         trace=TraceMetadata(),
     )
-    out = align_cio_horizons(
-        decision, [{"symbol": "MSFT", "horizon": "medium"}]
-    )
+    out = align_cio_horizons(decision, [{"symbol": "MSFT", "horizon": "medium"}])
     assert out.symbol_actions[0].time_horizon is TimeHorizon.POSITION
     assert out.symbol_actions[0].max_holding_time_minutes == 60 * 24 * 60
 
@@ -116,13 +111,9 @@ def test_align_cio_horizons_from_watchlist() -> None:
 def test_planned_interval_floors_by_llm_budget() -> None:
     settings = Settings(intraday_reevaluation_interval_minutes=30, max_intraday_reanalyses=12)
     # 360m session / ceil(12*1.5)=18 jobs → 20m floor → scalp 2m becomes 20m
-    assert (
-        planned_intraday_interval_minutes(["scalp"], settings, session_minutes=360) == 20
-    )
+    assert planned_intraday_interval_minutes(["scalp"], settings, session_minutes=360) == 20
     # Medium still 60 (above floor)
-    assert (
-        planned_intraday_interval_minutes(["medium"], settings, session_minutes=360) == 60
-    )
+    assert planned_intraday_interval_minutes(["medium"], settings, session_minutes=360) == 60
 
 
 def test_min_among_open_books_picks_tightest() -> None:

@@ -95,7 +95,9 @@ async def performance_risk(
         start,
         end,
         benchmark_name=benchmark or settings.primary_benchmark,
-        risk_free_rate=risk_free_rate if risk_free_rate is not None else settings.risk_free_rate_annual,
+        risk_free_rate=risk_free_rate
+        if risk_free_rate is not None
+        else settings.risk_free_rate_annual,
     )
 
 
@@ -202,7 +204,9 @@ async def performance_recalculate(
         start,
         end,
         benchmark_name=body.benchmark or settings.primary_benchmark,
-        risk_free_rate=body.risk_free_rate if body.risk_free_rate is not None else settings.risk_free_rate_annual,
+        risk_free_rate=body.risk_free_rate
+        if body.risk_free_rate is not None
+        else settings.risk_free_rate_annual,
     )
     run_row = MetricCalculationRun(
         id=UUID(result["run_id"]),

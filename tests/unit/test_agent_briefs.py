@@ -27,7 +27,11 @@ from app.schemas.common import (
     VolatilityState,
 )
 from app.schemas.devils_advocate import DevilsAdvocateInput, DevilsAdvocateOutput, ProposedThesis
-from app.schemas.macro_strategist import MacroSnapshotInput, MacroStrategistInput, MacroStrategistOutput
+from app.schemas.macro_strategist import (
+    MacroSnapshotInput,
+    MacroStrategistInput,
+    MacroStrategistOutput,
+)
 from app.schemas.market_intelligence import (
     MarketEvent,
     MarketIntelligenceInput,
@@ -250,8 +254,7 @@ def test_universe_brief_stays_small_with_full_membership() -> None:
 
     pool = [f"S{i:03d}" for i in range(500)]
     watch = [
-        {"symbol": sym, "horizon": "short", "priority": 50, "status": "active"}
-        for sym in pool[:40]
+        {"symbol": sym, "horizon": "short", "priority": 50, "status": "active"} for sym in pool[:40]
     ]
     text = universe_brief(
         UniverseManagerInput(

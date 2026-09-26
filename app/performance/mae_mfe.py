@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from app.performance.types import MetricResult, MetricStatus, metric_result
 
@@ -30,10 +30,13 @@ def compute_mae_mfe(
     stop_distance: float | None,
     prices_during_hold: Sequence[PricePoint],
 ) -> MaeMfeResult:
-    unavailable = lambda name: metric_result(name, None, status=MetricStatus.UNAVAILABLE, method="long_mae_mfe")
-    insufficient = lambda name: metric_result(
-        name, None, status=MetricStatus.INSUFFICIENT_DATA, method="long_mae_mfe"
-    )
+    def unavailable(name: str) -> MetricResult:
+        return metric_result(name, None, status=MetricStatus.UNAVAILABLE, method="long_mae_mfe")
+
+    def insufficient(name: str) -> MetricResult:
+        return metric_result(
+            name, None, status=MetricStatus.INSUFFICIENT_DATA, method="long_mae_mfe"
+        )
 
     if not prices_during_hold or entry_price <= 0:
         return MaeMfeResult(

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alerts.ops import emit_emergency_stop_alert, emit_reconciliation_alert
@@ -18,7 +19,6 @@ from app.execution.safety_controls import trading_controls
 from app.intraday.broker_updates import BrokerUpdateProcessor
 from app.intraday.events import IntradayEventBus
 from app.models import IntradayEvent, IntradayRecoveryRun, Order, PositionLifecycle
-from sqlalchemy import select
 
 logger = get_logger(__name__)
 
@@ -73,7 +73,9 @@ class IntradayRecoveryService:
                 remote_orders=book.orders
             )
         else:
-            poll = await BrokerUpdateProcessor(self.session, settings=self.settings).poll_and_apply()
+            poll = await BrokerUpdateProcessor(
+                self.session, settings=self.settings
+            ).poll_and_apply()
         actions.append(f"broker_poll_updated:{poll.get('updated')}")
 
         # 3b. Mirror broker positions into PositionLifecycle
@@ -85,7 +87,9 @@ class IntradayRecoveryService:
                     positions=book.positions,
                 )
             else:
-                sync = await PositionManager(self.session, settings=self.settings).sync_from_broker()
+                sync = await PositionManager(
+                    self.session, settings=self.settings
+                ).sync_from_broker()
             lifecycle_sync = sync.get("lifecycles") or {}
             actions.append(
                 f"lifecycles_upserted:{lifecycle_sync.get('upserted', 0)}"
@@ -101,7 +105,9 @@ class IntradayRecoveryService:
             (
                 await self.session.execute(
                     select(PositionLifecycle).where(
-                        PositionLifecycle.status.in_(["OPEN", "PENDING_OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"])
+                        PositionLifecycle.status.in_(
+                            ["OPEN", "PENDING_OPEN", "ADDING", "REDUCING", "PENDING_CLOSE"]
+                        )
                     )
                 )
             )
@@ -114,7 +120,9 @@ class IntradayRecoveryService:
         unknown = list(
             (
                 await self.session.execute(
-                    select(Order).where(Order.status.in_(["UNKNOWN", "RECONCILIATION_REQUIRED", "pending_submit"]))
+                    select(Order).where(
+                        Order.status.in_(["UNKNOWN", "RECONCILIATION_REQUIRED", "pending_submit"])
+                    )
                 )
             )
             .scalars()
@@ -127,10 +135,7 @@ class IntradayRecoveryService:
 
             fold = await fold_session_residue(self.session)
             if any(fold.values()):
-                actions.append(
-                    "session_fold:"
-                    + ",".join(f"{k}={v}" for k, v in fold.items() if v)
-                )
+                actions.append("session_fold:" + ",".join(f"{k}={v}" for k, v in fold.items() if v))
         except Exception as exc:  # noqa: BLE001
             actions.append(f"session_fold_error:{str(exc)[:80]}")
 

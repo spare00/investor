@@ -54,7 +54,10 @@ class RevalidationService:
         attempt = int(run.revalidation_count) + 1
         fixture = fixture or {}
         status = self.calendar.get_market_status(now)
-        details: dict[str, Any] = {"market_phase": status.phase, "session": status.session.to_dict()}
+        details: dict[str, Any] = {
+            "market_phase": status.phase,
+            "session": status.session.to_dict(),
+        }
 
         if fixture.get("force_holiday"):
             report = RevalidationReport(

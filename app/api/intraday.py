@@ -59,7 +59,9 @@ async def list_events(session: AsyncSession = Depends(get_db_session)) -> dict[s
 
 
 @router.get("/intraday/events/{event_id}")
-async def get_event(event_id: UUID, session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def get_event(
+    event_id: UUID, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
     row = await session.get(IntradayEvent, event_id)
     if row is None:
         raise HTTPException(404, "event_not_found")
@@ -73,7 +75,9 @@ async def get_event(event_id: UUID, session: AsyncSession = Depends(get_db_sessi
 
 
 @router.post("/intraday/events/{event_id}/process")
-async def process_event(event_id: UUID, session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def process_event(
+    event_id: UUID, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
     row = await IntradayService(session).bus.mark(event_id, "PROCESSING")
     if row is None:
         raise HTTPException(404, "event_not_found")
@@ -85,7 +89,13 @@ async def process_event(event_id: UUID, session: AsyncSession = Depends(get_db_s
 @router.get("/intraday/decisions")
 async def list_decisions(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     rows = list(
-        (await session.execute(select(IntradayDecisionRecord).order_by(IntradayDecisionRecord.as_of.desc()).limit(50)))
+        (
+            await session.execute(
+                select(IntradayDecisionRecord)
+                .order_by(IntradayDecisionRecord.as_of.desc())
+                .limit(50)
+            )
+        )
         .scalars()
         .all()
     )
@@ -103,7 +113,9 @@ async def list_decisions(session: AsyncSession = Depends(get_db_session)) -> dic
 
 
 @router.post("/intraday/evaluate")
-async def evaluate(fake_llm: bool = True, session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def evaluate(
+    fake_llm: bool = True, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
     result = await IntradayService(session).agents.evaluate(fake_llm=fake_llm)
     await session.commit()
     return result
@@ -135,12 +147,16 @@ async def monitored(session: AsyncSession = Depends(get_db_session)) -> dict[str
 
 
 @router.get("/positions/{position_id}/snapshots")
-async def snapshots(position_id: UUID, session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def snapshots(
+    position_id: UUID, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
     return {"snapshots": await IntradayService(session).snapshots(position_id)}
 
 
 @router.get("/positions/{position_id}/risk")
-async def position_risk(position_id: UUID, session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def position_risk(
+    position_id: UUID, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
     lc = await session.get(PositionLifecycle, position_id)
     if lc is None:
         raise HTTPException(404, "position_not_found")
@@ -152,16 +168,24 @@ async def position_risk(position_id: UUID, session: AsyncSession = Depends(get_d
 
 
 @router.get("/positions/{position_id}/exit-policy")
-async def exit_policy(position_id: UUID, session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def exit_policy(
+    position_id: UUID, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
     lc = await session.get(PositionLifecycle, position_id)
     if lc is None:
         raise HTTPException(404, "position_not_found")
-    return {"position_id": str(position_id), "exit_policy": lc.exit_policy, "stop_price": lc.stop_price}
+    return {
+        "position_id": str(position_id),
+        "exit_policy": lc.exit_policy,
+        "stop_price": lc.stop_price,
+    }
 
 
 @router.post("/positions/{position_id}/review")
 async def review_position(
-    position_id: UUID, body: PricesBody | None = None, session: AsyncSession = Depends(get_db_session)
+    position_id: UUID,
+    body: PricesBody | None = None,
+    session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     lc = await session.get(PositionLifecycle, position_id)
     if lc is None:
@@ -187,7 +211,9 @@ async def reduce_position(
 
 
 @router.post("/positions/{position_id}/close")
-async def close_position(position_id: UUID, session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def close_position(
+    position_id: UUID, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
     try:
         result = await IntradayService(session).close_position(position_id)
     except ValueError as exc:
@@ -234,19 +260,28 @@ async def postmarket_settle(session: AsyncSession = Depends(get_db_session)) -> 
 @router.get("/posttrade/reviews")
 async def list_reviews(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     rows = list(
-        (await session.execute(select(PostTradeReviewRecord).order_by(PostTradeReviewRecord.created_at.desc()).limit(50)))
+        (
+            await session.execute(
+                select(PostTradeReviewRecord)
+                .order_by(PostTradeReviewRecord.created_at.desc())
+                .limit(50)
+            )
+        )
         .scalars()
         .all()
     )
     return {
         "reviews": [
-            {"review_id": str(r.id), "symbol": r.symbol, "outcome": r.outcome, "pnl": r.pnl} for r in rows
+            {"review_id": str(r.id), "symbol": r.symbol, "outcome": r.outcome, "pnl": r.pnl}
+            for r in rows
         ]
     }
 
 
 @router.get("/posttrade/reviews/{review_id}")
-async def get_review(review_id: UUID, session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+async def get_review(
+    review_id: UUID, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
     row = await session.get(PostTradeReviewRecord, review_id)
     if row is None:
         raise HTTPException(404, "review_not_found")

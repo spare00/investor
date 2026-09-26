@@ -238,9 +238,9 @@ def test_sanitize_live_schema_fallbacks_v2() -> None:
 
 def test_sanitize_live_log_failures_v3() -> None:
     """Reproduce Aug-6 RTH validation failures that caused fallback despite OpenAI 200 OK."""
+    from app.agents.llm_sanitize import sanitize_for_model
     from app.schemas.cio import CIODecision
     from app.schemas.devils_advocate import DevilsAdvocateOutput
-    from app.agents.llm_sanitize import sanitize_for_model
 
     mi = MarketIntelligenceOutput.model_validate(
         sanitize_for_model(

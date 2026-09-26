@@ -308,11 +308,15 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
             symbol_action_for_exit,
         )
 
-        risk_ok = payload.risk.overall_verdict in {
-            RiskVerdict.APPROVED,
-            RiskVerdict.CONDITIONAL,
-            RiskVerdict.SIZE_REDUCED,
-        } and not payload.risk.halt_new_trades
+        risk_ok = (
+            payload.risk.overall_verdict
+            in {
+                RiskVerdict.APPROVED,
+                RiskVerdict.CONDITIONAL,
+                RiskVerdict.SIZE_REDUCED,
+            }
+            and not payload.risk.halt_new_trades
+        )
 
         regime = payload.macro.market_regime
         positions = self._scoped_positions(payload)

@@ -131,9 +131,11 @@ async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSess
     assert 8 <= len(intra) <= 25
     from app.market.calendar import MarketCalendarService
 
-    close = MarketCalendarService(settings).get_session(
-        datetime(2026, 8, 3, tzinfo=UTC).date()
-    ).regular_close
+    close = (
+        MarketCalendarService(settings)
+        .get_session(datetime(2026, 8, 3, tzinfo=UTC).date())
+        .regular_close
+    )
     assert close is not None
     last = max(datetime.fromisoformat(j["planned_at"]) for j in intra)
     if last.tzinfo is None:
@@ -144,8 +146,9 @@ async def test_prepare_plans_dense_intraday_when_scalp_seeded(session: AsyncSess
 
 @pytest.mark.asyncio
 async def test_replan_intraday_jobs_after_horizon_change(session: AsyncSession) -> None:
-    from app.models import WatchlistSymbol
     from sqlalchemy import select
+
+    from app.models import WatchlistSymbol
 
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-08-03")
@@ -235,9 +238,7 @@ async def test_evaluate_intraday_skips_after_closing(session: AsyncSession) -> N
     await svc.run_analysis(session_date="2026-08-03", fake_llm=True)
     now = datetime(2026, 8, 3, 13, 0, tzinfo=UTC)
     await svc.revalidate(session_date="2026-08-03", now=now)
-    await svc.start_closing(
-        session_date="2026-08-03", positions=[{"symbol": "SPY", "quantity": 1}]
-    )
+    await svc.start_closing(session_date="2026-08-03", positions=[{"symbol": "SPY", "quantity": 1}])
     with pytest.raises(DailyWorkflowError, match="intraday_not_allowed_from:CLOSING_WINDOW"):
         await svc.evaluate_intraday(
             session_date="2026-08-03", trigger="interval", now=now, fake_llm=True
@@ -288,9 +289,7 @@ async def test_revalidation_hard_veto(session: AsyncSession) -> None:
     await svc.prepare(session_date="2026-08-03")
     await svc.run_analysis(session_date="2026-08-03", fake_llm=True)
     now = datetime(2026, 8, 3, 13, 20, tzinfo=UTC)
-    hard = await svc.revalidate(
-        session_date="2026-08-03", now=now, fixture={"hard_veto": True}
-    )
+    hard = await svc.revalidate(session_date="2026-08-03", now=now, fixture={"hard_veto": True})
     assert hard["revalidation"]["result"] == "NO_TRADE"
 
 
@@ -307,7 +306,11 @@ async def test_revalidation_stale_triggers_reanalysis(session: AsyncSession) -> 
     # the session stuck in PREOPEN_REVALIDATION.
     assert "follow_up" in r1
     assert r1["current_state"] == DailyWorkflowState.INTRADAY.value
-    assert r1.get("revalidation", {}).get("result") in {"VALID", "VALID_WITH_RESTRICTIONS", "NO_TRADE"}
+    assert r1.get("revalidation", {}).get("result") in {
+        "VALID",
+        "VALID_WITH_RESTRICTIONS",
+        "NO_TRADE",
+    }
 
 
 @pytest.mark.asyncio
@@ -356,16 +359,21 @@ async def test_catch_up_enters_intraday_after_open(session: AsyncSession) -> Non
 
 @pytest.mark.asyncio
 async def test_catch_up_marks_planned_premarket_jobs_completed(session: AsyncSession) -> None:
-    from app.models import ScheduledJobRecord
     from sqlalchemy import select
+
+    from app.models import ScheduledJobRecord
 
     svc = DailyWorkflowService(session, settings=get_settings())
     await svc.prepare(session_date="2026-08-04")
     jobs = (
-        await session.execute(
-            select(ScheduledJobRecord).where(ScheduledJobRecord.session_date == "2026-08-04")
+        (
+            await session.execute(
+                select(ScheduledJobRecord).where(ScheduledJobRecord.session_date == "2026-08-04")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_key = {j.job_key: j for j in jobs}
     assert by_key["US:premarket_analysis"].status == "planned"
     assert by_key["US:preopen_revalidation"].status == "planned"

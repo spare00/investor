@@ -131,7 +131,9 @@ class AuditService:
                 if book:
                     plan["universe_horizon"] = book
                 if plan.get("decision_price") is None:
-                    zone = plan.get("entry_zone") if isinstance(plan.get("entry_zone"), dict) else None
+                    zone = (
+                        plan.get("entry_zone") if isinstance(plan.get("entry_zone"), dict) else None
+                    )
                     resolved = await resolver.decision_price(
                         sym,
                         cio.timestamp,

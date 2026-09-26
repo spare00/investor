@@ -67,7 +67,11 @@ class IntradayAgentService:
         mode = resolve_mode(self.settings, emergency=emergency, paused=paused)
         caps = ModeCapabilities(mode)
         if not caps.can_analyze:
-            return {"skipped": True, "reason": f"mode:{mode.value}", "broker_orders_submitted": False}
+            return {
+                "skipped": True,
+                "reason": f"mode:{mode.value}",
+                "broker_orders_submitted": False,
+            }
 
         if not self.settings.enable_intraday_agent_reanalysis:
             return {"skipped": True, "reason": "enable_intraday_agent_reanalysis_false"}
@@ -217,10 +221,18 @@ class IntradayAgentService:
             symbol_payload = []
             for a in actions:
                 act = a.action.value
-                if a.symbol.upper() not in held_set and act in {"BUY", "STRONG_BUY", "SCALE_IN", "ADD"}:
+                if a.symbol.upper() not in held_set and act in {
+                    "BUY",
+                    "STRONG_BUY",
+                    "SCALE_IN",
+                    "ADD",
+                }:
                     if mode == IntradayOperationMode.OBSERVE_ONLY or not caps.can_create_intent:
                         act = "NO_ACTION"
-                    elif not self.settings.allow_new_positions_in_closing_window and mode != IntradayOperationMode.PAPER_AUTOMATED:
+                    elif (
+                        not self.settings.allow_new_positions_in_closing_window
+                        and mode != IntradayOperationMode.PAPER_AUTOMATED
+                    ):
                         # still allow drafts in manual/analyze; mark later
                         pass
                 symbol_payload.append(
@@ -279,7 +291,11 @@ class IntradayAgentService:
                     horizon_by_symbol=horizons,
                 )
             elif caps.can_create_intent and caps.intents_are_draft_only:
-                execution = {"intent_count": 0, "broker_orders_submitted": False, "notes": ["draft_only_mode"]}
+                execution = {
+                    "intent_count": 0,
+                    "broker_orders_submitted": False,
+                    "notes": ["draft_only_mode"],
+                }
 
             run.status = "COMPLETED"
             run.payload = {

@@ -32,7 +32,9 @@ class ClosedTrade:
 
 
 def _status_for_empty(name: str) -> MetricResult:
-    return metric_result(name, None, status=MetricStatus.INSUFFICIENT_DATA, method="position_lifecycle")
+    return metric_result(
+        name, None, status=MetricStatus.INSUFFICIENT_DATA, method="position_lifecycle"
+    )
 
 
 def _float_metric(name: str, value: float | None, *, count: int, method: str) -> MetricResult:
@@ -80,12 +82,10 @@ def compute_trade_metrics(trades: list[ClosedTrade]) -> dict[str, MetricResult |
     holdings = [t.holding_minutes for t in trades]
     risks = [t.risk_amount for t in trades if t.risk_amount and t.risk_amount > 0]
     r_multiples = [
-        (t.pnl - t.fees) / t.risk_amount
-        for t in trades
-        if t.risk_amount and t.risk_amount > 0
+        (t.pnl - t.fees) / t.risk_amount for t in trades if t.risk_amount and t.risk_amount > 0
     ]
 
-    max_w = max_cw = max_cl = cw = cl = 0
+    max_cw = max_cl = cw = cl = 0
     for p in net_pnls:
         if p > 0:
             cw += 1
@@ -104,17 +104,27 @@ def compute_trade_metrics(trades: list[ClosedTrade]) -> dict[str, MetricResult |
         "loss_rate": _float_metric("loss_rate", loss_rate, count=n, method=method),
         "avg_win": _float_metric("avg_win", avg_win, count=len(wins), method=method),
         "avg_loss": _float_metric("avg_loss", avg_loss, count=len(losses), method=method),
-        "largest_win": _float_metric("largest_win", max(wins) if wins else None, count=len(wins), method=method),
-        "largest_loss": _float_metric("largest_loss", min(losses) if losses else None, count=len(losses), method=method),
+        "largest_win": _float_metric(
+            "largest_win", max(wins) if wins else None, count=len(wins), method=method
+        ),
+        "largest_loss": _float_metric(
+            "largest_loss", min(losses) if losses else None, count=len(losses), method=method
+        ),
         "profit_factor": _float_metric("profit_factor", profit_factor, count=n, method=method),
         "expectancy": _float_metric("expectancy", expectancy, count=n, method=method),
         "payoff_ratio": _float_metric("payoff_ratio", payoff, count=n, method=method),
-        "avg_holding_minutes": _float_metric("avg_holding_minutes", statistics.mean(holdings), count=n, method=method),
+        "avg_holding_minutes": _float_metric(
+            "avg_holding_minutes", statistics.mean(holdings), count=n, method=method
+        ),
         "median_holding_minutes": _float_metric(
             "median_holding_minutes", statistics.median(holdings), count=n, method=method
         ),
-        "max_consecutive_wins": _float_metric("max_consecutive_wins", float(max_cw), count=n, method=method),
-        "max_consecutive_losses": _float_metric("max_consecutive_losses", float(max_cl), count=n, method=method),
+        "max_consecutive_wins": _float_metric(
+            "max_consecutive_wins", float(max_cw), count=n, method=method
+        ),
+        "max_consecutive_losses": _float_metric(
+            "max_consecutive_losses", float(max_cl), count=n, method=method
+        ),
         "avg_risk_amount": _float_metric(
             "avg_risk_amount",
             statistics.mean(risks) if risks else None,

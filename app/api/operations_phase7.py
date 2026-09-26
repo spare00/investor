@@ -107,10 +107,7 @@ async def operations_metrics(session: AsyncSession = Depends(get_db_session)) ->
     kpis = PerformanceService(session).operational(counters)
     return {
         "counters": counters,
-        "kpis": {
-            k: (v.__dict__ if hasattr(v, "__dict__") else v)
-            for k, v in kpis.items()
-        },
+        "kpis": {k: (v.__dict__ if hasattr(v, "__dict__") else v) for k, v in kpis.items()},
     }
 
 
@@ -153,7 +150,9 @@ async def operations_alert_detail(
                 "status": alert.status.value,
                 "context": alert.context,
                 "created_at": alert.created_at.isoformat(),
-                "acknowledged_at": None if alert.acknowledged_at is None else alert.acknowledged_at.isoformat(),
+                "acknowledged_at": None
+                if alert.acknowledged_at is None
+                else alert.acknowledged_at.isoformat(),
                 "resolved_at": None if alert.resolved_at is None else alert.resolved_at.isoformat(),
             }
     raise HTTPException(404, "alert_not_found")
@@ -225,9 +224,13 @@ async def list_simulations(
     rows = list(
         (
             await session.execute(
-                select(SimulationRunRecord).order_by(desc(SimulationRunRecord.created_at)).limit(limit)
+                select(SimulationRunRecord)
+                .order_by(desc(SimulationRunRecord.created_at))
+                .limit(limit)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     return {
         "simulations": [
@@ -297,7 +300,11 @@ async def cancel_simulation(
     if row is None:
         raise HTTPException(404, "simulation_not_found")
     if row.status in {"CANCELLED", "COMPLETED"}:
-        return {"simulation_id": str(simulation_id), "status": row.status, "note": "already_terminal"}
+        return {
+            "simulation_id": str(simulation_id),
+            "status": row.status,
+            "note": "already_terminal",
+        }
     row.status = "CANCELLED"
     _active_simulations[str(simulation_id)] = "CANCELLED"
     await session.commit()

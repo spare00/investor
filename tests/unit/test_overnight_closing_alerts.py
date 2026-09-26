@@ -10,6 +10,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.alerts.base import AlertSeverity
 from app.alerts.ops import (
     emit_emergency_stop_alert,
@@ -19,7 +20,6 @@ from app.alerts.ops import (
 from app.alerts.service import AlertService
 from app.core.config import Settings, TradingMode, clear_settings_cache
 from app.core.database import Base
-import app.models  # noqa: F401
 from app.execution.safety_controls import trading_controls
 from app.market.calendar import MarketCalendarService
 from app.models import AlertRecordModel, OvernightReview, PositionLifecycle

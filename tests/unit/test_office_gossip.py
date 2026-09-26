@@ -42,7 +42,9 @@ def test_parse_gossip_json_blob() -> None:
 
 
 def test_parse_gossip_thoughts_keyed() -> None:
-    raw = '{"thoughts":{"cio":"손실인데 SCALE_IN이라 걱정돼.","devils_advocate":"왜 또 사자고 해."}}'
+    raw = (
+        '{"thoughts":{"cio":"손실인데 SCALE_IN이라 걱정돼.","devils_advocate":"왜 또 사자고 해."}}'
+    )
     thoughts = parse_gossip_thoughts(raw)
     assert thoughts["cio"].startswith("손실")
     assert "사자고" in thoughts["devils_advocate"]
@@ -150,7 +152,9 @@ async def test_next_office_gossip_uses_desk_thoughts_in_pytest() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fill_cache_uses_local_http_and_stores_thoughts(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_fill_cache_uses_local_http_and_stores_thoughts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.office import gossip as mod
 
     remember_office_desk(
@@ -192,9 +196,7 @@ async def test_fill_cache_uses_local_http_and_stores_thoughts(monkeypatch: pytes
             return _Resp()
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", _Client)
-    settings = Settings(
-        llm_runtime="local", llm_api_key=None, llm_local_fast_model="qwen2.5:7b"
-    )
+    settings = Settings(llm_runtime="local", llm_api_key=None, llm_local_fast_model="qwen2.5:7b")
     await mod._fill_cache(settings)
     assert "cio" in mod._cache_thoughts
     assert "손실" in mod._cache_thoughts["cio"]
@@ -221,9 +223,7 @@ def _blocked_cba_summary() -> dict:
             "quant_strategist": {
                 "payload": {
                     "market_trend_state": "SIDEWAYS",
-                    "symbol_views": [
-                        {"symbol": "CBA", "entry_zone": {"min": 140.0, "max": 142.0}}
-                    ],
+                    "symbol_views": [{"symbol": "CBA", "entry_zone": {"min": 140.0, "max": 142.0}}],
                 }
             },
         },

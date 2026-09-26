@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import UTC, datetime
 
 from app.canonical.models import (
     CanonicalDataConflict,
@@ -61,13 +60,7 @@ def score_quality(
     }
     f = fresh_map[freshness]
     v = 1.0 if validation_ok else 0.0
-    overall = (
-        0.3 * f
-        + 0.25 * completeness
-        + 0.2 * source_reliability
-        + 0.15 * agreement
-        + 0.1 * v
-    )
+    overall = 0.3 * f + 0.25 * completeness + 0.2 * source_reliability + 0.15 * agreement + 0.1 * v
     return DataQualityBreakdown(
         overall=round(overall, 4),
         freshness=f,
@@ -90,7 +83,9 @@ def validate_quote(quote: CanonicalQuote) -> tuple[bool, list[str]]:
     return (len(issues) == 0), issues
 
 
-def validate_bar(open_: float, high: float, low: float, close: float, volume: float) -> tuple[bool, list[str]]:
+def validate_bar(
+    open_: float, high: float, low: float, close: float, volume: float
+) -> tuple[bool, list[str]]:
     issues: list[str] = []
     if any(x < 0 for x in (open_, high, low, close, volume)):
         issues.append("negative_ohlcv")
@@ -113,7 +108,10 @@ def compare_quotes(
             data_type="quote",
             symbol_or_key=primary.symbol,
             state=ConflictState.UNRESOLVED,
-            provider_names=[primary.provenance.provider_name if primary.provenance else "?", secondary.provenance.provider_name if secondary.provenance else "?"],
+            provider_names=[
+                primary.provenance.provider_name if primary.provenance else "?",
+                secondary.provenance.provider_name if secondary.provenance else "?",
+            ],
         )
     diff_bps = abs(primary.last - secondary.last) / primary.last * 10_000.0
     tol = cfg.quote_price_tolerance_bps

@@ -50,9 +50,7 @@ class SymbolActionPlan(StrictModel):
         }
         if self.action in entry_actions:
             if self.stop_loss is None and not self.invalidation.strip():
-                raise ValueError(
-                    f"{self.symbol}: new entries require stop_loss or invalidation"
-                )
+                raise ValueError(f"{self.symbol}: new entries require stop_loss or invalidation")
         return self
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable
+from collections.abc import Iterable
 
 from app.universe.horizons import UniverseHorizon, policy_for
 
@@ -45,8 +45,5 @@ def horizon_cap_violation(
     counts = count_open_by_horizon(held, horizon_by_symbol)
     current = counts.get(horizon, 0)
     if current >= policy.max_positions:
-        return (
-            f"{sym}:horizon_cap:{horizon}:{current}>="
-            f"{policy.max_positions}({policy.label_ko})"
-        )
+        return f"{sym}:horizon_cap:{horizon}:{current}>={policy.max_positions}({policy.label_ko})"
     return None

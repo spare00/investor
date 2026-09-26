@@ -10,8 +10,9 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.brokers.factory import get_broker
+from app.brokers.base import OrderRequest, OrderSide
 from app.brokers.errors import BrokerError
+from app.brokers.factory import get_broker
 from app.brokers.models import (
     ApprovalStatus,
     ExitPolicy,
@@ -21,12 +22,11 @@ from app.brokers.models import (
     PretradeStatus,
     assert_order_transition,
 )
-from app.brokers.base import OrderRequest, OrderSide
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.execution.pretrade import PretradeCheckResult, PretradeRiskValidator
 from app.execution.safety_controls import TradingControls, trading_controls
-from app.execution.validation import ExecutionValidator, ValidatedOrderIntent
+from app.execution.validation import ExecutionValidator
 from app.models import Order, OrderApproval, OrderIntent, PretradeRiskCheck
 from app.risk import PortfolioRiskView
 from app.schemas.cio import CIODecision
@@ -126,9 +126,7 @@ class ExecutionService:
             hz = horizons.get(v.symbol.upper())
             overnight = overnight_allowed_for_horizon(hz) if v.side.lower() == "buy" else False
             closing = (
-                closing_policy_for_horizon(hz)
-                if v.side.lower() == "buy"
-                else "CLOSE_INTRADAY_ONLY"
+                closing_policy_for_horizon(hz) if v.side.lower() == "buy" else "CLOSE_INTRADAY_ONLY"
             )
             max_hold = None
             if hz:
@@ -216,9 +214,7 @@ class ExecutionService:
             asset_tradable=asset_tradable,
             market_open=market_open,
             account_blocked=False,
-            decision_expired=bool(
-                intent.expires_at and intent.expires_at < datetime.now(UTC)
-            ),
+            decision_expired=bool(intent.expires_at and intent.expires_at < datetime.now(UTC)),
         )
         self.session.add(
             PretradeRiskCheck(
@@ -229,7 +225,9 @@ class ExecutionService:
                 payload=result.to_dict(),
             )
         )
-        intent.risk_check_id = UUID(result.risk_check_id) if _is_uuid(result.risk_check_id) else None
+        intent.risk_check_id = (
+            UUID(result.risk_check_id) if _is_uuid(result.risk_check_id) else None
+        )
         intent.approved_quantity = result.approved_quantity
         if result.status in {PretradeStatus.REJECTED, PretradeStatus.SYSTEM_BLOCKED}:
             intent.status = IntentStatus.RISK_REJECTED.value
@@ -275,7 +273,9 @@ class ExecutionService:
         await self.session.flush()
         return intent
 
-    async def reject_intent(self, intent_id: UUID, *, actor: str = "operator", reason: str = "") -> OrderIntent:
+    async def reject_intent(
+        self, intent_id: UUID, *, actor: str = "operator", reason: str = ""
+    ) -> OrderIntent:
         intent = await self._require_intent(intent_id)
         approval = await self._latest_approval(intent_id)
         if approval:
@@ -314,7 +314,9 @@ class ExecutionService:
         )
         # Idempotency: existing order with same client id (before age checks / mutations)
         existing = (
-            await self.session.execute(select(Order).where(Order.idempotency_key == client_order_id))
+            await self.session.execute(
+                select(Order).where(Order.idempotency_key == client_order_id)
+            )
         ).scalar_one_or_none()
         if existing is not None:
             return existing
@@ -327,10 +329,16 @@ class ExecutionService:
 
         latest_recon = (
             await self.session.execute(
-                select(BrokerReconciliationRun).order_by(BrokerReconciliationRun.created_at.desc()).limit(1)
+                select(BrokerReconciliationRun)
+                .order_by(BrokerReconciliationRun.created_at.desc())
+                .limit(1)
             )
         ).scalar_one_or_none()
-        if latest_recon and latest_recon.result in {"MATERIAL_DRIFT", "BROKER_UNAVAILABLE", "LOCAL_STATE_INVALID"}:
+        if latest_recon and latest_recon.result in {
+            "MATERIAL_DRIFT",
+            "BROKER_UNAVAILABLE",
+            "LOCAL_STATE_INVALID",
+        }:
             if not _intent_is_exit(intent):
                 raise BrokerError(f"reconciliation_blocks_submit:{latest_recon.result}")
 
@@ -458,7 +466,9 @@ class ExecutionService:
             # Preserve horizon-aware exit policy from intent creation; refresh stop.
             prior = dict(intent.exit_policy or {})
             policy = ExitPolicy(
-                stop_loss=intent.stop_price if intent.stop_price is not None else prior.get("stop_loss"),
+                stop_loss=intent.stop_price
+                if intent.stop_price is not None
+                else prior.get("stop_loss"),
                 invalidation_condition=prior.get("invalidation_condition"),
                 take_profit_policy=prior.get("take_profit_policy"),
                 max_holding_time_minutes=prior.get("max_holding_time_minutes"),

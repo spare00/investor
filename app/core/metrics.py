@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Gauge, Histogram, Info, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, Info, generate_latest
 
 APP_INFO = Info("investor_app", "Investor application info")
 APP_INFO.info({"version": "0.12.0", "phase": "7"})

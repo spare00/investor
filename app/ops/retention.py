@@ -61,7 +61,9 @@ class RetentionPolicy:
     def _cutoff(self, days: int) -> datetime:
         return datetime.now(UTC) - timedelta(days=days)
 
-    def plan(self, *, dry_run: bool = True, record_counts: dict[str, int] | None = None) -> RetentionPlan:
+    def plan(
+        self, *, dry_run: bool = True, record_counts: dict[str, int] | None = None
+    ) -> RetentionPlan:
         cfg = self.settings
         counts = record_counts or {}
         now = datetime.now(UTC)

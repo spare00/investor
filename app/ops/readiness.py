@@ -48,9 +48,7 @@ class GateEvaluator:
         checks = self._build_checks(gate)
         # Gate-specific checks apply to the evaluated gate only (MANUAL vs AUTOMATED
         # are alternate paper paths, not a strict cumulative ladder).
-        applicable = [
-            c for c in checks if c.required_for is None or c.required_for == gate
-        ]
+        applicable = [c for c in checks if c.required_for is None or c.required_for == gate]
         # Always include earlier non-conflicting scaffold gates up through SIMULATION.
         scaffold = {
             ReadinessGate.DEVELOPMENT,
@@ -60,9 +58,7 @@ class GateEvaluator:
             applicable = [
                 c
                 for c in checks
-                if c.required_for is None
-                or c.required_for in scaffold
-                or c.required_for == gate
+                if c.required_for is None or c.required_for in scaffold or c.required_for == gate
             ]
         # Deduplicate while preserving order
         seen: set[str] = set()
@@ -113,10 +109,9 @@ class GateEvaluator:
 
     def _build_checks(self, gate: ReadinessGate) -> list[ReadinessCheck]:
         cfg = self.settings
-        paper_url_ok = (
-            (cfg.broker_provider or "").lower() in {"mock", "ibkr"}
-            and (cfg.broker_environment or "").lower() == "paper"
-        )
+        paper_url_ok = (cfg.broker_provider or "").lower() in {"mock", "ibkr"} and (
+            cfg.broker_environment or ""
+        ).lower() == "paper"
         return [
             ReadinessCheck(
                 name="live_trading_disabled",

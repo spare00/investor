@@ -23,7 +23,9 @@ logger = get_logger(__name__)
 CODE_VERSION = "0.12.0"
 
 try:
-    from app.models.entities import SimulationRunRecord as SimulationRunModel  # type: ignore[attr-defined]
+    from app.models.entities import (
+        SimulationRunRecord as SimulationRunModel,  # type: ignore[attr-defined]
+    )
 except ImportError:
     SimulationRunModel = None  # type: ignore[misc, assignment]
 

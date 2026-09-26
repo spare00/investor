@@ -10,9 +10,9 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.core.config import clear_settings_cache, get_settings
 from app.core.database import Base
-import app.models  # noqa: F401
 from app.execution.safety_controls import trading_controls
 from app.models import IntradayEvent, PositionLifecycle, ScheduledJobRecord
 from app.workflow.daily import DailyWorkflowService
@@ -419,8 +419,8 @@ async def test_postmarket_eval_drains_then_reschedules(
     run.current_state = DailyWorkflowState.CLOSING_WINDOW.value
     await session.flush()
     post = await svc.run_postmarket(session_date="2026-08-03")
-    assert (post["review"].get("decision_eval") or {}).get("queued", "").endswith(
-        ":postmarket_eval"
+    assert (
+        (post["review"].get("decision_eval") or {}).get("queued", "").endswith(":postmarket_eval")
     )
     first = await svc.run_postmarket_eval(session_date="2026-08-03", now=eval_now)
     ev = first["eval"]

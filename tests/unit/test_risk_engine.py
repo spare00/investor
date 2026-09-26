@@ -87,9 +87,7 @@ class TestPositionSizing:
     def test_sizes_by_risk_budget(self, engine: DeterministicRiskEngine) -> None:
         # equity 25k * 0.5% = $125 risk; stop distance $2 → 62 shares raw
         # max position 10% = $2500 at $40 → 62 shares fit without position cap
-        result = engine.position_size(
-            equity=25_000, entry_price=40.0, stop_price=38.0
-        )
+        result = engine.position_size(equity=25_000, entry_price=40.0, stop_price=38.0)
         assert result.dollar_risk == 125.0
         assert result.stop_distance == 2.0
         assert result.shares == 62
@@ -98,27 +96,19 @@ class TestPositionSizing:
     def test_caps_by_max_position_pct(self, engine: DeterministicRiskEngine) -> None:
         # Max position 10% of 25k = 2500; at $100 → max 25 shares
         # Risk would allow 125/2 = 62 shares → capped
-        result = engine.position_size(
-            equity=25_000, entry_price=100.0, stop_price=98.0
-        )
+        result = engine.position_size(equity=25_000, entry_price=100.0, stop_price=98.0)
         assert result.shares == 25
         assert "max_position_pct" in result.capped_by
 
-    def test_high_price_capped_before_risk_shares(
-        self, engine: DeterministicRiskEngine
-    ) -> None:
+    def test_high_price_capped_before_risk_shares(self, engine: DeterministicRiskEngine) -> None:
         # $480 * 20 would be risk-ok but exceeds 10% notional → 5 shares
-        result = engine.position_size(
-            equity=25_000, entry_price=480.0, stop_price=474.0
-        )
+        result = engine.position_size(equity=25_000, entry_price=480.0, stop_price=474.0)
         assert result.shares == 5
         assert "max_position_pct" in result.capped_by
 
     def test_atr_widens_stop_distance(self, engine: DeterministicRiskEngine) -> None:
         # Use cheap shares so position-pct does not dominate ATR sizing
-        tight = engine.position_size(
-            equity=25_000, entry_price=20.0, stop_price=19.0, atr=3.0
-        )
+        tight = engine.position_size(equity=25_000, entry_price=20.0, stop_price=19.0, atr=3.0)
         assert tight.stop_distance == 3.0
         assert tight.shares == int(125 // 3)
 
@@ -457,9 +447,7 @@ class TestVenueGrossCap:
         assert result.approved is False
         assert VetoCode.CURRENCY_MISMATCH.value in result.hard_vetoes
 
-    def test_fx_rate_allows_cross_currency_sizing(
-        self, portfolio: PortfolioRiskView
-    ) -> None:
+    def test_fx_rate_allows_cross_currency_sizing(self, portfolio: PortfolioRiskView) -> None:
         engine = DeterministicRiskEngine(
             RiskLimits(
                 max_position_pct=10.0,

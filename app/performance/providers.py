@@ -10,7 +10,9 @@ from app.performance.types import MetricResult, MetricStatus, metric_result
 
 def _rate(name: str, num: int, total: int) -> MetricResult:
     if total <= 0:
-        return metric_result(name, None, status=MetricStatus.INSUFFICIENT_DATA, method="provider_stats")
+        return metric_result(
+            name, None, status=MetricStatus.INSUFFICIENT_DATA, method="provider_stats"
+        )
     return metric_result(name, num / total, observation_count=total, method="provider_stats")
 
 
@@ -24,14 +26,18 @@ def compute_provider_reliability(stats: dict[str, Any]) -> dict[str, MetricResul
     freshness = stats.get("freshness_seconds")
 
     avg_lat = statistics.mean(latencies) if latencies else None
-    p95_lat = sorted(latencies)[int(0.95 * (len(latencies) - 1))] if len(latencies) >= 2 else avg_lat
+    p95_lat = (
+        sorted(latencies)[int(0.95 * (len(latencies) - 1))] if len(latencies) >= 2 else avg_lat
+    )
 
     availability = successes / total if total else None
     return {
         "availability": metric_result(
             "availability",
             availability,
-            status=MetricStatus.AVAILABLE if availability is not None else MetricStatus.INSUFFICIENT_DATA,
+            status=MetricStatus.AVAILABLE
+            if availability is not None
+            else MetricStatus.INSUFFICIENT_DATA,
             observation_count=total,
             method="provider_stats",
         ),

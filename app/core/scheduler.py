@@ -43,6 +43,7 @@ def _scheduler_job_kind(job_key: str) -> str:
 async def _reap_stale_running_jobs(session: Any, settings: Settings, now: datetime) -> int:
     """Fail running rows older than the job timeout so a wedged eval cannot linger."""
     from sqlalchemy import select
+
     from app.models import ScheduledJobRecord
 
     timeout_s = float(settings.effective_job_action_timeout_seconds())
@@ -196,6 +197,7 @@ def _is_operator_weekend(cfg: Settings, now: datetime | None = None) -> bool:
 
     return is_operator_weekend(cfg, now)
 
+
 def _universe_refresh_allowed_now(cfg: Settings, now: datetime | None = None) -> bool:
     """Whether a periodic Universe Manager poll should run at this clock time.
 
@@ -283,9 +285,7 @@ def _coalesce_due_jobs(due: list[Any]) -> list[Any]:
     return out
 
 
-def _prioritize_open_venue_jobs(
-    due: list[Any], settings: Settings, now: datetime
-) -> list[Any]:
+def _prioritize_open_venue_jobs(due: list[Any], settings: Settings, now: datetime) -> list[Any]:
     """Run the live tape's jobs before leftover evals from a closed venue."""
     from app.market.calendar import MarketCalendarService
     from app.market.venues import job_key_base, parse_scoped_job_key
@@ -354,10 +354,11 @@ async def _ensure_sessions_prepared(session: Any, settings: Settings) -> list[st
 
 async def _dispatch_due_jobs() -> None:
     """Bootstrap session plans, then poll due scheduled_jobs and run DailyWorkflowService."""
+    from sqlalchemy import select
+
     from app.core.database import get_session_factory
     from app.models import ScheduledJobRecord
     from app.workflow.daily import DailyWorkflowError, DailyWorkflowService
-    from sqlalchemy import select
 
     if trading_controls.snapshot().state.value == "emergency_stop":
         logger.info("scheduler_skip_emergency_stop")
@@ -410,9 +411,7 @@ async def _dispatch_due_jobs() -> None:
                 return planned <= now
 
             due_all = [j for j in candidates if _due(j.planned_at)]
-            due = _prioritize_open_venue_jobs(
-                _coalesce_due_jobs(due_all)[:20], settings, now
-            )
+            due = _prioritize_open_venue_jobs(_coalesce_due_jobs(due_all)[:20], settings, now)
             services: dict[str, Any] = {}
             for job in due:
                 if job.status != "planned":
@@ -443,9 +442,7 @@ async def _dispatch_due_jobs() -> None:
                     try:
                         timeout_s = float(settings.effective_job_action_timeout_seconds())
                         outcome = await asyncio.wait_for(
-                            _run_job_action(
-                                services[venue.value], job_key, session_date
-                            ),
+                            _run_job_action(services[venue.value], job_key, session_date),
                             timeout=timeout_s,
                         )
                     except TimeoutError:
@@ -741,9 +738,7 @@ async def _refresh_universe() -> None:
             logger.info("universe_refresh_lease_held")
             return
         try:
-            holdings = [
-                p.symbol for p in (await session.execute(select(Position))).scalars().all()
-            ]
+            holdings = [p.symbol for p in (await session.execute(select(Position))).scalars().all()]
             from app.universe.context import load_last_regime_context
 
             ctx = await load_last_regime_context(session)
@@ -788,9 +783,8 @@ async def _refresh_universe() -> None:
                         for v, part in (replan or {}).items()
                         if isinstance(part, dict)
                     }
-                    if isinstance(replan, dict) and any(
-                        isinstance(v, dict) for v in replan.values()
-                    )
+                    if isinstance(replan, dict)
+                    and any(isinstance(v, dict) for v in replan.values())
                     else None,
                     "replan_purged": replan.get("purged") if isinstance(replan, dict) else None,
                     "replan_created": replan.get("created") if isinstance(replan, dict) else None,
@@ -798,7 +792,9 @@ async def _refresh_universe() -> None:
                 _job_log.append(entry)
                 if len(_job_log) > 100:
                     del _job_log[:-100]
-                logger.info("universe_refresh_done", **{k: v for k, v in entry.items() if v is not None})
+                logger.info(
+                    "universe_refresh_done", **{k: v for k, v in entry.items() if v is not None}
+                )
             except TimeoutError:
                 await session.rollback()
                 logger.error(
@@ -843,7 +839,9 @@ async def _reconcile_broker() -> None:
                 await _reap_stale_running_jobs(session, settings, datetime.now(UTC))
                 await session.commit()
 
-                async def _recon_once() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], Any]:
+                async def _recon_once() -> tuple[
+                    dict[str, Any], dict[str, Any], dict[str, Any], Any
+                ]:
                     from app.execution.order_manager import OrderManager
                     from app.intraday.broker_updates import BrokerUpdateProcessor
 
@@ -885,7 +883,9 @@ async def _reconcile_broker() -> None:
                         except Exception as exc:  # noqa: BLE001
                             poll = {"error": str(exc)[:200]}
                         try:
-                            sync = await PositionManager(session, settings=settings).sync_from_broker(
+                            sync = await PositionManager(
+                                session, settings=settings
+                            ).sync_from_broker(
                                 account=book.account,
                                 positions=book.positions,
                             )

@@ -72,7 +72,7 @@ async def get_orders(
                 "submitted_at": o.submitted_at.isoformat() if o.submitted_at else None,
             }
             for o in rows
-        ]
+        ],
     }
 
 

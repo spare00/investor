@@ -159,8 +159,8 @@ def test_legacy_state_file_seeds_month_and_survives_reload(tmp_path) -> None:
     day = operator_calendar_day_iso()
     path = tmp_path / "budget.json"
     path.write_text(
-        '{"day": "%s", "prompt_tokens": 100, "completion_tokens": 20, "calls": 3, '
-        '"soft_warned": false, "updated_at": "%sT00:00:00+00:00"}' % (day, day)
+        f'{{"day": "{day}", "prompt_tokens": 100, "completion_tokens": 20, "calls": 3, '
+        f'"soft_warned": false, "updated_at": "{day}T00:00:00+00:00"}}'
     )
     settings = Settings(
         llm_budget_enforce=True,

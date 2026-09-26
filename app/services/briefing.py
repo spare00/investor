@@ -300,9 +300,7 @@ class BriefingService:
                 agent_map = fallback_map
 
         cio_row = await self._cio_for_run(run)
-        premarket_agents = _agents_from_map(
-            agent_map, cio_row=cio_row, include_raw=include_raw
-        )
+        premarket_agents = _agents_from_map(agent_map, cio_row=cio_row, include_raw=include_raw)
         premarket_at = max(
             (
                 _parse_iso(a["run"]["started_at"])
@@ -380,32 +378,32 @@ class BriefingService:
         )
         found = sum(1 for a in display_agents if a["present"])
 
-        risk_summary = next(
-            (
-                a["summary"]
-                for a in display_agents
-                if a["agent"] == AgentName.RISK_MANAGER.value and a["present"]
-            ),
-            None,
-        ) or {}
-        cio_summary = next(
-            (
-                a["summary"]
-                for a in display_agents
-                if a["agent"] == AgentName.CIO.value and a["present"]
-            ),
-            None,
-        ) or {}
+        risk_summary = (
+            next(
+                (
+                    a["summary"]
+                    for a in display_agents
+                    if a["agent"] == AgentName.RISK_MANAGER.value and a["present"]
+                ),
+                None,
+            )
+            or {}
+        )
+        cio_summary = (
+            next(
+                (
+                    a["summary"]
+                    for a in display_agents
+                    if a["agent"] == AgentName.CIO.value and a["present"]
+                ),
+                None,
+            )
+            or {}
+        )
         # Prefer live agent materials; workflow meta is fallback for sparse runs.
-        latest_cio_action = (
-            cio_summary.get("portfolio_action")
-            or meta.get("cio_action")
-        )
+        latest_cio_action = cio_summary.get("portfolio_action") or meta.get("cio_action")
         risk_verdict = risk_summary.get("overall_verdict") or meta.get("risk_verdict")
-        no_trade_reason = (
-            cio_summary.get("reason_not_to_trade")
-            or meta.get("no_trade_reason")
-        )
+        no_trade_reason = cio_summary.get("reason_not_to_trade") or meta.get("no_trade_reason")
         intent_count = meta.get("intent_count")
         if display_wf_id is not None:
             intent_count = await self._order_count_for_workflow(display_wf_id)
@@ -417,7 +415,9 @@ class BriefingService:
                 "state": run.current_state,
                 "status": run.status,
                 "analysis_workflow_run_id": str(premarket_wf_id) if premarket_wf_id else None,
-                "latest_decision_id": str(run.latest_decision_id) if run.latest_decision_id else None,
+                "latest_decision_id": str(run.latest_decision_id)
+                if run.latest_decision_id
+                else None,
                 "cio_action": latest_cio_action,
                 "risk_verdict": risk_verdict,
                 "no_trade_reason": no_trade_reason,
@@ -431,7 +431,8 @@ class BriefingService:
                 "kind": materials_kind,
                 "started_at": materials_at,
                 "agents": display_agents,
-                "cio": cio_summary or next(
+                "cio": cio_summary
+                or next(
                     (a["summary"] for a in display_agents if a["agent"] == AgentName.CIO.value),
                     None,
                 ),
@@ -461,8 +462,12 @@ class BriefingService:
                 "daily_run_id": str(run.id),
                 "premarket_workflow_id": str(premarket_wf_id),
                 "materials_workflow_id": str(display_wf_id) if display_wf_id else None,
-                "latest_decision_id": str(run.latest_decision_id) if run.latest_decision_id else None,
-                "latest_intraday_analysis_run_id": (intraday[0]["analysis_run_id"] if intraday else None),
+                "latest_decision_id": str(run.latest_decision_id)
+                if run.latest_decision_id
+                else None,
+                "latest_intraday_analysis_run_id": (
+                    intraday[0]["analysis_run_id"] if intraday else None
+                ),
                 "latest_intraday_decision_id": (intraday[0]["id"] if intraday else None),
             },
         }
@@ -604,7 +609,14 @@ class BriefingService:
                 )
             ]
             started = max((a["run"]["started_at"] for a in agents if a.get("run")), default=None)
-            cio_summary = next((a["summary"] for a in agents if a["agent"] == AgentName.CIO.value and a["present"]), None)
+            cio_summary = next(
+                (
+                    a["summary"]
+                    for a in agents
+                    if a["agent"] == AgentName.CIO.value and a["present"]
+                ),
+                None,
+            )
             out.append(
                 {
                     "workflow_id": str(run.workflow_id),
@@ -685,7 +697,9 @@ class BriefingService:
                     agents.append(
                         shape_agent_section(
                             name,
-                            payload=pair[1].payload if pair and isinstance(pair[1].payload, dict) else None,
+                            payload=pair[1].payload
+                            if pair and isinstance(pair[1].payload, dict)
+                            else None,
                             run=pair[0] if pair else None,
                             include_raw=include_raw,
                         )
