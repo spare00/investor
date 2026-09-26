@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.activity import (
@@ -25,7 +25,7 @@ from app.core.metrics import (
 )
 from app.core.scheduler import upcoming_jobs
 from app.core.timeutils import dual_timezone_labels, utc_now
-from app.execution.order_manager import OrderManager
+from app.execution.order_manager import WORKING_ORDER_STATUSES, OrderManager
 from app.execution.safety_controls import trading_controls
 from app.market.calendar import MarketCalendarService
 from app.models import (
@@ -347,9 +347,7 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db_session)) -> 
     open_orders = list(
         (
             await session.execute(
-                select(Order).where(
-                    Order.status.in_(["new", "accepted", "partially_filled", "pending_submit"])
-                )
+                select(Order).where(func.lower(Order.status).in_(list(WORKING_ORDER_STATUSES)))
             )
         )
         .scalars()

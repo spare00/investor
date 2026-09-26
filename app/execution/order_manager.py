@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brokers.base import BrokerClient, OrderRequest, OrderSide, OrderStatus
@@ -37,11 +37,18 @@ def _internal_status(broker_status: OrderStatus) -> str:
     return _BROKER_STATUS_TO_INTERNAL.get(broker_status, InternalOrderState.UNKNOWN).value
 
 
+# InternalOrderState is upper-case; broker adapters write lower-case. Rows
+# carry both, so every set here is folded and every comparison goes through
+# `fold_status` (Python) or `func.lower` (SQL). Membership must never depend on
+# which writer happened to create the row.
+def fold_status(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
 WORKING_ORDER_STATUSES = frozenset(
-    {
+    fold_status(s)
+    for s in {
         "new",
-        "accepted",
-        "partially_filled",
         "pending_submit",
         "pending_new",
         InternalOrderState.SUBMITTING.value,
@@ -54,19 +61,19 @@ WORKING_ORDER_STATUSES = frozenset(
 )
 
 _DEAD_ORDER_STATUSES = frozenset(
-    {
+    fold_status(s)
+    for s in {
         InternalOrderState.CANCELLED.value,
         InternalOrderState.REJECTED.value,
-        "cancelled",
+        InternalOrderState.EXPIRED.value,
         "canceled",
-        "rejected",
     }
 )
 
 _FLATTEN_MARKERS = ("force-close:", "hard-stop:", ":sell:SELL", ":buy:BUY")
 _PARTIAL_MARKERS = (":sell:PARTIAL_SELL", ":sell:REDUCE", ":buy:REDUCE")
 _STALE_FLATTEN_SECONDS = 90
-_STOP_ORDER_TYPES = frozenset({"stop", "stp", "stop_limit"})
+STOP_ORDER_TYPES = frozenset({"stop", "stp", "stop_limit"})
 
 
 class OrderManager:
@@ -199,7 +206,7 @@ class OrderManager:
                     select(Order).where(
                         Order.symbol == symbol.upper(),
                         Order.side == side.lower(),
-                        Order.status.in_(list(WORKING_ORDER_STATUSES)),
+                        func.lower(Order.status).in_(list(WORKING_ORDER_STATUSES)),
                     )
                 )
             )
@@ -212,7 +219,7 @@ class OrderManager:
         """Cancel local+broker working orders for a symbol (optionally one side)."""
         q = select(Order).where(
             Order.symbol == symbol.upper(),
-            Order.status.in_(list(WORKING_ORDER_STATUSES)),
+            func.lower(Order.status).in_(list(WORKING_ORDER_STATUSES)),
         )
         if side:
             q = q.where(Order.side == side.lower())
@@ -265,11 +272,11 @@ class OrderManager:
             )
         ).scalar_one_or_none()
         if existing is not None:
-            st = str(existing.status or "")
+            st = fold_status(existing.status)
             if st in WORKING_ORDER_STATUSES:
                 logger.info("order_idempotent_skip", key=intent.idempotency_key)
                 return None
-            if st == InternalOrderState.FILLED.value or st.lower() == "filled":
+            if st == fold_status(InternalOrderState.FILLED.value):
                 logger.info("order_idempotent_filled", key=intent.idempotency_key)
                 return None
             if st not in _DEAD_ORDER_STATUSES:
@@ -321,7 +328,7 @@ class OrderManager:
             otype_l = str(order_type or "market").lower()
             if (
                 uses_marketable_limit(str(venue) if venue else None)
-                and otype_l not in _STOP_ORDER_TYPES
+                and otype_l not in STOP_ORDER_TYPES
             ):
                 from app.market.live_prices import fetch_live_last_prices
 
@@ -351,7 +358,7 @@ class OrderManager:
                 raise BrokerError(f"{intent.symbol}: limit order missing limit_price")
             tif = (intent.time_in_force or "").strip().lower() or None
             if not tif:
-                tif = "gtc" if str(order_type).lower() in _STOP_ORDER_TYPES else "day"
+                tif = "gtc" if str(order_type).lower() in STOP_ORDER_TYPES else "day"
             result = await self.broker.submit_order(
                 OrderRequest(
                     symbol=intent.symbol,
@@ -490,21 +497,9 @@ class OrderManager:
 
     async def sync_statuses_from_broker(self) -> dict[str, Any]:
         """Refresh local open/pending orders from broker truth."""
-        # Include both InternalOrderState values and legacy lowercase broker strings.
-        openish = {
-            "new",
-            "accepted",
-            "partially_filled",
-            "pending_submit",
-            "pending_new",
-            InternalOrderState.SUBMITTING.value,
-            InternalOrderState.SUBMITTED.value,
-            InternalOrderState.ACCEPTED.value,
-            InternalOrderState.PARTIALLY_FILLED.value,
-            InternalOrderState.CANCEL_PENDING.value,
-            InternalOrderState.REPLACE_PENDING.value,
-        }
-        result = await self.session.execute(select(Order).where(Order.status.in_(list(openish))))
+        result = await self.session.execute(
+            select(Order).where(func.lower(Order.status).in_(list(WORKING_ORDER_STATUSES)))
+        )
         rows = list(result.scalars().all())
         updated = 0
         errors = 0

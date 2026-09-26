@@ -6,12 +6,13 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brokers.factory import get_broker
 from app.brokers.models import InternalOrderState, assert_order_transition
 from app.core.config import Settings, get_settings
+from app.execution.order_manager import WORKING_ORDER_STATUSES
 from app.intraday.events import IntradayEventBus
 from app.models import BrokerOrderEvent, Order
 
@@ -31,19 +32,8 @@ _STATUS_MAP = {
     "unknown": InternalOrderState.UNKNOWN,
 }
 
-_OPENISH = {
-    "new",
-    "accepted",
-    "partially_filled",
-    "pending_submit",
-    "pending_new",
-    "SUBMITTED",
-    "ACCEPTED",
-    "SUBMITTING",
-    "PARTIALLY_FILLED",
-    "CANCEL_PENDING",
-    "REPLACE_PENDING",
-}
+# Folded; compare with func.lower so a row's casing cannot hide it.
+_OPENISH = WORKING_ORDER_STATUSES
 
 
 class BrokerUpdateProcessor:
@@ -67,7 +57,11 @@ class BrokerUpdateProcessor:
                 remote_orders = await self.broker.get_open_orders()
             # Only open-ish local rows — not the full order history.
             local = list(
-                (await self.session.execute(select(Order).where(Order.status.in_(list(_OPENISH)))))
+                (
+                    await self.session.execute(
+                        select(Order).where(func.lower(Order.status).in_(list(_OPENISH)))
+                    )
+                )
                 .scalars()
                 .all()
             )

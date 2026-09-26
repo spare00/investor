@@ -7,27 +7,21 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brokers.factory import get_broker
-from app.brokers.models import ReconciliationResult
+from app.brokers.models import ReconciliationResult, canonical_order_type
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.execution.order_manager import WORKING_ORDER_STATUSES
 from app.models import BrokerReconciliationRun, Order
 
 logger = get_logger(__name__)
 
-_OPEN_LOCAL_STATUSES = [
-    "new",
-    "accepted",
-    "partially_filled",
-    "pending_submit",
-    "SUBMITTED",
-    "ACCEPTED",
-    "SUBMITTING",
-    "PARTIALLY_FILLED",
-]
+# Folded; compare with func.lower so a row's casing cannot hide it. Listing both
+# cases by hand missed pending_new and the *_PENDING states entirely.
+_OPEN_LOCAL_STATUSES = sorted(WORKING_ORDER_STATUSES)
 
 _REMOTE_STATUS_TO_LOCAL = {
     "new": "ACCEPTED",
@@ -72,7 +66,7 @@ def _fields_from_remote(remote: Any) -> dict[str, Any]:
         qty = float(raw.get("qty") or getattr(remote, "filled_qty", 0) or 0)
     except (TypeError, ValueError):
         qty = 0.0
-    order_type = str(raw.get("order_type") or raw.get("type") or "market")[:32]
+    order_type = canonical_order_type(raw.get("order_type") or raw.get("type"))[:32]
     local_status = _REMOTE_STATUS_TO_LOCAL.get(_remote_status_value(remote), "ACCEPTED")
     submitted_at = getattr(remote, "submitted_at", None)
     return {
@@ -229,7 +223,7 @@ class ReconciliationService:
         local_open = list(
             (
                 await self.session.execute(
-                    select(Order).where(Order.status.in_(_OPEN_LOCAL_STATUSES))
+                    select(Order).where(func.lower(Order.status).in_(_OPEN_LOCAL_STATUSES))
                 )
             )
             .scalars()

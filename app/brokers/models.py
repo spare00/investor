@@ -82,6 +82,38 @@ class InternalOrderState(StrEnum):
     RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
 
 
+# IBKR reports its own vocabulary back on the order object ("MKT", "STP LMT"),
+# and adopted rows wrote it straight into `orders.order_type`. The table ended
+# up holding both dialects for the same thing, so `order_type == "stop"` missed
+# every adopted stop. Fold at the boundary instead of at each read site.
+_BROKER_ORDER_TYPES = {
+    "mkt": "market",
+    "market": "market",
+    "lmt": "limit",
+    "limit": "limit",
+    "stp": "stop",
+    "stop": "stop",
+    "stp lmt": "stop_limit",
+    "stp_lmt": "stop_limit",
+    "stop_limit": "stop_limit",
+    "trail": "trailing_stop",
+    "trailing_stop": "trailing_stop",
+}
+
+
+def canonical_order_type(value: object, *, default: str = "market") -> str:
+    """Map a broker's order-type code onto the internal vocabulary.
+
+    Unknown codes pass through folded rather than defaulting, so a type this
+    map has not learned yet stays visible in the row instead of being silently
+    relabelled as a market order.
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+    return _BROKER_ORDER_TYPES.get(text, text)
+
+
 class ReconciliationResult(StrEnum):
     IN_SYNC = "IN_SYNC"
     MINOR_DRIFT = "MINOR_DRIFT"

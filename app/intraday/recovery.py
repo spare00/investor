@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alerts.ops import emit_emergency_stop_alert, emit_reconciliation_alert
@@ -121,7 +121,9 @@ class IntradayRecoveryService:
             (
                 await self.session.execute(
                     select(Order).where(
-                        Order.status.in_(["UNKNOWN", "RECONCILIATION_REQUIRED", "pending_submit"])
+                        func.lower(Order.status).in_(
+                            ["unknown", "reconciliation_required", "pending_submit"]
+                        )
                     )
                 )
             )

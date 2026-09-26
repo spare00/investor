@@ -12,6 +12,7 @@ from typing import Any
 
 from app.brokers.base import OrderRequest, OrderResult, OrderStatus
 from app.brokers.errors import BrokerError
+from app.brokers.models import canonical_order_type
 from app.brokers.pricing import round_equity_price
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
@@ -261,7 +262,7 @@ class IbkrBroker:
             "symbol": getattr(contract, "symbol", None),
             "side": "buy" if action.upper() == "BUY" else "sell",
             "qty": qty,
-            "order_type": otype.lower(),
+            "order_type": canonical_order_type(otype),
             "limit_price": raw_lmt if is_sane_equity_price(raw_lmt) else None,
         }
         return OrderResult(
