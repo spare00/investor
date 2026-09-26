@@ -124,25 +124,46 @@ def test_universe_blocks_penny_and_non_allowlist() -> None:
 
 
 def test_eligibility_uses_horizon_liquidity_bars() -> None:
-    """Scalp requires higher volume than global default."""
+    """Scalp requires more turnover than the short book, which beats the default."""
     settings = Settings(trade_allowlist=["SPY"], min_avg_daily_volume=100_000)
     mid = normalize_market_quote(
         RawMarketQuote(
             symbol="SPY",
             as_of=datetime.now(UTC),
             provider="stub",
-            last=500.0,
-            bid=499.9,
-            ask=500.1,
-            avg_volume_20d=2_000_000,  # below scalp 5M bar, above global 100k
+            last=50.0,
+            bid=49.99,
+            ask=50.01,
+            # $100M/day: under scalp's $250M bar, over short's $50M.
+            avg_volume_20d=2_000_000,
         )
     )
     assert evaluate_symbol_eligibility(mid, settings=settings).eligible is True
     assert (
-        "insufficient_volume"
+        "insufficient_turnover"
         in evaluate_symbol_eligibility(mid, settings=settings, horizon="scalp").reasons
     )
     assert evaluate_symbol_eligibility(mid, settings=settings, horizon="short").eligible is True
+
+
+def test_a_high_priced_name_is_not_thin_just_because_its_share_count_is_low() -> None:
+    """The share-count bar rejected CBA (~A$170, ~2.5M shares) as too illiquid."""
+    settings = Settings(trade_allowlist=["CBA"], min_avg_daily_volume=100_000)
+    pricey = normalize_market_quote(
+        RawMarketQuote(
+            symbol="CBA",
+            as_of=datetime.now(UTC),
+            provider="stub",
+            last=170.0,
+            bid=169.9,
+            ask=170.1,
+            # Well under the old 5M-share scalp bar; A$425M of turnover.
+            avg_volume_20d=2_500_000,
+        )
+    )
+    result = evaluate_symbol_eligibility(pricey, settings=settings, horizon="scalp", venue="AU")
+
+    assert result.eligible is True, result.reasons
 
 
 def test_aggregate_quality_fail_closed_threshold() -> None:

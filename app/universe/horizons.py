@@ -35,7 +35,10 @@ class HorizonPolicy:
     reeval_seconds: int
     risk_per_trade_mult: float  # book risk_budget / Settings.risk_per_trade_pct
     max_positions: int
-    min_avg_daily_volume: float
+    # Turnover, not share count: a share floor rejects a high-priced liquid
+    # name and admits a cheap illiquid one at the same volume. Quoted in the
+    # venue's own currency and scaled per venue by `liquidity_floor_mult`.
+    min_daily_turnover: float
     max_spread_bps: float
     news_sensitive: bool
     prefer_liquid_etf_or_mega: bool
@@ -62,7 +65,7 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         reeval_seconds=120,
         risk_per_trade_mult=0.3,
         max_positions=2,
-        min_avg_daily_volume=5_000_000,
+        min_daily_turnover=250_000_000,
         max_spread_bps=15,
         news_sensitive=True,
         prefer_liquid_etf_or_mega=True,
@@ -88,7 +91,7 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         reeval_seconds=300,
         risk_per_trade_mult=0.3,
         max_positions=3,
-        min_avg_daily_volume=2_000_000,
+        min_daily_turnover=100_000_000,
         max_spread_bps=25,
         news_sensitive=True,
         prefer_liquid_etf_or_mega=True,
@@ -114,7 +117,7 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         reeval_seconds=900,
         risk_per_trade_mult=0.3,
         max_positions=4,
-        min_avg_daily_volume=1_000_000,
+        min_daily_turnover=50_000_000,
         max_spread_bps=40,
         news_sensitive=True,
         prefer_liquid_etf_or_mega=False,
@@ -143,7 +146,7 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         reeval_seconds=3600,
         risk_per_trade_mult=1.0,
         max_positions=5,
-        min_avg_daily_volume=500_000,
+        min_daily_turnover=25_000_000,
         max_spread_bps=50,
         news_sensitive=False,
         prefer_liquid_etf_or_mega=False,

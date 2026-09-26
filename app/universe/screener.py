@@ -65,10 +65,15 @@ def evaluate_liquidity(
     avg_volume_20d: float | None,
     spread_bps: float | None,
     settings: Settings,
+    venue: str | None = None,
 ) -> ScreenHit:
+    from app.market.venues import venue_for_symbol, venue_liquidity_floor, venue_spread_cap
+
     reasons: list[str] = []
-    min_vol = float(settings.universe_screener_min_avg_volume)
-    max_spread = float(settings.universe_screener_max_spread_bps)
+    # US-calibrated, so scale onto the venue the symbol actually trades on.
+    where = venue or venue_for_symbol(symbol, settings).value
+    min_vol = venue_liquidity_floor(where, settings.universe_screener_min_avg_volume)
+    max_spread = venue_spread_cap(where, settings.universe_screener_max_spread_bps)
     min_price = float(settings.universe_screener_min_price)
 
     if last is not None and last < min_price:

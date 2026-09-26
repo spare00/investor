@@ -28,6 +28,12 @@ class VenueSpec:
     postmarket_end: time | None
     # Regular close used to detect early-close sessions.
     regular_close_local: time
+    # Liquidity screens are written against the US tape. Applied unscaled they
+    # shut the AU book out of its own most liquid names, so each venue scales
+    # the shared floor rather than restating it. Retuning a book still moves
+    # both venues together.
+    liquidity_floor_mult: float = 1.0
+    spread_cap_mult: float = 1.0
 
 
 VENUE_SPECS: dict[Venue, VenueSpec] = {
@@ -54,8 +60,41 @@ VENUE_SPECS: dict[Venue, VenueSpec] = {
         premarket_start=time(7, 0),
         postmarket_end=time(16, 10),
         regular_close_local=time(16, 0),
+        # ASX turnover is a small fraction of the US tape and its spreads are
+        # correspondingly wider. At 1.0 the AU allowlist was mostly unreachable:
+        # of BHP, CBA, VAS, IOZ, NDQ and JPEQ only BHP cleared the scalp screen,
+        # and the four ETFs cleared little else — an ETF's on-screen volume
+        # understates its liquidity because market makers create and redeem
+        # against the basket rather than trading the listed line.
+        liquidity_floor_mult=0.2,
+        spread_cap_mult=2.0,
     ),
 }
+
+
+def _screen_spec(venue: Venue | str | None) -> VenueSpec:
+    """Venue spec for a screen, falling back to US on anything unrecognised.
+
+    US carries the strictest multipliers, so an unknown venue is screened
+    conservatively rather than being waved through — and a bad venue string
+    does not take down a whole collection batch.
+    """
+    try:
+        resolved = parse_venue(venue) or Venue.US
+    except ValueError:
+        resolved = Venue.US
+    return VENUE_SPECS[resolved]
+
+
+def venue_liquidity_floor(venue: Venue | str | None, base: float) -> float:
+    """Scale a US-calibrated liquidity floor onto the venue actually trading."""
+    return float(base) * _screen_spec(venue).liquidity_floor_mult
+
+
+def venue_spread_cap(venue: Venue | str | None, base: float) -> float:
+    """Scale a US-calibrated spread cap onto the venue actually trading."""
+    return float(base) * _screen_spec(venue).spread_cap_mult
+
 
 _CALENDAR_TO_VENUE: dict[str, Venue] = {
     "NYSE": Venue.US,

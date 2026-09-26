@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from app.core.config import Settings, get_settings
 from app.market.fx import fx_rate, parse_fx_rates
+from app.market.venues import venue_liquidity_floor, venue_spread_cap
 from app.risk.types import (
     CheckResult,
     PortfolioRiskView,
@@ -286,17 +287,22 @@ class DeterministicRiskEngine:
                 trade.expected_slippage_bps <= self.limits.max_slippage_bps,
                 f"Slippage {trade.expected_slippage_bps} bps",
             )
+        # Both limits are calibrated on the US tape. Left unscaled they vetoed
+        # AU names the universe screen had already passed, so the AU book could
+        # be selected and then never cleared to trade.
         if trade.avg_daily_volume is not None:
+            floor = venue_liquidity_floor(trade.venue, self.limits.min_avg_daily_volume)
             add(
                 VetoCode.INSUFFICIENT_VOLUME,
-                trade.avg_daily_volume >= self.limits.min_avg_daily_volume,
-                f"ADV {trade.avg_daily_volume}",
+                trade.avg_daily_volume >= floor,
+                f"ADV {trade.avg_daily_volume} vs {floor:.0f}",
             )
         if trade.bid_ask_spread_bps is not None:
+            cap = venue_spread_cap(trade.venue, self.limits.max_bid_ask_spread_bps)
             add(
                 VetoCode.EXCESSIVE_SPREAD,
-                trade.bid_ask_spread_bps <= self.limits.max_bid_ask_spread_bps,
-                f"Spread {trade.bid_ask_spread_bps} bps",
+                trade.bid_ask_spread_bps <= cap,
+                f"Spread {trade.bid_ask_spread_bps} bps vs {cap:.0f}",
             )
 
         # Duplicate order prevention

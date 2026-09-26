@@ -138,6 +138,9 @@ class DataCollectionService:
                         norm,
                         settings=self.settings,
                         horizon=horizons.get(norm.symbol.upper()),
+                        # Authoritative here; venue_for_symbol cannot tell which
+                        # side of a dual listing (BHP, CBA) this quote came from.
+                        venue=str(venue) if venue else None,
                     )
                 )
         except Exception as exc:  # noqa: BLE001
