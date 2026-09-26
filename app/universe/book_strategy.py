@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from app.core.costs import DEFAULT_ROUND_TRIP_COST_BPS
 from app.schemas.common import (
     LiquidityState,
     MarketRegime,
@@ -544,6 +545,40 @@ def structure_allows_entry(
     return True, "ok"
 
 
+def required_probability(horizon: str, *, cost_bps: float = DEFAULT_ROUND_TRIP_COST_BPS) -> float:
+    """Lowest win rate at which the book's own target and stop are worth taking.
+
+    Every book pairs a target no wider than its stop — scalp risks 1.0% to make
+    0.8%, day and short risk exactly what they aim for — so the payoff ratio is
+    at best 1:1 and the gross breakeven is 50%. Costs push it higher still, yet
+    ``min_probability`` admitted trades at 0.48–0.50. Each book was therefore
+    losing money at its own stated edge, before any execution slippage.
+
+    Derived rather than hardcoded so the gate follows the playbook: retune
+    ``target_pct`` or the horizon's stop and the required win rate moves with it.
+    """
+    book = playbook_for(horizon)
+    if book is None:
+        return 1.0
+    policy = _policy_or_none(horizon)
+    stop_pct = float(policy.stop_pct_fallback) if policy is not None else float(book.target_pct)
+    cost = max(0.0, float(cost_bps)) / 10_000.0
+    win = float(book.target_pct) - cost
+    loss = stop_pct + cost
+    if win <= 0 or loss <= 0:
+        return 1.0
+    # p·win = (1-p)·loss  →  p = loss / (win + loss)
+    return round(loss / (win + loss), 4)
+
+
+def entry_probability_floor(horizon: str) -> float:
+    """The book's configured floor, never below what the payoff ratio demands."""
+    book = playbook_for(horizon)
+    if book is None:
+        return 1.0
+    return max(float(book.min_probability), required_probability(horizon))
+
+
 def should_propose_entry(
     *,
     horizon: str,
@@ -567,7 +602,7 @@ def should_propose_entry(
     book = playbook_for(horizon)
     if book is None:
         return False
-    if probability < book.min_probability:
+    if probability < entry_probability_floor(horizon):
         return False
     ok, _ = structure_allows_entry(
         horizon=horizon,

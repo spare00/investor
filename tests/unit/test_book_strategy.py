@@ -291,7 +291,44 @@ def test_short_allows_steady_uptrend() -> None:
     )
 
 
-def test_risk_budget_equalizes_horizons_and_inverts_stop() -> None:
+def test_entry_gate_demands_the_win_rate_the_payoff_actually_needs() -> None:
+    """Regression: every book admitted trades that lose money at their own edge.
+
+    No book targets more than it risks — scalp risks 1.0% to make 0.8% — so the
+    gross breakeven is never under 50%, and costs push it higher. The configured
+    floors were 0.48–0.50, i.e. below breakeven on all three.
+    """
+    from app.universe.book_strategy import entry_probability_floor, required_probability
+
+    assert required_probability("scalp") == pytest.approx(0.60, abs=0.005)
+    assert required_probability("day") == pytest.approx(0.527, abs=0.005)
+    assert required_probability("short") == pytest.approx(0.513, abs=0.005)
+    for hz in ("scalp", "day", "short"):
+        assert entry_probability_floor(hz) >= 0.5
+        assert entry_probability_floor(hz) > playbook_for(hz).min_probability
+
+
+def test_a_coin_flip_no_longer_clears_the_scalp_book() -> None:
+    common = {
+        "horizon": "scalp",
+        "trend": TrendState.UP,
+        "momentum": MomentumState.ACCELERATING,
+        "liquidity": LiquidityState.NORMAL,
+        "volatility": VolatilityState.NORMAL,
+        "rsi": 55.0,
+        "regime": MarketRegime.RISK_ON,
+    }
+    assert should_propose_entry(**common, probability=0.52) is False
+    assert should_propose_entry(**common, probability=0.65) is True
+
+
+def test_a_wider_target_lowers_the_bar_it_has_to_clear() -> None:
+    """The floor is derived, so retuning the playbook retunes the gate."""
+    from app.universe.book_strategy import required_probability
+
+    # Same 1% stop, but aiming for 2% instead of 0.8%.
+    with_wide_target = 0.01 / (0.02 + 0.01)
+    assert required_probability("scalp") > with_wide_target
     assert risk_mult_for_horizon("scalp", firm_risk_pct=0.5) == 0.3
     assert risk_mult_for_horizon("day", firm_risk_pct=0.5) == 0.3
     assert risk_mult_for_horizon("short", firm_risk_pct=0.5) == 0.3

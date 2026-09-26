@@ -8,6 +8,7 @@ from __future__ import annotations
 import statistics
 from typing import Any
 
+from app.core.costs import DEFAULT_ROUND_TRIP_COST_BPS
 from app.performance.trades import ClosedTrade
 from app.universe.entry_attribution import (
     COHORT_INJECTED_SIDEWAYS,
@@ -22,9 +23,7 @@ from app.universe.entry_attribution import (
     public_entry_reason,
 )
 
-# Settlement stamps fees=0. 8 bps round-trip is a conservative liquid-name
-# paper cost (≈4 bps each way) so expectancy is not gross-only.
-DEFAULT_ROUND_TRIP_COST_BPS = 8.0
+__all__ = ["COST_NOTE", "DEFAULT_ROUND_TRIP_COST_BPS", "modeled_cost"]
 
 COST_NOTE = (
     "expectancy_after_costs = pnl - modeled round-trip cost "
