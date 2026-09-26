@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brokers.models import IntentStatus, IntentType
 from app.core.config import Settings, get_settings
+from app.core.logging import get_logger
 from app.execution.safety_controls import TradingControls, trading_controls
 from app.intraday.agents import IntradayAgentService
 from app.intraday.broker_updates import BrokerUpdateProcessor
@@ -25,6 +26,8 @@ from app.intraday.risk import DynamicRiskRevalidator
 from app.intraday.settlement import SettlementService
 from app.market.venues import venue_for_symbol
 from app.models import OrderIntent, PositionLifecycle, PositionSnapshotRecord
+
+logger = get_logger(__name__)
 
 
 class IntradayService:
@@ -266,14 +269,17 @@ class IntradayService:
 
     async def _submit_protection_stop(self, lc: PositionLifecycle) -> int:
         """Rest a GTC stop on an open long so the next CBA does not wait for a committee."""
+        from sqlalchemy import func
         from sqlalchemy import select as sa_select
 
-        from app.execution.order_manager import WORKING_ORDER_STATUSES, OrderManager
+        from app.execution.order_manager import (
+            STOP_ORDER_TYPES,
+            WORKING_ORDER_STATUSES,
+            OrderManager,
+        )
         from app.execution.validation import ExecutionValidationResult, ValidatedOrderIntent
         from app.models import Order
 
-        if not self.controls.is_new_order_allowed():
-            return 0
         if bool(lc.protection_submitted):
             return 0
         qty = abs(float(lc.quantity or 0))
@@ -281,24 +287,56 @@ class IntradayService:
         if qty <= 0 or stop is None:
             return 0
         side = "sell" if float(lc.quantity or 0) >= 0 else "buy"
+        # Price-suffixed so a trailed stop can replace its predecessor without
+        # the broker rejecting the resubmit as a duplicate key.
+        key = f"protect-stop:{lc.id}:{float(stop):.4f}"
+        # Any working same-side order used to count as protection. A resting
+        # take-profit limit, a pending flatten, or another lifecycle's order on
+        # the same dual-listed ticker all satisfied that, so the row was marked
+        # protected while nothing stood between it and a gap. Only this
+        # lifecycle's own working stop counts.
         working = list(
             (
                 await self.session.execute(
                     sa_select(Order).where(
                         Order.symbol == lc.symbol.upper(),
                         Order.side == side,
-                        Order.status.in_(list(WORKING_ORDER_STATUSES)),
+                        Order.idempotency_key.startswith(f"protect-stop:{lc.id}"),
+                        # The table stores both `stop` and `stp`, `FILLED` and
+                        # `filled`; match on the folded value either way.
+                        func.lower(Order.order_type).in_(list(STOP_ORDER_TYPES)),
+                        func.lower(Order.status).in_(list(WORKING_ORDER_STATUSES)),
                     )
                 )
             )
             .scalars()
             .all()
         )
-        if working:
+        stale = [o for o in working if abs(float(o.stop_price or 0.0) - float(stop)) > 1e-6]
+        if working and not stale:
+            # Recording that a stop is already resting is bookkeeping, not a new
+            # order, so it happens before the kill-switch check — a halt must not
+            # leave protected positions reporting themselves as naked.
             lc.protection_submitted = True
             await self.session.flush()
             return 0
-        key = f"protect-stop:{lc.id}"
+        if not self.controls.is_new_order_allowed():
+            return 0
+        manager = OrderManager(self.session, settings=self.settings)
+        for order in stale:
+            # The breakeven trail moves lifecycle.stop_price and clears
+            # protection_submitted, but the resting order stayed at the original
+            # price — the position was protected at a level it had outgrown.
+            try:
+                await manager.cancel_order(order.id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "protection_stop_replace_failed",
+                    symbol=lc.symbol,
+                    order_id=str(order.id),
+                    error=str(exc)[:240],
+                )
+                return 0
         validation = ExecutionValidationResult(
             approved=True,
             intents=[
@@ -319,18 +357,26 @@ class IntradayService:
                 )
             ],
         )
-        orders = await OrderManager(self.session, settings=self.settings).submit_validated_intents(
-            validation
-        )
-        if orders:
-            live = [
-                o
-                for o in orders
-                if str(o.status or "").lower() not in {"rejected", "cancelled", "canceled"}
-            ]
-            if live:
-                lc.protection_submitted = True
-                await self.session.flush()
+        orders = await manager.submit_validated_intents(validation)
+        live = [
+            o
+            for o in orders
+            if str(o.status or "").lower() not in {"rejected", "cancelled", "canceled"}
+        ]
+        if live:
+            lc.protection_submitted = True
+        else:
+            # Do not leave the flag set from a previous attempt: an unprotected
+            # position has to keep reporting protection_order_missing.
+            lc.protection_submitted = False
+            logger.warning(
+                "protection_stop_not_resting",
+                symbol=lc.symbol,
+                lifecycle_id=str(lc.id),
+                stop_price=float(stop),
+                submitted=len(orders),
+            )
+        await self.session.flush()
         return len(orders)
 
     async def _exit_intent(

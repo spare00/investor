@@ -263,8 +263,10 @@ class PositionMonitor:
                     },
                 )
 
-        # Protection order missing
-        if not lifecycle.protection_submitted and qty > 0 and stop is not None:
+        # Protection order missing. `qty > 0` here meant a short position was
+        # never reported as unprotected, so the whole short book ran naked —
+        # _submit_protection_stop picks the side itself and handles either.
+        if not lifecycle.protection_submitted and abs(qty) > 0 and stop is not None:
             verdict = WATCH if verdict == HEALTHY else verdict
             reasons.append("protection_order_missing")
 
