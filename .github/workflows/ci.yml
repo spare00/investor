@@ -24,7 +24,7 @@ jobs:
           ruff format --check app tests
       - name: Typecheck (strict allowlist)
         # Grow this list as modules are made strict-clean. Do not `mypy app`.
-        run: mypy --strict app/core/logging.py app/execution/sizing.py
+        run: mypy --strict app/core/logging.py app/execution/sizing.py app/risk/loss_streak.py
       - name: Unit tests
         run: pytest tests/unit -q
         env:

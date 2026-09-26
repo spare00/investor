@@ -14,8 +14,8 @@ from app.brokers.errors import BrokerError
 from app.brokers.factory import get_broker
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
-from app.models import PortfolioSnapshot, Position
-from app.risk import PortfolioRiskView, PositionRiskView
+from app.models import PortfolioSnapshot, Position, PositionLifecycle
+from app.risk import LossStreak, PortfolioRiskView, PositionRiskView, loss_streak
 from app.schemas.risk_manager import PortfolioStateInput, PositionSnapshot
 
 logger = get_logger(__name__)
@@ -340,6 +340,40 @@ class PositionManager:
             "snapshot_written": snapshot_written,
         }
 
+    async def current_loss_streak(
+        self, *, limit: int = 50, since: datetime | None = None
+    ) -> LossStreak:
+        """Live losing run for the risk engine's cooldown / halt-day vetoes.
+
+        Without this the engine reads the schema default of 0 on every call and
+        both loss gates are unreachable — a 48-trade losing run crossed a limit
+        configured at 3 without ever tripping it.
+
+        The run is counted from ``since`` (default: start of the current UTC day)
+        because ``CONSECUTIVE_LOSSES_HALT`` halts the *day*. An all-time streak
+        would deadlock instead: past the halt threshold no trade may open, so no
+        trade can ever win, so the streak can never be broken.
+        """
+        if since is None:
+            since = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        rows = (
+            await self.session.execute(
+                select(PositionLifecycle.closed_at, PositionLifecycle.realized_pl)
+                .where(PositionLifecycle.status.ilike("closed"))
+                .where(PositionLifecycle.closed_at.is_not(None))
+                .where(PositionLifecycle.closed_at >= since)
+                .order_by(PositionLifecycle.closed_at.desc())
+                .limit(limit)
+            )
+        ).all()
+        closes: list[tuple[datetime | None, float | None]] = []
+        for closed_at, realized in rows:
+            when = closed_at
+            if when is not None and when.tzinfo is None:
+                when = when.replace(tzinfo=UTC)
+            closes.append((when, None if realized is None else float(realized)))
+        return loss_streak(closes, cooldown_minutes=self.settings.cooldown_after_loss_minutes)
+
     async def portfolio_state_input(self) -> PortfolioStateInput:
         """Build PortfolioStateInput from latest DB snapshot / positions."""
         now = datetime.now(UTC)
@@ -349,6 +383,7 @@ class PositionManager:
             select(PortfolioSnapshot).order_by(PortfolioSnapshot.as_of.desc()).limit(1)
         )
         snap = snap_result.scalar_one_or_none()
+        streak = await self.current_loss_streak()
         if snap is None:
             return PortfolioStateInput(
                 as_of=now,
@@ -356,6 +391,8 @@ class PositionManager:
                 cash=self.settings.starting_cash,
                 cash_pct=100.0,
                 gross_exposure_pct=0.0,
+                consecutive_losses=streak.consecutive_losses,
+                cooldown_until=streak.cooldown_until,
             )
         equity = snap.equity or 1.0
         payload = snap.payload if isinstance(snap.payload, dict) else {}
@@ -382,6 +419,8 @@ class PositionManager:
             ],
             daily_pnl_pct=snap.daily_pnl_pct,
             drawdown_pct=snap.drawdown_pct,
+            consecutive_losses=streak.consecutive_losses,
+            cooldown_until=streak.cooldown_until,
             base_currency=str(payload.get("base_currency") or "USD"),
             cash_by_currency={
                 str(k).upper(): float(v)

@@ -25,7 +25,7 @@ from app.execution.position_manager import PositionManager
 from app.execution.safety_controls import trading_controls
 from app.execution.validation import ExecutionValidationResult, ExecutionValidator
 from app.models import Order
-from app.risk import PortfolioRiskView, PositionRiskView
+from app.risk import LossStreak, PortfolioRiskView, PositionRiskView
 from app.schemas.risk_manager import PortfolioStateInput, ProposedTrade
 from app.services.audit import AuditService
 from app.services.collection import CollectionBundle, DataCollectionService
@@ -116,13 +116,27 @@ class WorkflowService:
         self.events = SystemEventRepository(session)
         self._last_intraday_at: datetime | None = None
 
-    def _default_portfolio(self, as_of: datetime) -> PortfolioStateInput:
+    async def _default_portfolio(self, as_of: datetime) -> PortfolioStateInput:
+        """Flat book for degraded paths — but still carrying the real loss streak.
+
+        Losing portfolio state must not silently reopen the consecutive-loss
+        gates; those live in the lifecycle table, which is usually readable even
+        when the snapshot/broker sync that forced this fallback is not.
+        """
+        streak = LossStreak(consecutive_losses=0, cooldown_until=None, last_loss_at=None)
+        try:
+            pm = PositionManager(self.session, settings=self.settings)
+            streak = await pm.current_loss_streak()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("loss_streak_unavailable", error=str(exc)[:240])
         return PortfolioStateInput(
             as_of=as_of,
             equity=self.settings.starting_cash,
             cash=self.settings.starting_cash,
             cash_pct=100.0,
             gross_exposure_pct=0.0,
+            consecutive_losses=streak.consecutive_losses,
+            cooldown_until=streak.cooldown_until,
         )
 
     def _portfolio_risk_view(self, portfolio: PortfolioStateInput) -> PortfolioRiskView:
@@ -249,7 +263,7 @@ class WorkflowService:
                 port, src = await pm.load_for_risk(require_broker=False)
                 notes.append(src)
             except Exception:  # noqa: BLE001
-                port = self._default_portfolio(datetime.now(UTC))
+                port = await self._default_portfolio(datetime.now(UTC))
                 notes.append("portfolio_default_fallback")
 
         held = [p.symbol for p in port.positions]
@@ -561,7 +575,7 @@ class WorkflowService:
             self.session, settings=self.settings, persist=self.persist
         ).collect_premarket(workflow_id=wf)
 
-        port = portfolio or self._default_portfolio(started)
+        port = portfolio or await self._default_portfolio(started)
         from app.universe.outcomes import load_committee_lessons
 
         analysis = await AgentPipeline(settings=self.settings, llm=self.llm).run_from_collection(
