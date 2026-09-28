@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +51,17 @@ def _period(
 
 def _svc(session: AsyncSession) -> PerformanceService:
     return PerformanceService(session, settings=get_settings())
+
+
+@router.get("/performance/equity-curve")
+async def performance_equity_curve(
+    period: str = "3m",
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    try:
+        return await _svc(session).equity_chart(period)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/performance/portfolio")

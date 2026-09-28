@@ -115,6 +115,12 @@ def _decision_book_venue(
     return resolve_venue(settings).value
 
 
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
 def _benchmark_for_venue(venue: str, settings: Settings) -> str:
     if str(venue).upper() == "AU":
         return str(settings.primary_benchmark_au or "VAS").upper()
@@ -193,12 +199,58 @@ class PerformanceService:
             select(DailyPerformance).order_by(DailyPerformance.trade_date)
         )
         daily = list(result.scalars().all())
+        start_utc = _as_utc(period_start)
+        end_utc = _as_utc(period_end)
         curve: list[tuple[datetime, float]] = []
         for d in daily:
-            dt = datetime.fromisoformat(d.trade_date)
-            if period_start <= dt <= period_end:
+            dt = _as_utc(datetime.fromisoformat(d.trade_date))
+            if start_utc <= dt <= end_utc:
                 curve.append((dt, d.ending_equity))
         return curve
+
+    async def equity_chart(self, period: str) -> dict[str, Any]:
+        """Downsampled equity marks for one chart window."""
+        from app.performance.equity_chart import chart_window, downsample_equity
+
+        now = datetime.now(UTC)
+        start, end = chart_window(
+            period, now, timezone_name=self.settings.operator_timezone or "Australia/Brisbane"
+        )
+        snap_count = (
+            await self.session.execute(
+                select(PortfolioSnapshot.id)
+                .where(PortfolioSnapshot.as_of >= start)
+                .where(PortfolioSnapshot.as_of <= end)
+                .limit(1)
+            )
+        ).first()
+        curve = await self._equity_curve(start, end)
+        source = "portfolio_snapshots" if snap_count else ("daily_performance" if curve else "none")
+        raw_n = len(curve)
+        sampled = downsample_equity(curve, max_points=240)
+        points = [
+            {"t": _as_utc(t).isoformat(), "equity": round(float(v), 2)} for t, v in sampled
+        ]
+        start_eq = points[0]["equity"] if points else None
+        end_eq = points[-1]["equity"] if points else None
+        change = None
+        change_pct = None
+        if start_eq is not None and end_eq is not None:
+            change = round(end_eq - start_eq, 2)
+            if start_eq:
+                change_pct = round((end_eq - start_eq) / start_eq, 6)
+        return {
+            "period": str(period or "").strip().lower(),
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "source": source,
+            "raw_points": raw_n,
+            "points": points,
+            "start_equity": start_eq,
+            "end_equity": end_eq,
+            "change": change,
+            "change_pct": change_pct,
+        }
 
     async def portfolio_summary(
         self,

@@ -1027,6 +1027,19 @@
     .kpi.good .v { color: var(--good); }
     .kpi.warn .v { color: var(--warn); }
     .kpi.bad .v { color: var(--bad); }
+    .chart-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .chart-head h2 { margin: 0; }
+    .chart-periods { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+    .chart-periods button { padding: 0.28rem 0.6rem; font-size: 0.78rem; }
+    .chart-periods button.active { border-color: var(--accent); color: var(--accent); }
+    .equity-chart { margin-top: 0.55rem; }
+    .equity-chart svg { width: 100%; height: auto; display: block; }
     .check-list { list-style: none; padding: 0; margin: 0; }
     .check-list li {
       display: flex; gap: 0.5rem; align-items: flex-start;
@@ -1241,6 +1254,22 @@
     </div>
 
     <div id="panel-performance" class="tab-panel">
+      <section class="full">
+        <div class="chart-head">
+          <h2>Equity</h2>
+          <div class="chart-periods" id="equityPeriods">
+            <button type="button" data-equity-period="1w" onclick="setEquityPeriod('1w')">1W</button>
+            <button type="button" data-equity-period="1m" onclick="setEquityPeriod('1m')">1M</button>
+            <button type="button" class="active" data-equity-period="3m" onclick="setEquityPeriod('3m')">3M</button>
+            <button type="button" data-equity-period="6m" onclick="setEquityPeriod('6m')">6M</button>
+            <button type="button" data-equity-period="ytd" onclick="setEquityPeriod('ytd')">YTD</button>
+            <button type="button" data-equity-period="1y" onclick="setEquityPeriod('1y')">1Y</button>
+            <button type="button" data-equity-period="all" onclick="setEquityPeriod('all')">All</button>
+          </div>
+        </div>
+        <div id="equityChartMeta" class="muted" style="margin-top:0.45rem">Loading…</div>
+        <div id="equityChart" class="equity-chart"></div>
+      </section>
       <section class="wide">
         <h2>Portfolio Performance</h2>
         <div id="perfPortfolio" class="muted">Loading…</div>
@@ -3622,15 +3651,171 @@
         : `<li class="muted">None</li>`;
     }
 
+    let equityChartPeriod = "3m";
+
+    function setEquityPeriod(period) {
+      equityChartPeriod = period;
+      document.querySelectorAll("[data-equity-period]").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.equityPeriod === period);
+      });
+      refreshEquityChart();
+    }
+
+    function equityAxisMoney(v) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return "";
+      const abs = Math.abs(n);
+      if (abs >= 1_000_000) return `$${(n / 1e6).toFixed(2)}M`;
+      if (abs >= 10_000) return `$${Math.round(n).toLocaleString()}`;
+      return `$${n.toFixed(0)}`;
+    }
+
+    function renderEquityChart(data) {
+      const meta = document.getElementById("equityChartMeta");
+      const host = document.getElementById("equityChart");
+      if (!meta || !host) return;
+      const pts = (data && data.points) || [];
+      const change = Number(data && data.change);
+      const startEq = Number(data && data.start_equity);
+      const endEq = Number(data && data.end_equity);
+      const up = Number.isFinite(change) && change >= 0;
+      const pct = Number.isFinite(startEq) && startEq !== 0 && Number.isFinite(endEq)
+        ? ((endEq - startEq) / startEq) * 100
+        : null;
+      const changeTxt = Number.isFinite(change)
+        ? `${change >= 0 ? "+" : ""}${fmtMoney(change)}`
+        : "—";
+      const pctTxt = pct == null ? "" : ` (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)`;
+      const src = data && data.source === "daily_performance"
+        ? "daily closes"
+        : (data && data.source === "portfolio_snapshots" ? "portfolio snapshots" : "no marks");
+      meta.innerHTML = pts.length
+        ? `<span class="${up ? "good" : "bad"}" style="color:var(--${up ? "good" : "bad"})">${esc(changeTxt + pctTxt)}</span>
+           · ${esc(fmtMoney(endEq))} now
+           · ${esc(String(data.raw_points || pts.length))} marks
+           · ${esc(src)}`
+        : "No equity history in this window.";
+      if (pts.length < 2) {
+        host.innerHTML = "";
+        return;
+      }
+      const w = 800;
+      const h = 260;
+      const padL = 72;
+      const padR = 16;
+      const padT = 18;
+      const padB = 32;
+      const vals = pts.map((p) => Number(p.equity));
+      let min = Math.min(...vals);
+      let max = Math.max(...vals);
+      if (min === max) {
+        min -= Math.abs(min) * 0.01 || 1;
+        max += Math.abs(max) * 0.01 || 1;
+      }
+      const gutter = (max - min) * 0.08;
+      min -= gutter;
+      max += gutter;
+      const xAt = (i) => padL + (pts.length === 1 ? 0 : i / (pts.length - 1)) * (w - padL - padR);
+      const yAt = (v) => padT + (1 - (v - min) / (max - min)) * (h - padT - padB);
+      const line = pts.map((p, i) => `${i ? "L" : "M"}${xAt(i).toFixed(1)},${yAt(Number(p.equity)).toFixed(1)}`).join(" ");
+      const area = `${line} L${xAt(pts.length - 1).toFixed(1)},${(h - padB).toFixed(1)} L${xAt(0).toFixed(1)},${(h - padB).toFixed(1)} Z`;
+      const stroke = up ? "var(--good)" : "var(--bad)";
+      const ticks = 4;
+      const yLabels = [];
+      for (let i = 0; i <= ticks; i += 1) {
+        const v = min + ((max - min) * i) / ticks;
+        const y = yAt(v);
+        yLabels.push(`<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w - padR}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-width="1"/>`);
+        yLabels.push(`<text x="${padL - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" fill="var(--muted)" font-size="11" font-family="IBM Plex Mono, monospace">${esc(equityAxisMoney(v))}</text>`);
+      }
+      const dateOnly = ["3m", "6m", "ytd", "1y", "all"].includes(equityChartPeriod);
+      const xIdx = [0, Math.floor((pts.length - 1) / 2), pts.length - 1];
+      const xLabels = [...new Set(xIdx)].map((i) => {
+        const label = fmtBne(pts[i].t, { dateOnly });
+        return `<text x="${xAt(i).toFixed(1)}" y="${h - 8}" text-anchor="${i === 0 ? "start" : (i === pts.length - 1 ? "end" : "middle")}" fill="var(--muted)" font-size="11" font-family="IBM Plex Mono, monospace">${esc(label)}</text>`;
+      }).join("");
+      host.innerHTML = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Equity over ${esc(equityChartPeriod)}">
+        ${yLabels.join("")}
+        <path d="${area}" fill="${stroke}" opacity="0.12"></path>
+        <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>
+        ${xLabels}
+      </svg>`;
+      const svg = host.querySelector("svg");
+      if (!svg) return;
+      const tip = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      tip.setAttribute("pointer-events", "none");
+      tip.innerHTML = `<line y1="${padT}" y2="${h - padB}" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"></line>
+        <circle r="3.5" fill="${stroke}" visibility="hidden"></circle>
+        <text fill="var(--text)" font-size="12" font-family="IBM Plex Sans, sans-serif" visibility="hidden"></text>`;
+      svg.appendChild(tip);
+      const hit = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      hit.setAttribute("x", String(padL));
+      hit.setAttribute("y", String(padT));
+      hit.setAttribute("width", String(w - padL - padR));
+      hit.setAttribute("height", String(h - padT - padB));
+      hit.setAttribute("fill", "transparent");
+      svg.appendChild(hit);
+      const guide = tip.querySelector("line");
+      const dot = tip.querySelector("circle");
+      const label = tip.querySelector("text");
+      hit.addEventListener("mousemove", (ev) => {
+        const rect = svg.getBoundingClientRect();
+        const rel = ((ev.clientX - rect.left) / rect.width) * w;
+        let best = 0;
+        let bestDist = Infinity;
+        pts.forEach((_, i) => {
+          const d = Math.abs(xAt(i) - rel);
+          if (d < bestDist) {
+            best = i;
+            bestDist = d;
+          }
+        });
+        const px = xAt(best);
+        const py = yAt(Number(pts[best].equity));
+        guide.setAttribute("x1", px.toFixed(1));
+        guide.setAttribute("x2", px.toFixed(1));
+        guide.setAttribute("visibility", "visible");
+        dot.setAttribute("cx", px.toFixed(1));
+        dot.setAttribute("cy", py.toFixed(1));
+        dot.setAttribute("visibility", "visible");
+        const text = `${fmtBne(pts[best].t)}  ${fmtMoney(pts[best].equity)}`;
+        label.textContent = text;
+        const anchorRight = px > w * 0.62;
+        label.setAttribute("x", (anchorRight ? px - 8 : px + 8).toFixed(1));
+        label.setAttribute("y", Math.max(padT + 12, py - 8).toFixed(1));
+        label.setAttribute("text-anchor", anchorRight ? "end" : "start");
+        label.setAttribute("visibility", "visible");
+      });
+      hit.addEventListener("mouseleave", () => {
+        guide.setAttribute("visibility", "hidden");
+        dot.setAttribute("visibility", "hidden");
+        label.setAttribute("visibility", "hidden");
+      });
+    }
+
+    async function refreshEquityChart() {
+      const meta = document.getElementById("equityChartMeta");
+      try {
+        const data = await fetchJson(
+          `/performance/equity-curve?period=${encodeURIComponent(equityChartPeriod)}`
+        );
+        renderEquityChart(data);
+      } catch (err) {
+        if (meta) meta.textContent = `Equity chart failed: ${err.message || err}`;
+      }
+    }
+
     async function refreshPerformance() {
-      const [portfolio, returns, risk, drawdowns, trades, execution] = await Promise.all([
+      const [portfolio, returns, risk, drawdowns, trades, execution, equityCurve] = await Promise.all([
         fetchJson("/performance/portfolio"),
         fetchJson("/performance/returns"),
         fetchJson("/performance/risk"),
         fetchJson("/performance/drawdowns"),
         fetchJson("/performance/trades"),
         fetchJson("/performance/execution"),
+        fetchJson(`/performance/equity-curve?period=${encodeURIComponent(equityChartPeriod)}`),
       ]);
+      renderEquityChart(equityCurve);
 
       const val = portfolio.valuation || {};
       const positions = val.positions || [];
