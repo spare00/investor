@@ -308,31 +308,219 @@ class UniverseService:
         rows = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
         return {r.symbol.upper(): r.horizon for r in rows if r.status == "active"}
 
+    async def _watch_context(
+        self,
+        holdings: list[str],
+        venue: str | None,
+    ) -> tuple[Any, list[str], dict[str, str], set[str], str]:
+        """Venue, scoped holdings, horizons, entry-watch symbols, benchmark."""
+        from app.market.venues import Venue, parse_venue
+        from app.universe.book_strategy import is_active_strategy_horizon
+        from app.universe.candidates import membership_symbols
+
+        want = parse_venue(venue)
+        held = [h.upper() for h in holdings if h]
+        if want == Venue.AU:
+            bench = (self.settings.primary_benchmark_au or "VAS").upper()
+            membership = membership_symbols(self.settings, venue="AU")
+        elif want == Venue.US:
+            bench = (self.settings.primary_benchmark or "SPY").upper()
+            membership = membership_symbols(self.settings, venue="US")
+        else:
+            bench = (self.settings.primary_benchmark or "SPY").upper()
+            membership = None
+        if membership is None:
+            held_scoped = held
+        else:
+            held_scoped = [h for h in held if h in membership or h == bench]
+        rows = await self.list_active()
+        horizons: dict[str, str] = {}
+        watch: set[str] = set()
+        for row in rows:
+            sym = row.symbol.upper()
+            if membership is not None and sym not in membership and sym not in held_scoped:
+                continue
+            horizons[sym] = row.horizon
+            if sym in held_scoped or is_active_strategy_horizon(row.horizon):
+                watch.add(sym)
+        watch.update(held_scoped)
+        return want, held_scoped, horizons, watch, bench
+
+    async def _latest_watch_bars(self, symbols: set[str]) -> list[Any]:
+        if not symbols:
+            return []
+        from datetime import timedelta
+
+        from app.storage.repositories import MarketSnapshotRepository
+
+        since = utc_now() - timedelta(days=5)
+        grouped = await MarketSnapshotRepository(self.session).recent_by_symbol(
+            sorted(symbols), since=since
+        )
+        return [rows[0] for rows in grouped.values() if rows]
+
+    async def _setup_names(
+        self,
+        *,
+        holdings: list[str],
+        venue: str | None,
+    ) -> tuple[list[str] | None, list[str], str, Any]:
+        """Entry-rule names, scoped holdings, benchmark, venue.
+
+        The name list is ``None`` when the watch has no stored tape.
+        """
+        from app.services.market_hours import minutes_to_close
+        from app.universe.tape_focus import select_setup_symbols
+
+        want, held_scoped, horizons, watch, bench = await self._watch_context(holdings, venue)
+        regime: str | None = None
+        try:
+            from app.universe.context import load_last_regime_context
+
+            regime = (await load_last_regime_context(self.session)).get("market_regime")
+        except Exception:  # noqa: BLE001 — scoring must not depend on history tables
+            regime = None
+        minutes = minutes_to_close(utc_now())
+        selected = select_setup_symbols(
+            await self._latest_watch_bars(watch),
+            horizon_by_symbol=horizons,
+            holdings=held_scoped,
+            limit=self.settings.universe_focus_limit,
+            regime=str(regime) if regime else None,
+            minutes_to_close=float(minutes) if minutes is not None else None,
+        )
+        return selected, held_scoped, bench, want
+
+    async def ensure_watch_tape(
+        self,
+        *,
+        holdings: list[str] | None = None,
+        venue: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch quotes for watch names whose last print is older than the scan age.
+
+        The committee still collects only the setup subset. This keeps a 40-name
+        watch from hitting the broker on every intraday tick.
+        """
+        if not self.is_dynamic():
+            return {"skipped": True, "reason": "static"}
+        if (
+            not self.settings.enable_external_data
+            or not self.settings.enable_market_data_collection
+        ):
+            return {"skipped": True, "reason": "market_data_disabled"}
+        await self.ensure_seeded()
+        _want, held_scoped, _horizons, watch, _bench = await self._watch_context(
+            list(holdings or []), venue
+        )
+        if not watch:
+            return {"skipped": True, "reason": "empty_watch", "fetched": 0}
+        from datetime import timedelta
+
+        from app.collectors.base import RawMarketQuote
+        from app.collectors.market_data import get_market_data_provider
+        from app.services.normalize import normalize_market_quote
+        from app.storage.repositories import MarketSnapshotRepository
+
+        max_age = max(1, int(self.settings.universe_tape_max_age_minutes))
+        since = utc_now() - timedelta(minutes=max_age)
+        repo = MarketSnapshotRepository(self.session)
+        fresh = await repo.recent_by_symbol(sorted(watch), since=since)
+        stale = [sym for sym in sorted(watch) if sym not in fresh]
+        if not stale:
+            return {"skipped": False, "fetched": 0, "stale": 0}
+        try:
+            raw_quotes = await get_market_data_provider().fetch_quotes(stale, venue=venue)
+        except Exception as exc:  # noqa: BLE001 — scan must not block the committee
+            logger.warning("universe_tape_fetch_failed", error=str(exc)[:180], n=len(stale))
+            return {"skipped": True, "reason": "fetch_failed", "stale": len(stale)}
+        now = utc_now()
+        stored = 0
+        for raw in raw_quotes or []:
+            if not isinstance(raw, RawMarketQuote):
+                continue
+            try:
+                await repo.add(normalize_market_quote(raw, now=now))
+                stored += 1
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "universe_tape_persist_failed", symbol=getattr(raw, "symbol", None)
+                )
+        logger.info("universe_tape_refreshed", requested=len(stale), stored=stored, venue=venue)
+        return {"skipped": False, "fetched": stored, "stale": len(stale)}
+
+    async def build_session_focus(
+        self,
+        *,
+        holdings: list[str],
+        session_date: str | None = None,
+        venue: str | None = None,
+        allow_rotation: bool = True,
+    ) -> dict[str, Any]:
+        """Persist tape setups when bars exist.
+
+        With no tape, weekday refresh may rotate inside the watch. Analysis
+        passes ``allow_rotation=False`` so a weekend model focus is left in
+        place until quotes exist.
+        """
+        await self.ensure_seeded()
+        await self.ensure_watch_tape(holdings=holdings, venue=venue)
+        selected, held_scoped, _bench, _want = await self._setup_names(
+            holdings=holdings, venue=venue
+        )
+        if selected is None:
+            if not allow_rotation:
+                return {"skipped": True, "reason": "no_tape"}
+            return await self.build_focus_without_llm(
+                holdings=holdings, session_date=session_date, venue=venue
+            )
+        latest = await self._latest_focus()
+        current = [str(s).upper() for s in (latest.symbols or [])] if latest is not None else []
+        if (
+            latest is not None
+            and latest.source == "tape_setup"
+            and current == [s.upper() for s in selected]
+        ):
+            return {
+                "as_of": latest.as_of.isoformat(),
+                "session_date": latest.session_date,
+                "symbols": current,
+                "holdings": list(latest.holdings or []),
+                "rationale": latest.rationale,
+                "source": latest.source,
+            }
+        return await self._persist_focus(
+            symbols=selected,
+            holdings=held_scoped,
+            rationale="Active watch names passing entry rules",
+            session_date=session_date,
+            source="tape_setup",
+        )
+
     async def collection_universe(
         self,
         holdings: list[str] | None = None,
         *,
         venue: str | None = None,
     ) -> list[str]:
-        """Symbols to collect/analyze this cycle: holdings ∪ focus (or watchlist capped).
+        """Symbols for this committee cycle.
 
-        Dynamic books use weekend membership (seed ∪ candidates) instead of the
-        frozen .env allowlist, then keep the live venue's names only.
+        Dynamic mode: holdings plus watch names that currently pass entry rules,
+        capped at ``universe_focus_limit``. With no stored tape, rotate inside
+        the active watch so the next cycle can score it. The seed allowlist is
+        not added back in.
         """
         from app.market.venues import Venue, parse_venue
-        from app.universe.candidates import membership_symbols
+        from app.universe.candidates import rotating_working_set
 
         want = parse_venue(venue)
         held = sorted({h.upper() for h in (holdings or []) if h})
         if want == Venue.AU:
             bench = (self.settings.primary_benchmark_au or "VAS").upper()
-            book = membership_symbols(self.settings, venue="AU")
         elif want == Venue.US:
             bench = (self.settings.primary_benchmark or "SPY").upper()
-            book = membership_symbols(self.settings, venue="US")
         else:
             bench = (self.settings.primary_benchmark or "SPY").upper()
-            book = None
 
         if not self.is_dynamic():
             allow = (
@@ -340,39 +528,26 @@ class UniverseService:
                 if want is not None
                 else set(self.settings.trade_allowlist)
             )
-            base = set(allow)
-            return self._finalize_collection_symbols(sorted({*base, *held, bench}), want)
+            return self._finalize_collection_symbols(sorted({*allow, *held, bench}), want)
 
         await self.ensure_seeded()
-        active_set = {r.symbol.upper() for r in await self.list_active()}
-        if book is not None:
-            active_set &= book
-            held_scoped = [h for h in held if h in book or h == bench]
-        else:
-            held_scoped = held
-        allowed = active_set | set(held_scoped) | {bench}
-        latest = await self._latest_focus()
-        if latest and latest.symbols:
-            # Drop sold / paused names that lingered in an older focus snapshot.
-            focus = [str(s).upper() for s in latest.symbols if str(s).upper() in allowed]
-            if focus or held_scoped:
-                return self._finalize_collection_symbols(
-                    await self._filter_collection_symbols(
-                        sorted({*focus, *held_scoped, bench}),
-                        held=set(held_scoped),
-                        bench=bench,
-                    ),
-                    want,
-                )
-
-        active = await self.list_active()
-        if book is not None:
-            active = [r for r in active if r.symbol.upper() in book]
-        ranked = sorted(active, key=lambda r: (-r.priority, r.symbol))
-        focus = [r.symbol.upper() for r in ranked[: self.settings.universe_focus_limit]]
+        selected, held_scoped, bench, want = await self._setup_names(holdings=held, venue=venue)
+        _want, _held, _horizons, watch, _bench = await self._watch_context(held, venue)
+        if selected is None:
+            selected = rotating_working_set(
+                self.settings,
+                holdings=held_scoped,
+                limit=self.settings.universe_focus_limit,
+                eligible=set(watch),
+            )
+        allowed = set(watch) | set(held_scoped) | {bench}
+        chosen = [s for s in selected if s in allowed]
+        for sym in held_scoped:
+            if sym not in chosen:
+                chosen.append(sym)
         return self._finalize_collection_symbols(
             await self._filter_collection_symbols(
-                sorted({*focus, *held_scoped, bench}),
+                chosen,
                 held=set(held_scoped),
                 bench=bench,
             ),
@@ -380,15 +555,8 @@ class UniverseService:
         )
 
     def _finalize_collection_symbols(self, symbols: list[str], venue: Any) -> list[str]:
-        """Index overlays plus, on paper, the full venue allowlist so cash can be deployed."""
-        out = self._with_index_symbols(list(symbols), venue)
-        from app.market.paper_gates import paper_aggressive_entries
-
-        if paper_aggressive_entries(self.settings) and venue is not None:
-            extra = {str(s).upper() for s in self.settings.allowlist_for_venue(venue) if s}
-            if extra:
-                out = self._with_index_symbols(sorted(set(out) | extra), venue)
-        return out
+        """Index overlays used for regime. Seed allowlist stays out of the tape."""
+        return self._with_index_symbols(list(symbols), venue)
 
     def _with_index_symbols(self, symbols: list[str], venue: Any) -> list[str]:
         if venue is None:
@@ -663,13 +831,12 @@ class UniverseService:
 
         LLM runs at most every ``universe_refresh_min_interval_days`` (default 7)
         and, by default, only on operator-timezone weekends unless ``force=True``.
-        Between LLM runs, rebuilds focus without the model so premarket/scheduler
-        do not burn weekday trading budget.
+        Between LLM runs, focus is the watch names that pass entry rules.
         """
         await self.ensure_seeded()
         if not self.settings.universe_manager_enabled:
             recon = await self.reconstitute_watchlist(holdings=holdings or [])
-            focus = await self.build_focus_without_llm(
+            focus = await self.build_session_focus(
                 holdings=holdings or [], session_date=session_date
             )
             return {
@@ -690,10 +857,10 @@ class UniverseService:
                     recon = None
                     if due:
                         recon = await self.reconstitute_watchlist(holdings=holdings or [])
-                    focus = await self.build_focus_without_llm(
+                    hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
+                    focus = await self.build_session_focus(
                         holdings=holdings or [], session_date=session_date
                     )
-                    hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
                     reason = "weekend_only_live" if due else "weekend_only"
                     logger.info("universe_refresh_deferred_weekend", reason=reason)
                     return {
@@ -706,10 +873,10 @@ class UniverseService:
 
         if not force and not await self.llm_refresh_due():
             last = await self.last_llm_refresh_at()
-            focus = await self.build_focus_without_llm(
+            hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
+            focus = await self.build_session_focus(
                 holdings=holdings or [], session_date=session_date
             )
-            hygiene = await self.hygiene_active_watchlist(holdings=holdings or [])
             logger.info(
                 "universe_refresh_deferred_weekly",
                 last_llm_at=last.isoformat() if last else None,
@@ -796,10 +963,12 @@ class UniverseService:
         if fallback:
             from app.universe.candidates import rotating_working_set
 
+            active_eligible = {r.symbol.upper() for r in await self.list_active()}
             focus_syms = rotating_working_set(
                 self.settings,
                 holdings=holdings or [],
                 limit=self.settings.universe_focus_limit,
+                eligible=active_eligible,
             )
         focus_doc = await self._persist_focus(
             symbols=focus_syms,
@@ -893,21 +1062,27 @@ class UniverseService:
         *,
         holdings: list[str],
         session_date: str | None = None,
+        venue: str | None = None,
     ) -> dict[str, Any]:
         await self.ensure_seeded()
         from app.universe.book_strategy import is_active_strategy_horizon
         from app.universe.candidates import rotating_working_set
 
-        active_rows = await self.list_active()
+        _want, held, hz, watch, _bench = await self._watch_context(holdings, venue)
+        held_set_preview = set(held)
+        active_rows = [
+            r
+            for r in await self.list_active()
+            if r.symbol.upper() in watch or r.symbol.upper() in held_set_preview
+        ]
         active = {r.symbol.upper() for r in active_rows}
-        hz = {r.symbol.upper(): r.horizon for r in active_rows}
-        held = [h.upper() for h in holdings if h]
         held_set = set(held)
         allowed = active | held_set
         focus = rotating_working_set(
             self.settings,
             holdings=held,
             limit=self.settings.universe_focus_limit,
+            eligible=set(watch),
         )
         cleaned: list[str] = []
         for s in focus:
@@ -972,7 +1147,7 @@ class UniverseService:
                     }
             await self.session.flush()
 
-        focus = await self.build_focus_without_llm(
+        focus = await self.build_session_focus(
             holdings=holdings or [],
             session_date=session_date,
         )

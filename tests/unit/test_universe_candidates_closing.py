@@ -120,6 +120,27 @@ def test_index_membership_includes_sp500_names() -> None:
     assert membership_symbols(tight, "US") == {"SPY", "JPM"}
 
 
+def test_rotating_working_set_stays_inside_eligible_watch() -> None:
+    from datetime import UTC, datetime
+
+    from app.universe.candidates import rotating_working_set
+
+    settings = Settings(
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=[],
+        enabled_venues=["US"],
+    )
+    book = rotating_working_set(
+        settings,
+        holdings=[],
+        limit=8,
+        now=datetime(2026, 8, 3, tzinfo=UTC),
+        eligible={"JPM", "XOM", "CAT"},
+    )
+    assert set(book) <= {"JPM", "XOM", "CAT"}
+    assert len(book) == 3
+
+
 def test_rotating_working_set_moves_with_week() -> None:
     from datetime import UTC, datetime
 

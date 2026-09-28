@@ -2,7 +2,7 @@
 
 ## Goal
 
-Stop treating `TRADE_ALLOWLIST` as the only tradable set. Python reconstitutes an **index-like membership** from a bundled S&P 500 snapshot (plus ASX 50 when AU is on, and a small ETF overlay) and a weekly watch of `universe_watchlist_limit` names. Weekend Universe Manager may overlay a **working set** of ~10 names and horizons. Weekday CIO uses that working set with tape, news, and horizon playbooks (scalp / day / short; medium is hold-only).
+Stop treating `TRADE_ALLOWLIST` as the only tradable set. Python reconstitutes an **index-like membership** from a bundled S&P 500 snapshot (plus ASX 50 when AU is on, and a small ETF overlay) and a weekly watch of `universe_watchlist_limit` names. Weekend Universe Manager overlays horizons on that watch. Weekday collection is holdings plus watch names that pass the Python entry rules, capped at `universe_focus_limit` (default 10). With no stored tape, focus rotates inside the active watch. The seed allowlist is not merged back into collection.
 
 ## Horizons
 
@@ -17,10 +17,10 @@ Policies live in `app/universe/horizons.py`. **Entry/exit rules** live in `app/u
 
 ## Modes
 
-- `UNIVERSE_MODE=dynamic` (default): **new entries** = active watchlist ∩ membership (seed ∪ curated candidates). Collection = venue-scoped focus ∪ holdings.
+- `UNIVERSE_MODE=dynamic` (default): **new entries** = active watchlist ∩ membership (seed ∪ curated candidates). Collection = venue-scoped setups (cap `universe_focus_limit`) ∪ holdings ∪ index overlays. Quotes for the rest of the watch refresh when older than `universe_tape_max_age_minutes` (default 15).
 - `UNIVERSE_MODE=static`: legacy allowlist-only behavior.
 
-`TRADE_ALLOWLIST` / `TRADE_ALLOWLIST_AU` **seed** membership. Python reconstitutes the active watch from seed ∪ screened candidates on the weekly cadence even when Universe Manager LLM falls back — Mag7 seed is no longer a permanent ceiling. Weekend LLM may overlay focus and horizons; it is not required for names to become entry-eligible.
+`TRADE_ALLOWLIST` / `TRADE_ALLOWLIST_AU` **seed** membership. Python reconstitutes the active watch from seed ∪ screened candidates on the weekly cadence even when Universe Manager LLM falls back — Mag7 seed is no longer a permanent ceiling, and paper collection does not force the seed list back onto the tape. Weekend LLM may overlay horizons; it is not required for names to become entry-eligible. A name on the watch is collected on a weekday only when its stored bar passes the entry rules, or when the book has no tape yet and the name is in the watch-scoped rotation.
 
 ## Closing / overnight
 
@@ -49,7 +49,7 @@ When `ENABLE_SCHEDULER=true` and dynamic mode is on, APScheduler polls `universe
 1. `UNIVERSE_REFRESH_WEEKEND_ONLY=true` (default) — operator TZ weekend (Sat/Sun, default `Australia/Brisbane`), and
 2. at least `UNIVERSE_REFRESH_MIN_INTERVAL_DAYS` (default **7**) since the last LLM focus snapshot.
 
-The weekend tick reconstitutes the watch first, then passes that book plus last CIO regime / MI themes and 90d outcomes. Universe Manager LLM only picks the working set and horizons — it does **not** rebuild membership. Local 14B gets `LLM_LOCAL_UNIVERSE_TIMEOUT_SECONDS` (default **600s**) and one validation repair round; the scheduler waits up to `UNIVERSE_REFRESH_JOB_TIMEOUT_SECONDS` (default **30m**). Weekday committee stays on the 180s / 8-minute caps. A failed LLM still leaves the reconstituted watch in place (`source=universe_fallback` for focus) and retries next weekend or idle weekday. Pause/remove proposals from the model are ignored (`lock_membership`). Manual `POST /universe/refresh` with `{"force": true}` bypasses weekend + weekly gates.
+The weekend tick reconstitutes the watch first, then passes that book plus last CIO regime / MI themes and 90d outcomes. Universe Manager LLM overlays horizons and a focus list — it does **not** rebuild membership. Local 14B gets `LLM_LOCAL_UNIVERSE_TIMEOUT_SECONDS` (default **600s**) and one validation repair round; the scheduler waits up to `UNIVERSE_REFRESH_JOB_TIMEOUT_SECONDS` (default **30m**). Weekday ticks skip the model: they refresh watch quotes older than `universe_tape_max_age_minutes` and set focus from entry rules. The weekday committee stays on the 8-minute cap and only receives that setup subset. A failed LLM still leaves the reconstituted watch in place (`source=universe_fallback` for focus, rotated inside the watch) and retries next weekend or idle weekday. Pause/remove proposals from the model are ignored (`lock_membership`). Manual `POST /universe/refresh` with `{"force": true}` bypasses weekend + weekly gates.
 
 Dual-book: seed = `TRADE_ALLOWLIST` ∪ `TRADE_ALLOWLIST_AU`; default membership is the bundled S&P 500 snapshot ∪ ASX 50 (when AU is enabled) ∪ a small liquid ETF overlay. `UNIVERSE_CANDIDATE_POOL` replaces that book when set. Entry/collection remain venue-scoped.
 

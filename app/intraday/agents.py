@@ -156,6 +156,7 @@ class IntradayAgentService:
 
             entry_universe = await univ.entry_universe(venue=book)
             horizons = await univ.horizon_by_symbol()
+            await univ.build_session_focus(holdings=held, venue=book, allow_rotation=False)
             universe = await univ.collection_universe(holdings=held, venue=book)
 
             collection = await DataCollectionService(

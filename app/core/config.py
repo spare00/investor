@@ -174,6 +174,9 @@ class Settings(BaseSettings):
     universe_mode: str = "dynamic"  # static | dynamic
     universe_focus_limit: int = 10
     universe_watchlist_limit: int = 40
+    # Refresh stored quotes for the active watch when older than this, then
+    # the committee only collects names that pass entry rules (plus holdings).
+    universe_tape_max_age_minutes: int = 15
     universe_manager_enabled: bool = True
     # How often Universe Manager may call the LLM (days). Premarket/scheduler
     # still run between — they rebuild focus without LLM until this elapses.

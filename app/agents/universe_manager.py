@@ -62,11 +62,17 @@ class UniverseManagerAgent(BaseAgent[UniverseManagerInput, UniverseManagerOutput
         from app.core.config import get_settings
         from app.universe.candidates import rotating_working_set
 
+        eligible = {
+            str(w.get("symbol") or "").upper()
+            for w in (payload.current_watchlist or [])
+            if isinstance(w, dict) and w.get("symbol")
+        }
         focus = rotating_working_set(
             get_settings(),
             holdings=holdings,
             limit=payload.focus_limit,
             now=payload.as_of,
+            eligible=eligible or None,
         )
         return UniverseManagerOutput(
             timestamp=datetime.now(UTC),

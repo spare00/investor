@@ -252,6 +252,12 @@ class DailyWorkflowService:
                 list(portfolio.positions or []), self.venue, settings=self.settings
             )
             univ = UniverseService(self.session, settings=self.settings)
+            await univ.build_session_focus(
+                holdings=holdings,
+                session_date=run.session_date,
+                venue=self.venue.value,
+                allow_rotation=False,
+            )
             collect_symbols = await univ.collection_universe(
                 holdings=holdings, venue=self.venue.value
             )

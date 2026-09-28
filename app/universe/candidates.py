@@ -411,9 +411,12 @@ def rotating_working_set(
     holdings: list[str],
     limit: int,
     now: datetime | None = None,
+    eligible: set[str] | None = None,
 ) -> list[str]:
-    """Deterministic working set: holdings plus sector-rotated membership."""
-    return ranked_membership_book(settings, holdings=holdings, limit=limit, now=now)
+    """Holdings plus sector rotation. ``eligible`` keeps the rotation inside the watch."""
+    return ranked_membership_book(
+        settings, holdings=holdings, limit=limit, now=now, eligible=eligible
+    )
 
 
 def addable_universe(

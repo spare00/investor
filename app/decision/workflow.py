@@ -308,14 +308,15 @@ class WorkflowService:
                         f"{','.join((ctx.get('themes') or [])[:3]) or 'none'}"
                     )
             except Exception as exc:  # noqa: BLE001
-                await univ.build_focus_without_llm(holdings=held)
+                await univ.build_session_focus(holdings=held)
                 notes.append(f"universe_refresh_fallback:{exc}")
         else:
-            await univ.build_focus_without_llm(holdings=held)
+            await univ.build_session_focus(holdings=held)
 
         from app.market.venues import resolve_venue
 
         book = resolve_venue(self.settings).value
+        await univ.build_session_focus(holdings=held, venue=book, allow_rotation=False)
         universe = await univ.collection_universe(holdings=held, venue=book)
         entry_universe = await univ.entry_universe(venue=book)
         horizons = await univ.horizon_by_symbol()

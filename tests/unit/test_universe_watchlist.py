@@ -127,7 +127,7 @@ async def test_static_mode_uses_allowlist(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
-async def test_paper_collection_includes_full_allowlist(session: AsyncSession) -> None:
+async def test_paper_collection_does_not_force_seed_allowlist(session: AsyncSession) -> None:
     from app.core.config import TradingMode
 
     settings = Settings(
@@ -139,14 +139,136 @@ async def test_paper_collection_includes_full_allowlist(session: AsyncSession) -
         enabled_venues=["US"],
         universe_focus_limit=1,
         universe_manager_enabled=False,
+        universe_screener_enabled=False,
+        universe_candidate_pool=["SPY", "NVDA", "IONQ"],
     )
     svc = UniverseService(session, settings=settings)
     await svc.ensure_seeded()
-    await svc.build_focus_without_llm(holdings=["NVDA"])
     symbols = await svc.collection_universe(holdings=["NVDA"], venue="US")
     assert "NVDA" in symbols
-    assert "SPY" in symbols
-    assert "IONQ" in symbols
+    assert "SPY" in symbols  # index overlay
+    assert "IONQ" not in symbols
+
+
+def test_select_setup_symbols_keeps_holdings_and_passers() -> None:
+    from types import SimpleNamespace
+
+    from app.universe.tape_focus import select_setup_symbols
+
+    def _bar(
+        symbol: str, *, last: float, open_: float, high: float, low: float, rsi: float, sma: float
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            symbol=symbol,
+            last=last,
+            open=open_,
+            high=high,
+            low=low,
+            volume=2_000_000,
+            avg_volume_20d=1_000_000,
+            rsi_14=rsi,
+            sma_20=sma,
+            atr_14=1.2,
+            bid=last - 0.05,
+            ask=last + 0.05,
+            vix=16,
+        )
+
+    picked = select_setup_symbols(
+        [
+            _bar("PLTR", last=100, open_=99, high=101, low=98, rsi=55, sma=97),
+            _bar("BAD", last=90, open_=100, high=100, low=80, rsi=55, sma=120),
+            _bar("NVDA", last=50, open_=60, high=60, low=49, rsi=20, sma=80),
+        ],
+        horizon_by_symbol={"PLTR": "day", "BAD": "day", "NVDA": "day"},
+        holdings=["NVDA"],
+        limit=10,
+        regime="RISK_ON",
+        minutes_to_close=180,
+    )
+    assert picked is not None
+    assert picked[0] == "NVDA"
+    assert "PLTR" in picked
+    assert "BAD" not in picked
+    assert select_setup_symbols([], horizon_by_symbol={}, holdings=[], limit=10) is None
+
+
+@pytest.mark.asyncio
+async def test_collection_uses_watch_setups_not_seed(session: AsyncSession) -> None:
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from app.models import MarketSnapshot, WatchlistSymbol
+
+    settings = Settings(
+        universe_mode="dynamic",
+        trade_allowlist=["SPY"],
+        universe_candidate_pool=["PLTR", "BAD", "NVDA"],
+        enabled_venues=["US"],
+        universe_focus_limit=10,
+        universe_manager_enabled=False,
+        universe_screener_enabled=False,
+        paper_aggressive_entries=True,
+    )
+    svc = UniverseService(session, settings=settings)
+    await svc.ensure_seeded()
+    now = datetime(2026, 9, 28, 4, 0, tzinfo=UTC)
+    for sym, horizon in (("PLTR", "day"), ("BAD", "day"), ("NVDA", "day")):
+        session.add(
+            WatchlistSymbol(
+                id=uuid4(),
+                symbol=sym,
+                horizon=horizon,
+                status="active",
+                priority=50,
+                thesis="t",
+                source="reconstitute",
+            )
+        )
+
+    def _snap(**kwargs: object) -> MarketSnapshot:
+        return MarketSnapshot(
+            id=uuid4(),
+            as_of=now,
+            provider="test",
+            volume=2_000_000,
+            avg_volume_20d=1_000_000,
+            atr_14=1.2,
+            vix=16,
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    session.add(
+        _snap(
+            symbol="PLTR",
+            last=100,
+            open=99,
+            high=101,
+            low=98,
+            rsi_14=55,
+            sma_20=97,
+            bid=99.9,
+            ask=100.1,
+        )
+    )
+    session.add(
+        _snap(
+            symbol="BAD",
+            last=90,
+            open=100,
+            high=100,
+            low=80,
+            rsi_14=55,
+            sma_20=120,
+            bid=89.9,
+            ask=90.1,
+        )
+    )
+    await session.flush()
+    symbols = await svc.collection_universe(holdings=[], venue="US")
+    assert "PLTR" in symbols
+    assert "BAD" not in symbols
+    assert "NVDA" not in symbols
 
 
 @pytest.mark.asyncio
