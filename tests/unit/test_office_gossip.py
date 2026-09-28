@@ -10,6 +10,7 @@ from app.agents.activity import mark_agent_started, reset_agent_activity_for_tes
 from app.core.config import Settings
 from app.office.gossip import (
     FALLBACK_LINES,
+    _clean_line,
     committee_holding_gpu,
     desk_facts_from_summary,
     dialogue_beats,
@@ -48,6 +49,13 @@ def test_parse_gossip_thoughts_keyed() -> None:
     thoughts = parse_gossip_thoughts(raw)
     assert thoughts["cio"].startswith("손실")
     assert "사자고" in thoughts["devils_advocate"]
+
+
+def test_long_speech_is_not_cut_with_an_ellipsis() -> None:
+    line = "오늘은 현금이 포지션이야. " * 8
+    cleaned = _clean_line(line)
+    assert "…" not in cleaned
+    assert cleaned.endswith(".")
 
 
 def test_parse_gossip_strips_bullets_and_rejects_urls() -> None:
@@ -89,11 +97,18 @@ def test_devil_and_cio_speak_from_the_book() -> None:
         }
     )
     thoughts = role_thoughts_from_facts(facts)
-    assert "SCALE_IN" in thoughts["cio"]
     assert "손실" in thoughts["cio"]
+    assert "사자" in thoughts["cio"]
     assert "devils_advocate" in thoughts
-    assert "SCALE_IN" in thoughts["devils_advocate"] or "사자고" in thoughts["devils_advocate"]
+    assert "사자고" in thoughts["devils_advocate"]
     assert "횡보" in thoughts["quant_strategist"]
+    pool = thought_pool_from_facts(facts)
+    assert len(pool["cio"]) >= 3
+    assert len(pool["devils_advocate"]) >= 3
+    blob = " ".join(line for lines in pool.values() for line in lines)
+    assert "STAY_CASH" not in blob
+    assert "SCALE_IN" not in blob
+    assert "Verdict" not in blob
 
 
 def test_committee_holding_gpu_while_running() -> None:
@@ -233,7 +248,8 @@ def _blocked_cba_summary() -> dict:
 def test_personality_from_last_book_clips() -> None:
     facts = desk_facts_from_summary(_blocked_cba_summary())
     thoughts = role_thoughts_from_facts(facts)
-    assert thoughts["cio"] == "CBA 승인했는데 반대해서 못 샀어."
+    assert thoughts["cio"].startswith("CBA")
+    assert "못 샀" in thoughts["cio"]
     assert "CBA" in thoughts["market_intelligence"]
     assert "건의" in thoughts["market_intelligence"]
     assert "보류" in thoughts["devils_advocate"]
