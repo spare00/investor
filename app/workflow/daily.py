@@ -305,7 +305,7 @@ class DailyWorkflowService:
                 meta["collection_symbols"] = collect_symbols
                 meta["venue"] = self.venue.value
                 run.metadata_json = meta
-            from app.universe.outcomes import load_committee_lessons
+            from app.universe.outcomes import load_committee_lessons, symbol_close_pnls
 
             analysis = await AgentPipeline(settings=self.settings, llm=llm).run_from_collection(
                 collection,
@@ -318,6 +318,7 @@ class DailyWorkflowService:
                 ],
                 book=book,
                 recent_lessons=await load_committee_lessons(self.session),
+                outcome_pnls=await symbol_close_pnls(self.session),
             )
             from app.services.audit import AuditService
 

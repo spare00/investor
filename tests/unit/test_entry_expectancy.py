@@ -83,25 +83,17 @@ def test_injected_plans_carry_source_and_timing() -> None:
         update={"entry_zone": PriceZone(min=449.0, max=451.0), "stop_or_invalidation": 445.0}
     )
     quant = quant.model_copy(update={"symbol_views": [view]})
-    idle = CIODecision(
-        timestamp=datetime.now(UTC),
-        market_regime=MarketRegime.RISK_ON,
-        portfolio_action=PortfolioAction.NO_TRADE,
-        cash_target_pct=100,
-        risk_approval=True,
-    )
-    out = ensure_cio_takes_setups(
-        idle,
-        quant=quant,
+    from app.agents.cio import quant_entry_plans
+
+    plans = quant_entry_plans(
+        views=quant.symbol_views,
         watchlist=[{"symbol": "QQQ", "horizon": "scalp"}],
-        positions=[],
-        allowlist=["QQQ"],
-        risk_ok=True,
+        held_symbols=[],
         regime=MarketRegime.RISK_ON,
         max_position_pct=10.0,
-        enabled=True,
+        allowlist=["QQQ"],
     )
-    plan = next(p for p in out.symbol_actions if p.symbol == "QQQ")
+    plan = next(p for p in plans if p.symbol == "QQQ")
     assert plan.entry_source == SOURCE_INJECTED
     assert plan.entry_timing == "dip_buy"
     assert plan.trend_at_entry == "up"

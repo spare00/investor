@@ -21,6 +21,7 @@ from app.models import (
     DailyPerformance,
     DailyWorkflowRun,
     DecisionEvaluationRecord,
+    MarketSnapshot,
     PortfolioSnapshot,
     PositionLifecycle,
     TradePnL,
@@ -210,7 +211,12 @@ class PerformanceService:
 
     async def equity_chart(self, period: str) -> dict[str, Any]:
         """Downsampled equity marks for one chart window."""
-        from app.performance.equity_chart import chart_window, downsample_equity
+        from app.performance.equity_chart import (
+            CHART_BENCHMARKS,
+            chart_window,
+            downsample_equity,
+            prices_at_marks,
+        )
 
         now = datetime.now(UTC)
         start, end = chart_window(
@@ -228,9 +234,25 @@ class PerformanceService:
         source = "portfolio_snapshots" if snap_count else ("daily_performance" if curve else "none")
         raw_n = len(curve)
         sampled = downsample_equity(curve, max_points=240)
-        points = [
-            {"t": _as_utc(t).isoformat(), "equity": round(float(v), 2)} for t, v in sampled
-        ]
+        marks = await self._benchmark_marks(start, end, CHART_BENCHMARKS)
+        quotes = {
+            symbol: prices_at_marks(sampled, marks.get(symbol) or [])
+            for symbol in CHART_BENCHMARKS
+        }
+        points = []
+        for idx, (ts, value) in enumerate(sampled):
+            row: dict[str, Any] = {
+                "t": _as_utc(ts).isoformat(),
+                "equity": round(float(value), 2),
+            }
+            for symbol in CHART_BENCHMARKS:
+                price = quotes[symbol][idx]
+                if price is None:
+                    continue
+                key = symbol.lower()
+                row[key] = round(float(price), 2)
+                row[f"{key}_px"] = round(float(price), 2)
+            points.append(row)
         start_eq = points[0]["equity"] if points else None
         end_eq = points[-1]["equity"] if points else None
         change = None
@@ -239,6 +261,17 @@ class PerformanceService:
             change = round(end_eq - start_eq, 2)
             if start_eq:
                 change_pct = round((end_eq - start_eq) / start_eq, 6)
+        benchmarks = []
+        for symbol in CHART_BENCHMARKS:
+            levels = [row[symbol.lower()] for row in points if row.get(symbol.lower()) is not None]
+            if len(levels) < 2 or not levels[0]:
+                continue
+            benchmarks.append(
+                {
+                    "symbol": symbol,
+                    "change_pct": round((levels[-1] - levels[0]) / levels[0], 6),
+                }
+            )
         return {
             "period": str(period or "").strip().lower(),
             "start": start.isoformat(),
@@ -250,7 +283,30 @@ class PerformanceService:
             "end_equity": end_eq,
             "change": change,
             "change_pct": change_pct,
+            "benchmarks": benchmarks,
         }
+
+    async def _benchmark_marks(
+        self,
+        start: datetime,
+        end: datetime,
+        symbols: tuple[str, ...],
+    ) -> dict[str, list[tuple[datetime, float]]]:
+        result = await self.session.execute(
+            select(MarketSnapshot.symbol, MarketSnapshot.as_of, MarketSnapshot.last)
+            .where(MarketSnapshot.symbol.in_(symbols))
+            .where(MarketSnapshot.as_of >= start - timedelta(days=21))
+            .where(MarketSnapshot.as_of <= end)
+            .order_by(MarketSnapshot.as_of)
+        )
+        marks: dict[str, list[tuple[datetime, float]]] = {symbol: [] for symbol in symbols}
+        for symbol, as_of, last in result.all():
+            if last is None:
+                continue
+            bucket = marks.get(str(symbol))
+            if bucket is not None:
+                bucket.append((as_of, float(last)))
+        return marks
 
     async def portfolio_summary(
         self,

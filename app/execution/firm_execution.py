@@ -107,6 +107,39 @@ async def materialize_cio_decision(
     """
     cfg = settings or get_settings()
     notes: list[str] = []
+    from app.schemas.common import SymbolAction
+    from app.universe.book_strategy import portfolio_action_from_symbol_actions
+    from app.universe.outcome_gate import entry_block_reason
+    from app.universe.outcomes import symbol_close_pnls
+
+    entry_actions = {SymbolAction.STRONG_BUY, SymbolAction.BUY, SymbolAction.SCALE_IN}
+    ledger = await symbol_close_pnls(session)
+    kept_actions = []
+    blocked_entry = False
+    for plan in decision.symbol_actions or []:
+        sym = str(getattr(plan, "symbol", "") or "").upper()
+        why = (
+            entry_block_reason(ledger.get(sym))
+            if getattr(plan, "action", None) in entry_actions
+            else None
+        )
+        if why:
+            notes.append(f"entry_blocked:{sym}:{why}")
+            blocked_entry = True
+            continue
+        kept_actions.append(plan)
+    if blocked_entry:
+        decision = decision.model_copy(
+            update={
+                "symbol_actions": kept_actions,
+                "portfolio_action": portfolio_action_from_symbol_actions(kept_actions),
+                "reason_not_to_trade": (
+                    "closed_trade_block"
+                    if not any(getattr(p, "action", None) in entry_actions for p in kept_actions)
+                    else decision.reason_not_to_trade
+                ),
+            }
+        )
     risk_view = (
         portfolio if isinstance(portfolio, PortfolioRiskView) else portfolio_to_risk_view(portfolio)
     )

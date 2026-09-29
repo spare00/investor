@@ -24,7 +24,7 @@ def paper_relaxed_data_gates(settings: Settings | None = None) -> bool:
 
 
 def paper_aggressive_entries(settings: Settings | None = None) -> bool:
-    """Paper-only: take Quant setups instead of sitting in cash. Hard vetoes still block."""
+    """Legacy paper flag. Cash no longer forces playbook buys over a CIO pass."""
     cfg = settings or get_settings()
     return bool(
         cfg.paper_aggressive_entries

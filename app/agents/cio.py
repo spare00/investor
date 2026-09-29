@@ -24,7 +24,6 @@ from app.universe.book_strategy import (
     horizon_for_symbol,
     notional_pct_for_risk,
     playbook_for,
-    portfolio_action_from_symbol_actions,
     should_propose_entry,
     tape_from_view,
 )
@@ -35,9 +34,6 @@ _ENTRY_ACTIONS = {
     SymbolAction.BUY,
     SymbolAction.SCALE_IN,
 }
-
-# Points of cash above the floor that still count as drag (paper learning).
-_CASH_DRAG_BUFFER_PCT = 10.0
 
 
 def cash_target_after_plans(
@@ -165,51 +161,26 @@ def ensure_cio_takes_setups(
     min_cash_pct: float = 30.0,
     minutes_to_close: float | None = None,
 ) -> CIODecision:
-    """If the book sat idle — or stayed cash-heavy after a token buy — take Quant setups."""
-    if not enabled or not risk_ok or not decision.risk_approval:
-        return decision
-    entering = [p for p in decision.symbol_actions if p.action in _ENTRY_ACTIONS]
-    cash_heavy = float(cash_pct) >= float(min_cash_pct) + _CASH_DRAG_BUFFER_PCT
-    if entering and not cash_heavy:
-        return decision
-    watch = watchlist or []
-    held = [
-        str(p.symbol).upper()
-        for p in (positions or [])
-        if abs(getattr(p, "quantity", 0) or 0) > 1e-9
-    ]
-    already = {p.symbol.upper() for p in entering}
-    new_counts: dict[str, int] = {}
-    for plan in entering:
-        hz = horizon_for_symbol(plan.symbol, watch)
-        new_counts[hz] = new_counts.get(hz, 0) + 1
-    extras = quant_entry_plans(
-        views=list(getattr(quant, "symbol_views", None) or []),
-        watchlist=watch,
-        held_symbols=held + list(already),
-        regime=regime,
-        max_position_pct=max_position_pct,
-        allowlist=allowlist,
-        new_counts=new_counts,
-        minutes_to_close=minutes_to_close,
+    """Keep the CIO call. Do not replace a pass with playbook buys.
+
+    Injecting Quant setups whenever cash sat above the floor cleared
+    reason_not_to_trade and rebought the same tape. The arguments stay so
+    existing callers compile; none of them add entries anymore.
+    """
+    del (
+        quant,
+        watchlist,
+        positions,
+        allowlist,
+        risk_ok,
+        regime,
+        max_position_pct,
+        enabled,
+        cash_pct,
+        min_cash_pct,
+        minutes_to_close,
     )
-    if not extras:
-        return decision
-    taken = {p.symbol.upper() for p in extras}
-    kept = [p for p in decision.symbol_actions if p.symbol.upper() not in taken]
-    merged = kept + extras
-    return decision.model_copy(
-        update={
-            "symbol_actions": merged,
-            "portfolio_action": portfolio_action_from_symbol_actions(merged),
-            "reason_not_to_trade": None,
-            "cash_target_pct": cash_target_after_plans(
-                current_cash_pct=cash_pct,
-                min_cash_pct=min_cash_pct,
-                plans=merged,
-            ),
-        }
-    )
+    return decision
 
 
 def reconcile_nameless_entry(decision: CIODecision, *, has_positions: bool) -> CIODecision:
@@ -337,8 +308,6 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
             )
             reason_not = "Risk blocked — no new entries"
         else:
-            held_syms = [p.symbol.upper() for p in positions if abs(p.quantity or 0) > 1e-9]
-
             for pos in positions:
                 if abs(pos.quantity or 0) < 1e-9:
                     continue
@@ -388,18 +357,6 @@ class CIOAgent(BaseAgent[CIOInput, CIODecision]):
                         target_pct=target,
                         stop=view.stop_or_invalidation if action != SymbolAction.HOLD else None,
                         confidence=int(view.probability_estimate * 100),
-                    )
-                )
-
-            if risk_ok:
-                symbol_actions.extend(
-                    quant_entry_plans(
-                        views=list(views.values()),
-                        watchlist=watch,
-                        held_symbols=held_syms,
-                        regime=regime,
-                        max_position_pct=float(self.settings.max_position_pct),
-                        allowlist=payload.allowlist,
                     )
                 )
 

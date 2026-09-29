@@ -333,7 +333,7 @@ async def test_pipeline_bottom_up_order(stub_llm: StubLLMClient) -> None:
 
 @pytest.mark.asyncio
 async def test_cio_fallback_flat_risk_on_ignores_soft_prefer_no(stub_llm: StubLLMClient) -> None:
-    """Flat book + RISK_ON + approved risk should still SCALE_IN despite soft Devil prefer_no."""
+    """A soft Devil pass does not invent a playbook buy when the model is down."""
     from app.schemas.common import MarketRegime, PortfolioAction, PriceZone
     from app.schemas.quant_strategist import SymbolQuantView
 
@@ -428,8 +428,11 @@ async def test_cio_fallback_flat_risk_on_ignores_soft_prefer_no(stub_llm: StubLL
         positions=[],
     )
     out = CIOAgent(llm=stub_llm).fallback_output(payload, reason="test")
-    assert out.portfolio_action == PortfolioAction.SCALE_IN
-    assert any(a.symbol == "QQQ" for a in out.symbol_actions)
+    assert out.portfolio_action == PortfolioAction.NO_TRADE
+    assert all(
+        a.symbol != "QQQ" or a.action.value not in {"BUY", "SCALE_IN", "STRONG_BUY"}
+        for a in out.symbol_actions
+    )
 
 
 def test_devil_fallback_elevated_vol_does_not_block() -> None:

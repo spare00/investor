@@ -253,6 +253,7 @@ class AgentPipeline:
         book: VenueBookContext | None = None,
         venue: str | None = None,
         recent_lessons: list[dict] | None = None,
+        outcome_pnls: dict[str, list[float]] | None = None,
     ) -> AnalysisBundle:
         wf = workflow_id or collection.workflow_id or uuid4()
         as_of = collection.collected_at
@@ -538,6 +539,7 @@ class AgentPipeline:
             watch_ctx,
             regime=macro_out.market_regime,
             minutes_to_close=minutes_to_close,
+            outcome_pnls=outcome_pnls,
         )
         from app.universe.entry_attribution import stamp_cio_entry_attribution
 

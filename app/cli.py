@@ -60,13 +60,14 @@ async def _run_analysis(*, fixture: Path | None, use_fake_llm: bool, real_data: 
             )
         except Exception:  # noqa: BLE001
             pass
-        from app.universe.outcomes import load_committee_lessons
+        from app.universe.outcomes import load_committee_lessons, symbol_close_pnls
 
         analysis = await pipeline.run_from_collection(
             collection,
             portfolio=portfolio,
             proposed_trades=[],
             recent_lessons=await load_committee_lessons(session),
+            outcome_pnls=await symbol_close_pnls(session),
         )
         await session.commit()
         return {

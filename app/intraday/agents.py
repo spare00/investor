@@ -180,7 +180,7 @@ class IntradayAgentService:
                 venue=book,
                 allowlist=entry_universe,
             )
-            from app.universe.outcomes import load_committee_lessons
+            from app.universe.outcomes import load_committee_lessons, symbol_close_pnls
 
             analysis = await pipeline.run_from_collection(
                 collection,
@@ -194,6 +194,7 @@ class IntradayAgentService:
                 ],
                 book=book_ctx,
                 recent_lessons=await load_committee_lessons(self.session),
+                outcome_pnls=await symbol_close_pnls(self.session),
             )
             from app.services.audit import AuditService
 

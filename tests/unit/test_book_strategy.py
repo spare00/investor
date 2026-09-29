@@ -426,10 +426,9 @@ def test_cio_fallback_scales_into_scalp_not_only_hold() -> None:
     assert quant.symbol_views[0].entry_zone is not None
     payload = _cio_payload(quant)
     out = CIOAgent().fallback_output(payload, reason="test")
-    assert out.portfolio_action == PortfolioAction.SCALE_IN
-    assert any(a.symbol == "QQQ" and a.action == SymbolAction.SCALE_IN for a in out.symbol_actions)
-    assert out.cash_target_pct < payload.portfolio_cash_pct
-    assert out.cash_target_pct >= 30.0
+    assert out.portfolio_action == PortfolioAction.NO_TRADE
+    assert all(a.action != SymbolAction.SCALE_IN for a in out.symbol_actions)
+    assert out.cash_target_pct == payload.portfolio_cash_pct
 
 
 def test_cio_fallback_ignores_other_venue_positions() -> None:
@@ -458,7 +457,7 @@ def test_cio_fallback_ignores_other_venue_positions() -> None:
     )
     out = CIOAgent().fallback_output(payload, reason="test")
     assert all(a.symbol != "BHP" for a in out.symbol_actions)
-    assert any(a.symbol == "QQQ" for a in out.symbol_actions)
+    assert all(a.action != SymbolAction.SCALE_IN for a in out.symbol_actions)
 
 
 def test_cio_fallback_enters_while_holding_when_devil_prefers_no() -> None:
@@ -504,10 +503,10 @@ def test_cio_fallback_enters_while_holding_when_devil_prefers_no() -> None:
         }
     )
     out = CIOAgent().fallback_output(payload, reason="test")
-    assert any(a.symbol == "QQQ" and a.action == SymbolAction.SCALE_IN for a in out.symbol_actions)
+    assert all(a.action != SymbolAction.SCALE_IN for a in out.symbol_actions)
 
 
-def test_ensure_cio_takes_setups_overrides_idle_cash() -> None:
+def test_ensure_cio_takes_setups_keeps_the_pass() -> None:
     from app.agents.cio import ensure_cio_takes_setups
     from app.schemas.cio import CIODecision
 
@@ -538,9 +537,9 @@ def test_ensure_cio_takes_setups_overrides_idle_cash() -> None:
         max_position_pct=10.0,
         enabled=True,
     )
-    assert out.portfolio_action == PortfolioAction.SCALE_IN
-    assert any(a.symbol == "QQQ" and a.action == SymbolAction.SCALE_IN for a in out.symbol_actions)
-    assert out.reason_not_to_trade is None
+    assert out.portfolio_action == PortfolioAction.NO_TRADE
+    assert out.symbol_actions == []
+    assert out.reason_not_to_trade == "wait for confirmation"
     blocked = ensure_cio_takes_setups(
         idle,
         quant=quant,
@@ -606,9 +605,8 @@ def test_ensure_cio_fills_remaining_slots_when_cash_is_heavy() -> None:
         min_cash_pct=30.0,
     )
     symbols = {a.symbol for a in out.symbol_actions if a.action == SymbolAction.SCALE_IN}
-    assert "QQQ" in symbols
-    assert "SPY" in symbols
-    assert out.cash_target_pct < 90.0
+    assert symbols == {"QQQ"}
+    assert out.cash_target_pct == 90.0
 
 
 def test_reconcile_nameless_entry_drops_empty_scale_in() -> None:
@@ -833,6 +831,40 @@ def test_drop_blocked_entries_strips_sideways_day_buys() -> None:
     assert out.symbol_actions == []
     assert out.portfolio_action == PortfolioAction.NO_TRADE
     assert out.reason_not_to_trade == "sideways_stand_down"
+
+
+def test_drop_blocked_entries_rejects_a_name_with_no_wins() -> None:
+    from app.schemas.cio import CIODecision, SymbolActionPlan
+    from app.schemas.common import OrderType
+    from app.universe.book_strategy import drop_blocked_entries
+
+    decision = CIODecision(
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.SCALE_IN,
+        cash_target_pct=80,
+        risk_approval=True,
+        symbol_actions=[
+            SymbolActionPlan(
+                symbol="CBA",
+                action=SymbolAction.SCALE_IN,
+                confidence=70,
+                target_position_pct=8,
+                order_type=OrderType.LIMIT,
+                stop_loss=90.0,
+                thesis="cio wants another dip",
+                invalidation="stop",
+            )
+        ],
+    )
+    out = drop_blocked_entries(
+        decision,
+        None,
+        [{"symbol": "CBA", "horizon": "short"}],
+        outcome_pnls={"CBA": [-100.0] * 5},
+    )
+    assert out.symbol_actions == []
+    assert out.reason_not_to_trade == "closed_trade_block"
 
 
 def test_downtrend_deceleration_is_sell_not_hope() -> None:

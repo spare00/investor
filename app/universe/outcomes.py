@@ -149,6 +149,35 @@ def committee_lessons(stats: dict[str, Any], *, limit: int = 8) -> list[dict[str
     return rows[: max(1, min(int(limit or 8), 12))]
 
 
+async def symbol_close_pnls(
+    session: AsyncSession,
+    *,
+    lookback_days: int = 90,
+    now: datetime | None = None,
+) -> dict[str, list[float]]:
+    """Oldest-first closed P&L per symbol. Input for the entry block."""
+    end = now or datetime.now(UTC)
+    start = end - timedelta(days=max(1, int(lookback_days)))
+    rows = list(
+        (
+            await session.execute(
+                select(PositionLifecycle)
+                .where(PositionLifecycle.status == "CLOSED")
+                .where(PositionLifecycle.closed_at.is_not(None))
+                .where(PositionLifecycle.closed_at >= start)
+                .where(PositionLifecycle.closed_at <= end)
+                .order_by(PositionLifecycle.closed_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out: dict[str, list[float]] = defaultdict(list)
+    for lc in rows:
+        out[str(lc.symbol).upper()].append(lifecycle_pnl(lc))
+    return dict(out)
+
+
 async def load_committee_lessons(
     session: AsyncSession,
     *,

@@ -996,8 +996,9 @@ def drop_blocked_entries(
     *,
     regime: str | MarketRegime | None = None,
     minutes_to_close: float | None = None,
+    outcome_pnls: dict[str, list[float]] | None = None,
 ) -> Any:
-    """Drop CIO/paper entries the playbook would not take (sideways scalp/day, no stop)."""
+    """Drop entries the playbook or the symbol's own closes would not take."""
     if decision is None:
         return decision
     views = {
@@ -1007,15 +1008,22 @@ def drop_blocked_entries(
     }
     updated = []
     dropped_sideways = False
+    dropped_record = False
     changed = False
     from app.universe.accumulation import view_has_accumulation
+    from app.universe.outcome_gate import entry_block_reason
 
+    ledger = outcome_pnls or {}
     for plan in decision.symbol_actions:
         action = plan.action
         if action not in _ENTRY_ACTIONS:
             updated.append(plan)
             continue
         sym = str(plan.symbol or "").upper()
+        if entry_block_reason(ledger.get(sym)):
+            changed = True
+            dropped_record = True
+            continue
         hz = horizon_for_symbol(sym, watchlist)
         view = views.get(sym)
         if view is None:
@@ -1055,7 +1063,13 @@ def drop_blocked_entries(
         return decision
     portfolio = portfolio_action_from_symbol_actions(updated)
     reason = getattr(decision, "reason_not_to_trade", None)
-    if dropped_sideways and portfolio in {
+    if dropped_record and portfolio in {
+        PortfolioAction.NO_TRADE,
+        PortfolioAction.HOLD,
+        PortfolioAction.STAY_CASH,
+    }:
+        reason = "closed_trade_block"
+    elif dropped_sideways and portfolio in {
         PortfolioAction.NO_TRADE,
         PortfolioAction.HOLD,
         PortfolioAction.STAY_CASH,

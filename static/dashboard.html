@@ -1033,8 +1033,17 @@
     .chart-periods { display: flex; gap: 0.35rem; flex-wrap: wrap; }
     .chart-periods button { padding: 0.28rem 0.6rem; font-size: 0.78rem; }
     .chart-periods button.active { border-color: var(--accent); color: var(--accent); }
-    .equity-chart { margin-top: 0.55rem; }
+    .equity-chart { margin-top: 0.35rem; }
     .equity-chart svg { width: 100%; height: auto; display: block; }
+    .chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.85rem;
+      margin-top: 0.35rem;
+      font-size: 0.78rem;
+    }
+    .chart-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .chart-legend i { width: 0.85rem; height: 2px; display: inline-block; border-radius: 1px; }
     .check-list { list-style: none; padding: 0; margin: 0; }
     .check-list li {
       display: flex; gap: 0.5rem; align-items: flex-start;
@@ -3735,13 +3744,60 @@
       refreshEquityChart();
     }
 
-    function equityAxisMoney(v) {
+    const EQUITY_BENCHMARKS = [
+      { key: "qqq", name: "QQQ", color: "var(--accent)" },
+      { key: "spy", name: "SPY", color: "var(--muted)" },
+      { key: "iwm", name: "IWM", color: "var(--warn)" },
+    ];
+
+    function equityWindowPct(start, end) {
+      const a = Number(start);
+      const b = Number(end);
+      if (!Number.isFinite(a) || !Number.isFinite(b) || a === 0) return null;
+      return ((b - a) / a) * 100;
+    }
+
+    function equitySignedPct(v) {
       const n = Number(v);
       if (!Number.isFinite(n)) return "";
-      const abs = Math.abs(n);
-      if (abs >= 1_000_000) return `$${(n / 1e6).toFixed(2)}M`;
-      if (abs >= 10_000) return `$${Math.round(n).toLocaleString()}`;
-      return `$${n.toFixed(0)}`;
+      return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+    }
+
+    function equityAxisPct(v) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return "";
+      const digits = Math.abs(n) >= 10 ? 0 : 1;
+      return `${n > 0 ? "+" : ""}${n.toFixed(digits)}%`;
+    }
+
+    function equityQuote(point, key) {
+      if (key !== "equity") {
+        const px = Number(point[`${key}_px`]);
+        if (Number.isFinite(px)) return px;
+      }
+      const level = Number(point[key]);
+      return Number.isFinite(level) ? level : null;
+    }
+
+    function equityReturnSeries(pts, key) {
+      const levels = pts.map((p) => equityQuote(p, key));
+      const base = levels.find((v) => v != null && v !== 0);
+      if (base == null) return levels.map(() => null);
+      return levels.map((v) => (v == null ? null : ((v / base) - 1) * 100));
+    }
+
+    function equitySeriesPath(values, xAt, yAt) {
+      let d = "";
+      let pen = false;
+      values.forEach((v, i) => {
+        if (!Number.isFinite(v)) {
+          pen = false;
+          return;
+        }
+        d += `${pen ? "L" : "M"}${xAt(i).toFixed(1)},${yAt(v).toFixed(1)} `;
+        pen = true;
+      });
+      return d.trim();
     }
 
     function renderEquityChart(data) {
@@ -3753,21 +3809,33 @@
       const startEq = Number(data && data.start_equity);
       const endEq = Number(data && data.end_equity);
       const up = Number.isFinite(change) && change >= 0;
-      const pct = Number.isFinite(startEq) && startEq !== 0 && Number.isFinite(endEq)
-        ? ((endEq - startEq) / startEq) * 100
-        : null;
-      const changeTxt = Number.isFinite(change)
-        ? `${change >= 0 ? "+" : ""}${fmtMoney(change)}`
-        : "—";
-      const pctTxt = pct == null ? "" : ` (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)`;
+      const pct = equityWindowPct(startEq, endEq);
+      const pctTxt = pct == null ? "" : ` (${equitySignedPct(pct)})`;
       const src = data && data.source === "daily_performance"
         ? "daily closes"
         : (data && data.source === "portfolio_snapshots" ? "portfolio snapshots" : "no marks");
+      const accountColor = up ? "var(--good)" : "var(--bad)";
+      const benchByName = {};
+      ((data && data.benchmarks) || []).forEach((row) => {
+        if (row && row.symbol) benchByName[row.symbol] = row;
+      });
+      const legend = [
+        `<span><i style="background:${accountColor}"></i>Account${pctTxt}</span>`,
+        ...EQUITY_BENCHMARKS.map((series) => {
+          const row = benchByName[series.name];
+          const bp = row ? Number(row.change_pct) * 100 : null;
+          const label = bp == null || !Number.isFinite(bp)
+            ? series.name
+            : `${series.name} ${bp >= 0 ? "+" : ""}${bp.toFixed(2)}%`;
+          return `<span><i style="background:${series.color}"></i>${esc(label)}</span>`;
+        }),
+      ].join("");
       meta.innerHTML = pts.length
-        ? `<span class="${up ? "good" : "bad"}" style="color:var(--${up ? "good" : "bad"})">${esc(changeTxt + pctTxt)}</span>
+        ? `<span style="color:${accountColor}">${esc(pct == null ? "—" : equitySignedPct(pct))}</span>
            · ${esc(fmtMoney(endEq))} now
-           · ${esc(String(data.raw_points || pts.length))} marks
-           · ${esc(src)}`
+           · lines are percent from the start of this window
+           · ${esc(src)}
+           <div class="chart-legend">${legend}</div>`
         : "No equity history in this window.";
       if (pts.length < 2) {
         host.innerHTML = "";
@@ -3779,28 +3847,46 @@
       const padR = 16;
       const padT = 18;
       const padB = 32;
-      const vals = pts.map((p) => Number(p.equity));
-      let min = Math.min(...vals);
-      let max = Math.max(...vals);
-      if (min === max) {
-        min -= Math.abs(min) * 0.01 || 1;
-        max += Math.abs(max) * 0.01 || 1;
+      const accountRet = equityReturnSeries(pts, "equity");
+      const benchRet = Object.fromEntries(
+        EQUITY_BENCHMARKS.map((series) => [series.key, equityReturnSeries(pts, series.key)])
+      );
+      const vals = accountRet.filter((v) => Number.isFinite(v));
+      EQUITY_BENCHMARKS.forEach((series) => {
+        benchRet[series.key].forEach((v) => {
+          if (Number.isFinite(v)) vals.push(v);
+        });
+      });
+      let min = Math.min(...vals.filter((v) => Number.isFinite(v)));
+      let max = Math.max(...vals.filter((v) => Number.isFinite(v)));
+      if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
+        const base = Number.isFinite(min) ? min : 0;
+        min = base - (Math.abs(base) * 0.01 || 1);
+        max = base + (Math.abs(base) * 0.01 || 1);
       }
       const gutter = (max - min) * 0.08;
       min -= gutter;
       max += gutter;
       const xAt = (i) => padL + (pts.length === 1 ? 0 : i / (pts.length - 1)) * (w - padL - padR);
       const yAt = (v) => padT + (1 - (v - min) / (max - min)) * (h - padT - padB);
-      const line = pts.map((p, i) => `${i ? "L" : "M"}${xAt(i).toFixed(1)},${yAt(Number(p.equity)).toFixed(1)}`).join(" ");
-      const area = `${line} L${xAt(pts.length - 1).toFixed(1)},${(h - padB).toFixed(1)} L${xAt(0).toFixed(1)},${(h - padB).toFixed(1)} Z`;
-      const stroke = up ? "var(--good)" : "var(--bad)";
+      const account = equitySeriesPath(accountRet, xAt, yAt);
+      const area = `${account} L${xAt(pts.length - 1).toFixed(1)},${(h - padB).toFixed(1)} L${xAt(0).toFixed(1)},${(h - padB).toFixed(1)} Z`;
+      const benchPaths = EQUITY_BENCHMARKS.map((series) => {
+        const d = equitySeriesPath(benchRet[series.key], xAt, yAt);
+        return d
+          ? `<path d="${d}" fill="none" stroke="${series.color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"></path>`
+          : "";
+      }).join("");
+      const zeroLine = min < 0 && max > 0
+        ? `<line x1="${padL}" y1="${yAt(0).toFixed(1)}" x2="${w - padR}" y2="${yAt(0).toFixed(1)}" stroke="var(--muted)" stroke-width="1" opacity="0.45"/>`
+        : "";
       const ticks = 4;
       const yLabels = [];
       for (let i = 0; i <= ticks; i += 1) {
         const v = min + ((max - min) * i) / ticks;
         const y = yAt(v);
         yLabels.push(`<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w - padR}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-width="1"/>`);
-        yLabels.push(`<text x="${padL - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" fill="var(--muted)" font-size="11" font-family="IBM Plex Mono, monospace">${esc(equityAxisMoney(v))}</text>`);
+        yLabels.push(`<text x="${padL - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" fill="var(--muted)" font-size="11" font-family="IBM Plex Mono, monospace">${esc(equityAxisPct(v))}</text>`);
       }
       const dateOnly = ["3m", "6m", "ytd", "1y", "all"].includes(equityChartPeriod);
       const xIdx = [0, Math.floor((pts.length - 1) / 2), pts.length - 1];
@@ -3808,10 +3894,12 @@
         const label = fmtBne(pts[i].t, { dateOnly });
         return `<text x="${xAt(i).toFixed(1)}" y="${h - 8}" text-anchor="${i === 0 ? "start" : (i === pts.length - 1 ? "end" : "middle")}" fill="var(--muted)" font-size="11" font-family="IBM Plex Mono, monospace">${esc(label)}</text>`;
       }).join("");
-      host.innerHTML = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Equity over ${esc(equityChartPeriod)}">
+      host.innerHTML = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Percent change versus QQQ, SPY, and IWM over ${esc(equityChartPeriod)}">
         ${yLabels.join("")}
-        <path d="${area}" fill="${stroke}" opacity="0.12"></path>
-        <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>
+        ${zeroLine}
+        <path d="${area}" fill="${accountColor}" opacity="0.12"></path>
+        ${benchPaths}
+        <path d="${account}" fill="none" stroke="${accountColor}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"></path>
         ${xLabels}
       </svg>`;
       const svg = host.querySelector("svg");
@@ -3819,7 +3907,7 @@
       const tip = document.createElementNS("http://www.w3.org/2000/svg", "g");
       tip.setAttribute("pointer-events", "none");
       tip.innerHTML = `<line y1="${padT}" y2="${h - padB}" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"></line>
-        <circle r="3.5" fill="${stroke}" visibility="hidden"></circle>
+        <circle r="3.5" fill="${accountColor}" visibility="hidden"></circle>
         <text fill="var(--text)" font-size="12" font-family="IBM Plex Sans, sans-serif" visibility="hidden"></text>`;
       svg.appendChild(tip);
       const hit = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -3844,26 +3932,46 @@
             bestDist = d;
           }
         });
-        const px = xAt(best);
-        const py = yAt(Number(pts[best].equity));
-        guide.setAttribute("x1", px.toFixed(1));
-        guide.setAttribute("x2", px.toFixed(1));
+        const x = xAt(best);
+        const py = yAt(Number(accountRet[best]));
+        guide.setAttribute("x1", x.toFixed(1));
+        guide.setAttribute("x2", x.toFixed(1));
         guide.setAttribute("visibility", "visible");
-        dot.setAttribute("cx", px.toFixed(1));
+        dot.setAttribute("cx", x.toFixed(1));
         dot.setAttribute("cy", py.toFixed(1));
         dot.setAttribute("visibility", "visible");
-        const text = `${fmtBne(pts[best].t)}  ${fmtMoney(pts[best].equity)}`;
-        label.textContent = text;
-        const anchorRight = px > w * 0.62;
-        label.setAttribute("x", (anchorRight ? px - 8 : px + 8).toFixed(1));
-        label.setAttribute("y", Math.max(padT + 12, py - 8).toFixed(1));
+        const lines = [
+          `${fmtBne(pts[best].t)}`,
+          `Account ${fmtMoney(pts[best].equity)} ${equitySignedPct(accountRet[best])}`,
+        ];
+        EQUITY_BENCHMARKS.forEach((series) => {
+          const quote = Number(pts[best][`${series.key}_px`]);
+          const ret = equitySignedPct(benchRet[series.key][best]);
+          if (Number.isFinite(quote)) lines.push(`${series.name} $${quote.toFixed(2)} ${ret}`);
+          else if (ret) lines.push(`${series.name} ${ret}`);
+        });
+        label.textContent = "";
+        lines.forEach((line, i) => {
+          const span = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+          span.textContent = line;
+          span.setAttribute("x", "0");
+          span.setAttribute("dy", i === 0 ? "0" : "1.15em");
+          label.appendChild(span);
+        });
+        const anchorRight = x > w * 0.62;
+        label.setAttribute("x", (anchorRight ? x - 8 : x + 8).toFixed(1));
+        label.setAttribute("y", Math.max(padT + 12, py - 28).toFixed(1));
         label.setAttribute("text-anchor", anchorRight ? "end" : "start");
+        label.querySelectorAll("tspan").forEach((span) => {
+          span.setAttribute("x", label.getAttribute("x"));
+        });
         label.setAttribute("visibility", "visible");
       });
       hit.addEventListener("mouseleave", () => {
         guide.setAttribute("visibility", "hidden");
         dot.setAttribute("visibility", "hidden");
         label.setAttribute("visibility", "hidden");
+        label.textContent = "";
       });
     }
 

@@ -43,6 +43,55 @@ def chart_window(
     return start_local.astimezone(UTC), end
 
 
+CHART_BENCHMARKS: tuple[str, ...] = ("QQQ", "SPY", "IWM")
+
+
+def _as_utc(ts: datetime) -> datetime:
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=UTC)
+    return ts.astimezone(UTC)
+
+
+def prices_at_marks(
+    equity: list[tuple[datetime, float]],
+    prices: list[tuple[datetime, float]],
+) -> list[float | None]:
+    """Latest quote at or before each equity timestamp. Empty before the first quote."""
+    if not equity:
+        return []
+    quotes = sorted(((_as_utc(t), float(px)) for t, px in prices), key=lambda row: row[0])
+    quotes = [(t, px) for t, px in quotes if px]
+    if not quotes:
+        return [None] * len(equity)
+    out: list[float | None] = []
+    cursor = 0
+    last: float | None = None
+    for ts, _value in equity:
+        moment = _as_utc(ts)
+        while cursor < len(quotes) and quotes[cursor][0] <= moment:
+            last = quotes[cursor][1]
+            cursor += 1
+        out.append(last)
+    return out
+
+
+def rebase_prices_to_equity(
+    equity: list[tuple[datetime, float]],
+    prices: list[tuple[datetime, float]],
+) -> list[float | None]:
+    """Grow the window's starting equity with a price series.
+
+    The line shares the account's dollar axis. It is not the ETF quote.
+    The base price is the quote in force at the first equity mark.
+    """
+    aligned = prices_at_marks(equity, prices)
+    base = next((px for px in aligned if px), None)
+    if base is None:
+        return aligned
+    start_equity = float(equity[0][1])
+    return [None if px is None else start_equity * (px / base) for px in aligned]
+
+
 def downsample_equity(
     points: list[tuple[datetime, float]],
     *,
