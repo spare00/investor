@@ -190,7 +190,7 @@ class IbkrBroker:
             tif = "DAY"
 
         qty = float(request.qty)
-        otype = (request.order_type or "market").lower()
+        otype = canonical_order_type(request.order_type)
         if otype == "market":
             order = MarketOrder(side, qty)
         elif otype == "limit":
@@ -294,6 +294,7 @@ class IbkrBroker:
         self._stamp_contract_exchange(contract, request)
         from app.brokers.venue_orders import (
             apply_marketable_limit,
+            is_resting_stop,
             is_sane_equity_price,
             uses_marketable_limit,
         )
@@ -304,7 +305,19 @@ class IbkrBroker:
             uses_marketable_limit(request.venue, str(exchange) if exchange else None)
             or currency.upper() == "AUD"
         )
-        if au_book:
+        if au_book and is_resting_stop(request.order_type):
+            # ASX marketable-limit conversion is for market/flatten exits only.
+            # A protective stop rewritten here fills at the current quote.
+            logger.info(
+                "asx_stop_preserved",
+                symbol=request.symbol,
+                order_type=canonical_order_type(request.order_type),
+                stop_price=request.stop_price,
+                limit_price=request.limit_price,
+                side=request.side.value,
+                exchange=getattr(contract, "exchange", None),
+            )
+        elif au_book:
             try:
                 ib.reqMarketDataType(3)
             except Exception:  # noqa: BLE001

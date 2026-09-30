@@ -323,12 +323,14 @@ class OrderManager:
             limit_price = intent.limit_price
             venue = intent.venue or (row.raw_payload or {}).get("venue")
             con_id = intent.con_id or (row.raw_payload or {}).get("con_id")
-            from app.brokers.venue_orders import apply_marketable_limit, uses_marketable_limit
+            from app.brokers.venue_orders import (
+                apply_marketable_limit,
+                is_resting_stop,
+                uses_marketable_limit,
+            )
 
-            otype_l = str(order_type or "market").lower()
-            if (
-                uses_marketable_limit(str(venue) if venue else None)
-                and otype_l not in STOP_ORDER_TYPES
+            if uses_marketable_limit(str(venue) if venue else None) and not is_resting_stop(
+                order_type
             ):
                 from app.market.live_prices import fetch_live_last_prices
 
@@ -358,7 +360,7 @@ class OrderManager:
                 raise BrokerError(f"{intent.symbol}: limit order missing limit_price")
             tif = (intent.time_in_force or "").strip().lower() or None
             if not tif:
-                tif = "gtc" if str(order_type).lower() in STOP_ORDER_TYPES else "day"
+                tif = "gtc" if is_resting_stop(order_type) else "day"
             result = await self.broker.submit_order(
                 OrderRequest(
                     symbol=intent.symbol,

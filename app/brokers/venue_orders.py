@@ -1,7 +1,13 @@
 """Venue-specific order shaping.
 
 ASX (and IBKR paper ASX) does not fill native MKT the way US SMART does.
-Convert those to an aggressive limit so flatten/stop exits actually trade.
+Convert market and ordinary limit orders to an aggressive limit so flatten
+exits actually trade.
+
+Resting stop and stop-limit orders are not part of that conversion. Rewriting
+a protective stop into a limit through the current quote sells immediately.
+This module refuses that rewrite; the broker adapter must send the trigger
+or surface a rejection.
 """
 
 from __future__ import annotations
@@ -18,6 +24,20 @@ _AU_FLATTEN_SLIP_PCT = 0.08
 _AU_MIN_SLIP = 0.02
 # IBKR unset / NaN ticks often show up as DBL_MAX or 0.
 _MAX_SANE_EQUITY_PX = 1_000_000.0
+
+
+# canonical_order_type folds STP / STP LMT / TRAIL onto these names.
+_RESTING_STOP_TYPES = frozenset({"stop", "stop_limit", "trailing_stop"})
+
+
+def is_resting_stop(order_type: str | None) -> bool:
+    """True when the order must keep a trigger instead of becoming a limit."""
+    text = str(order_type or "").strip()
+    if not text:
+        return False
+    from app.brokers.models import canonical_order_type
+
+    return canonical_order_type(text) in _RESTING_STOP_TYPES
 
 
 def uses_marketable_limit(venue: str | None, exchange: str | None = None) -> bool:
@@ -73,7 +93,14 @@ def apply_marketable_limit(
     ask: float | None = None,
     flatten: bool = False,
 ) -> tuple[str, float]:
-    """Return (limit, price) for AU/ASX. Never leaves a native market order."""
+    """Return (limit, price) for an AU/ASX market or limit order.
+
+    Never leaves a native market order. Never turns a resting stop into a
+    limit: callers must skip this function for those types, and a direct call
+    fails closed instead of selling through the quote.
+    """
+    if is_resting_stop(order_type):
+        raise ValueError("resting_stop_is_not_a_marketable_limit")
     if not uses_marketable_limit(venue, exchange):
         raise ValueError("not_a_marketable_limit_venue")
     ref = reference_price(side=side, last=last, bid=bid, ask=ask)

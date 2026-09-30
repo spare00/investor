@@ -65,6 +65,29 @@ def test_flatten_sell_punches_through_eight_percent() -> None:
     assert limit <= 92.5
 
 
+def test_resting_stop_is_not_rewritten_to_a_limit() -> None:
+    """Sell stop at last 150 / bid 149.98 used to come back as limit 146.23."""
+    with pytest.raises(ValueError, match="resting_stop_is_not_a_marketable_limit"):
+        apply_marketable_limit(
+            venue="AU",
+            exchange="ASX",
+            side="sell",
+            order_type="stop",
+            limit_price=None,
+            last=150.0,
+            bid=149.98,
+        )
+    with pytest.raises(ValueError, match="resting_stop_is_not_a_marketable_limit"):
+        apply_marketable_limit(
+            venue="AU",
+            side="sell",
+            order_type="stop_limit",
+            limit_price=144.5,
+            last=150.0,
+            bid=149.98,
+        )
+
+
 def test_apply_requires_a_tape() -> None:
     with pytest.raises(ValueError, match="asx_requires_reference_price"):
         apply_marketable_limit(
