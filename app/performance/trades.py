@@ -29,6 +29,8 @@ class ClosedTrade:
     mfe_pct: float | None = None
     mae_pct: float | None = None
     notional: float | None = None
+    fees_known: bool = True
+    currency: str | None = None
 
 
 def _status_for_empty(name: str) -> MetricResult:
@@ -41,7 +43,15 @@ def _float_metric(name: str, value: float | None, *, count: int, method: str) ->
     return metric_result(name, value, observation_count=count, method=method)
 
 
-def compute_trade_metrics(trades: list[ClosedTrade]) -> dict[str, MetricResult | Any]:
+def _net_pnl(trade: ClosedTrade) -> float:
+    if trade.fees_known:
+        return trade.pnl - trade.fees
+    return trade.pnl
+
+
+def compute_trade_metrics(
+    trades: list[ClosedTrade], *, method: str = "position_lifecycle"
+) -> dict[str, MetricResult | Any]:
     if not trades:
         empty = _status_for_empty
         return {
@@ -64,7 +74,7 @@ def compute_trade_metrics(trades: list[ClosedTrade]) -> dict[str, MetricResult |
             "trade_count": 0,
         }
 
-    net_pnls = [t.pnl - t.fees for t in trades]
+    net_pnls = [_net_pnl(t) for t in trades]
     wins = [p for p in net_pnls if p > 0]
     losses = [p for p in net_pnls if p < 0]
     n = len(trades)
@@ -82,7 +92,7 @@ def compute_trade_metrics(trades: list[ClosedTrade]) -> dict[str, MetricResult |
     holdings = [t.holding_minutes for t in trades]
     risks = [t.risk_amount for t in trades if t.risk_amount and t.risk_amount > 0]
     r_multiples = [
-        (t.pnl - t.fees) / t.risk_amount for t in trades if t.risk_amount and t.risk_amount > 0
+        _net_pnl(t) / t.risk_amount for t in trades if t.risk_amount and t.risk_amount > 0
     ]
 
     max_cw = max_cl = cw = cl = 0
@@ -98,7 +108,6 @@ def compute_trade_metrics(trades: list[ClosedTrade]) -> dict[str, MetricResult |
         else:
             cw = cl = 0
 
-    method = "position_lifecycle"
     return {
         "win_rate": _float_metric("win_rate", win_rate, count=n, method=method),
         "loss_rate": _float_metric("loss_rate", loss_rate, count=n, method=method),
@@ -151,6 +160,7 @@ def group_trade_metrics_by_horizon(
     trades: list[ClosedTrade],
     *,
     books: tuple[str, ...] = ("scalp", "day", "short", "medium", "unknown"),
+    method: str = "position_lifecycle",
 ) -> dict[str, dict[str, MetricResult | Any]]:
     """Firm-compatible per-book slices; empty books still return INSUFFICIENT_DATA metrics."""
     buckets: dict[str, list[ClosedTrade]] = {b: [] for b in books}
@@ -159,4 +169,4 @@ def group_trade_metrics_by_horizon(
         if key not in buckets:
             key = "unknown"
         buckets[key].append(t)
-    return {book: compute_trade_metrics(items) for book, items in buckets.items()}
+    return {book: compute_trade_metrics(items, method=method) for book, items in buckets.items()}

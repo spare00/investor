@@ -94,7 +94,9 @@ def week_review_from_records(
     by_symbol: dict[str, float] = {}
     n_closes = 0
     for lc in closes:
-        pnl = float(lifecycle_pnl(lc) or 0.0)
+        pnl = lifecycle_pnl(lc)
+        if pnl is None:
+            continue
         sym = str(getattr(lc, "symbol", "") or "").upper()
         if not sym:
             continue

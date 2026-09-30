@@ -113,6 +113,7 @@
       border-radius: 10px;
       padding: 1rem;
       grid-column: span 4;
+      min-width: 0;
     }
     section.wide { grid-column: span 8; }
     section.full { grid-column: span 12; }
@@ -904,6 +905,10 @@
     .agent-card-head h3 { margin: 0; font-size: 0.85rem; }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     th, td { text-align: left; padding: 0.4rem 0.3rem; border-bottom: 1px solid var(--line); }
+    .metric-scroll { overflow-x: auto; max-width: 100%; }
+    .metric-scroll table { font-size: 0.78rem; }
+    .metric-scroll th, .metric-scroll td { white-space: nowrap; padding: 0.35rem 0.2rem; }
+    .metric-scroll th:first-child, .metric-scroll td:first-child { white-space: normal; }
     th { color: var(--muted); font-weight: 500; font-size: 0.75rem; }
     ul { margin: 0; padding-left: 1.1rem; color: var(--muted); }
     li { margin: 0.35rem 0; }
@@ -1290,7 +1295,7 @@
         <h2>Drawdowns</h2>
         <div id="perfDrawdowns" class="muted">Loading…</div>
       </section>
-      <section>
+      <section class="full">
         <h2>Trade Metrics</h2>
         <div id="perfTrades" class="muted">Loading…</div>
       </section>
@@ -4062,77 +4067,85 @@
           ["Peak", "Trough", "DD", "Days", "Recovery", "Status"], ddRows)}</div>
         ${rawBlock(drawdowns)}`);
 
-      renderMount("perfTrades", `
-        ${kpiGrid([
-          kpiCard("Trades", fmtNum(trades.trade_count, 0)),
-          kpiFromMetric("Win rate", trades.win_rate, { format: "pct", higherGood: true }),
-          kpiFromMetric("Expectancy", trades.expectancy, { format: "money", higherGood: true }),
-          kpiFromMetric("Profit factor", trades.profit_factor, { digits: 2, higherGood: true }),
-          kpiFromMetric("Avg R", trades.avg_r_multiple, { digits: 2, higherGood: true }),
-          kpiFromMetric("Payoff", trades.payoff_ratio, { digits: 2, higherGood: true }),
-          kpiFromMetric("Avg win", trades.avg_win, { format: "money", higherGood: true }),
-          kpiFromMetric("Avg loss", trades.avg_loss, { format: "money", higherGood: false }),
-        ])}
-        <div class="muted" style="margin:0.85rem 0 0.35rem">By horizon book</div>
-        ${(() => {
-          const books = trades.by_horizon || {};
-          const order = ["scalp", "day", "short", "medium", "unknown"];
-          const cards = order.filter((h) => books[h]).map((h) => {
-            const b = books[h];
-            return kpiCard(
-              h,
-              `${fmtNum(b.trade_count, 0)} · ${b.win_rate && b.win_rate.value != null && (b.win_rate.status === "AVAILABLE" || !b.win_rate.status) ? fmtPct(b.win_rate.value) : "—"} WR`,
-              {
-                sub: b.expectancy && b.expectancy.value != null
-                  ? `E ${fmtMoney(b.expectancy.value)}`
-                  : (b.win_rate && b.win_rate.status && b.win_rate.status !== "AVAILABLE"
-                    ? String(b.win_rate.status).toLowerCase().replaceAll("_", " ")
-                    : "no trades"),
-              }
-            );
-          });
-          return cards.length ? kpiGrid(cards) : `<div class="muted">No closed trades in period</div>`;
-        })()}
-        <div class="muted" style="margin:0.85rem 0 0.35rem">By entry reason (gate expectancy after costs)</div>
-        ${(() => {
-          const reasons = trades.by_entry_reason || {};
-          const order = ["uptrend_dip", "oversold_bounce", "chase", "aggressive_injected"];
-          const headers = ["Gate", "N", "Win%", "avg MFE", "avg MAE", "TP%", "Stop%", "Giveback%", "Flatten%", "E after cost"];
-          const rowFor = (key, label, row) => {
-            const r = row || {};
-            const n = r.n || 0;
-            if (!n) {
-              return `<tr><td>${esc(label)}</td><td>0</td><td colspan="8" class="muted">no tagged closes</td></tr>`;
+      const tradeBookHtml = (book, title) => {
+        const headlines = kpiGrid([
+          kpiCard("Trades", fmtNum(book.trade_count, 0)),
+          kpiFromMetric("Win rate", book.win_rate, { format: "pct", higherGood: true }),
+          kpiFromMetric("Expectancy", book.expectancy, { format: "money", higherGood: true }),
+          kpiFromMetric("Profit factor", book.profit_factor, { digits: 2, higherGood: true }),
+          kpiFromMetric("Avg R", book.avg_r_multiple, { digits: 2, higherGood: true }),
+          kpiFromMetric("Payoff", book.payoff_ratio, { digits: 2, higherGood: true }),
+          kpiFromMetric("Avg win", book.avg_win, { format: "money", higherGood: true }),
+          kpiFromMetric("Avg loss", book.avg_loss, { format: "money", higherGood: false }),
+        ]);
+        const horizonBooks = book.by_horizon || {};
+        const horizonOrder = ["scalp", "day", "short", "medium", "unknown"];
+        const horizonCards = horizonOrder.filter((h) => horizonBooks[h]).map((h) => {
+          const b = horizonBooks[h];
+          return kpiCard(
+            h,
+            `${fmtNum(b.trade_count, 0)} · ${b.win_rate && b.win_rate.value != null && (b.win_rate.status === "AVAILABLE" || !b.win_rate.status) ? fmtPct(b.win_rate.value) : "—"} WR`,
+            {
+              sub: b.expectancy && b.expectancy.value != null
+                ? `E ${fmtMoney(b.expectancy.value)}`
+                : (b.win_rate && b.win_rate.status && b.win_rate.status !== "AVAILABLE"
+                  ? String(b.win_rate.status).toLowerCase().replaceAll("_", " ")
+                  : "no trades"),
             }
-            return `<tr>
-              <td>${esc(label)}</td>
-              <td>${fmtNum(n, 0)}</td>
-              <td>${fmtPct(r.win_pct)}</td>
-              <td>${fmtPct(r.avg_mfe)}</td>
-              <td>${fmtPct(r.avg_mae)}</td>
-              <td>${fmtPct(r.tp_pct)}</td>
-              <td>${fmtPct(r.stop_pct)}</td>
-              <td>${fmtPct(r.giveback_exit_pct)}</td>
-              <td>${fmtPct(r.session_flatten_pct)}</td>
-              <td>${fmtMoney(r.expectancy_after_costs)}</td>
-            </tr>`;
-          };
-          const reasonRows = order.map((k) => rowFor(k, k, reasons[k])).join("");
-          const cohorts = trades.cohorts || {};
-          const cohortRows = [
-            ["aggressive_injected × SIDEWAYS", "aggressive_injected_sideways"],
-            ["short × oversold_bounce", "short_oversold_bounce"],
-            ["scalp × session_flatten", "scalp_session_flatten"],
-          ].map(([label, key]) => rowFor(key, label, cohorts[key])).join("");
-          const note = trades.cost_note
-            ? `<div class="muted" style="margin-top:0.35rem">${esc(trades.cost_note)} untagged=${fmtNum(trades.untagged, 0)}</div>`
-            : "";
-          return dataTable(headers, reasonRows) +
-            `<div class="muted" style="margin:0.85rem 0 0.35rem">Policy cohorts</div>` +
-            dataTable(headers, cohortRows) +
-            note;
-        })()}
-        ${rawBlock(trades)}`);
+          );
+        });
+        const reasons = book.by_entry_reason || {};
+        const reasonOrder = ["uptrend_dip", "oversold_bounce", "chase", "aggressive_injected"];
+        const headers = ["Gate", "N", "Win%", "avg MFE", "avg MAE", "TP%", "Stop%", "Giveback%", "Flatten%", "E after cost"];
+        const rowFor = (key, label, row) => {
+          const r = row || {};
+          const n = r.n || 0;
+          if (!n) {
+            return `<tr><td>${esc(label)}</td><td>0</td><td colspan="8" class="muted">no tagged closes</td></tr>`;
+          }
+          return `<tr>
+            <td>${esc(label)}</td>
+            <td>${fmtNum(n, 0)}</td>
+            <td>${fmtPct(r.win_pct)}</td>
+            <td>${fmtPct(r.avg_mfe)}</td>
+            <td>${fmtPct(r.avg_mae)}</td>
+            <td>${fmtPct(r.tp_pct)}</td>
+            <td>${fmtPct(r.stop_pct)}</td>
+            <td>${fmtPct(r.giveback_exit_pct)}</td>
+            <td>${fmtPct(r.session_flatten_pct)}</td>
+            <td>${fmtMoney(r.expectancy_after_costs)}</td>
+          </tr>`;
+        };
+        const cohorts = book.cohorts || {};
+        const cohortRows = [
+          ["aggressive_injected × SIDEWAYS", "aggressive_injected_sideways"],
+          ["short × oversold_bounce", "short_oversold_bounce"],
+          ["scalp × session_flatten", "scalp_session_flatten"],
+        ].map(([label, key]) => rowFor(key, label, cohorts[key])).join("");
+        const note = book.cost_note
+          ? `<div class="muted" style="margin-top:0.35rem">${esc(book.cost_note)} untagged=${fmtNum(book.untagged, 0)}</div>`
+          : "";
+        const unknown = book.unknown_basis_count
+          ? `<div class="muted">${fmtNum(book.unknown_basis_count, 0)} closes have no opening lot and are not counted as zero.</div>`
+          : "";
+        const fee = book.fee_treatment ? ` · ${book.fee_treatment}` : "";
+        return `<div class="muted" style="margin:0.85rem 0 0.35rem">${esc(title)}${esc(fee)}</div>` +
+          headlines +
+          `<div class="muted" style="margin:0.85rem 0 0.35rem">By horizon book</div>` +
+          (horizonCards.length ? kpiGrid(horizonCards) : `<div class="muted">No closed trades in period</div>`) +
+          `<div class="muted" style="margin:0.85rem 0 0.35rem">By entry reason (gate expectancy after costs)</div>` +
+          `<div class="metric-scroll">${dataTable(headers, reasonOrder.map((k) => rowFor(k, k, reasons[k])).join(""))}</div>` +
+          `<div class="muted" style="margin:0.85rem 0 0.35rem">Policy cohorts</div>` +
+          `<div class="metric-scroll">${dataTable(headers, cohortRows)}</div>` +
+          note + unknown;
+      };
+      const currencyBooks = trades.by_currency || {};
+      const currencyKeys = Object.keys(currencyBooks).sort();
+      const tradeBody = currencyKeys.length
+        ? `<div class="muted">${esc(trades.currency_note || "")}</div>` +
+          currencyKeys.map((ccy) => tradeBookHtml(currencyBooks[ccy], ccy)).join("")
+        : tradeBookHtml(trades, "Trades");
+      renderMount("perfTrades", `${tradeBody}${rawBlock(trades)}`);
 
       renderMount("perfExecution", `
         ${kpiGrid([

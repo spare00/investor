@@ -473,6 +473,57 @@ class PositionMonitor:
         await self._attach_entry_attribution(row)
         return row
 
+    async def _stamp_close_from_fills(
+        self, lc: PositionLifecycle, *, observed_at: datetime
+    ) -> None:
+        """Price a flat close from executions. A missing fill is unknown, not the last mark."""
+        from app.intraday.fills import load_fill_records
+        from app.intraday.pnl import as_utc, reconstruct_fifo, stamp_lifecycle_close_pnl
+
+        fills, _skipped = await load_fill_records(self.session, symbol=str(lc.symbol or ""))
+        venue = str(getattr(lc, "venue", "") or "").upper()
+        if venue and any(fill.venue == venue for fill in fills):
+            fills = [fill for fill in fills if fill.venue == venue]
+        currency = str(getattr(lc, "currency", "") or "").upper()
+        ledger = reconstruct_fifo(fills)
+        books = ledger.books
+        if currency and any(book.currency == currency for book in books):
+            books = [book for book in books if book.currency == currency]
+        opened = getattr(lc, "opened_at", None)
+        opened_at = as_utc(opened) if isinstance(opened, datetime) else None
+        closes = []
+        for book in books:
+            for close in book.closes:
+                if close.closed_at is None:
+                    continue
+                if opened_at is not None and as_utc(close.closed_at) < opened_at:
+                    continue
+                closes.append(close)
+        known = [close for close in closes if close.gross_pnl is not None]
+        unknown = [close for close in closes if close.gross_pnl is None]
+        if known and not unknown:
+            gross = round(sum(float(close.gross_pnl or 0.0) for close in known), 4)
+            fee_parts = [close.fee for close in known]
+            if all(part is not None for part in fee_parts):
+                fee = round(sum(float(part or 0.0) for part in fee_parts), 4)
+                stamp_lifecycle_close_pnl(
+                    lc,
+                    realized=round(gross - fee, 4),
+                    filled_at=max(as_utc(close.closed_at) for close in known if close.closed_at),
+                    basis="fill",
+                )
+            else:
+                stamp_lifecycle_close_pnl(
+                    lc,
+                    realized=gross,
+                    filled_at=max(as_utc(close.closed_at) for close in known if close.closed_at),
+                    basis="fill_gross",
+                )
+            return
+        stamp_lifecycle_close_pnl(lc)
+        if lc.closed_at is None:
+            lc.closed_at = observed_at
+
     async def sync_from_broker_positions(
         self,
         positions: list[dict[str, Any]],
@@ -524,15 +575,17 @@ class PositionMonitor:
             if key in held:
                 continue
             if lc.status in {"OPEN", "ADDING", "REDUCING", "PENDING_OPEN", "PENDING_CLOSE"}:
-                from app.intraday.pnl import stamp_lifecycle_close_pnl
-
-                stamp_lifecycle_close_pnl(lc)
+                await self._stamp_close_from_fills(lc, observed_at=now)
                 lc.status = "CLOSED"
                 lc.quantity = 0.0
-                lc.closed_at = now
+                if lc.closed_at is None:
+                    lc.closed_at = now
+                    meta = dict(lc.metadata_json or {})
+                    meta["closed_at_source"] = "broker_flat_observed"
+                    lc.metadata_json = meta
                 meta = dict(lc.metadata_json or {})
                 meta["closed_by"] = "broker_position_sync"
-                meta["closed_at"] = now.isoformat()
+                meta["closed_at"] = lc.closed_at.isoformat() if lc.closed_at else now.isoformat()
                 lc.metadata_json = meta
                 from app.universe.entry_attribution import stamp_lifecycle_exit_reason
 

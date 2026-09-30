@@ -75,7 +75,10 @@ async def test_sync_from_broker_positions_upserts_and_closes(session: AsyncSessi
     await session.refresh(rows[0])
     assert rows[0].status == "CLOSED"
     assert rows[0].quantity == 0
-    assert rows[0].realized_pl == pytest.approx(100.0)
+    # The last mark (410 vs 400) is not a fill. Without an execution the close
+    # stays unknown instead of booking +100.
+    assert rows[0].realized_pl == 0.0
+    assert rows[0].metadata_json["pnl_unavailable"] == "no_fill"
 
 
 @pytest.mark.asyncio

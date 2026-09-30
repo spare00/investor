@@ -58,6 +58,8 @@ async def recent_outcome_stats(
         sym = str(lc.symbol).upper()
         hz = _horizon_from_lifecycle(lc, watchlist_hz)
         pnl = lifecycle_pnl(lc)
+        if pnl is None:
+            continue
         by_symbol[sym].append(pnl)
         by_horizon[hz].append(pnl)
         symbol_horizon[sym] = hz
@@ -103,7 +105,10 @@ async def recent_outcome_stats(
             continue
         sym = str(lc.symbol).upper()
         src = source_by_sym.get(sym) or "unknown"
-        by_source_pnls[src].append(lifecycle_pnl(lc))
+        pnl = lifecycle_pnl(lc)
+        if pnl is None:
+            continue
+        by_source_pnls[src].append(pnl)
 
     sources_out = {src: _pack(pnls) for src, pnls in sorted(by_source_pnls.items())}
 
@@ -118,6 +123,7 @@ async def recent_outcome_stats(
         "notes": [
             "Observational only — do not auto-tune risk or prompts from these stats.",
             "Prefer pausing or deprioritizing repeated negative-signal names with adequate sample size.",
+            "Closes with no fill basis are omitted. A stored zero is not replaced with the last mark.",
         ],
     }
 
@@ -172,9 +178,32 @@ async def symbol_close_pnls(
         .scalars()
         .all()
     )
+    from app.intraday.fills import load_fill_records
+    from app.intraday.pnl import as_utc, reconstruct_fifo
+
+    fills, _skipped = await load_fill_records(session)
+    ledger = reconstruct_fifo(fills)
     out: dict[str, list[float]] = defaultdict(list)
+    for book in ledger.books:
+        ordered = sorted(
+            book.closes,
+            key=lambda close: as_utc(close.closed_at) if close.closed_at else start,
+        )
+        for close in ordered:
+            if close.gross_pnl is None or close.closed_at is None:
+                continue
+            closed = as_utc(close.closed_at)
+            if not (start <= closed <= end):
+                continue
+            out[book.symbol].append(float(close.gross_pnl))
+    if fills:
+        return dict(out)
+    # No executions yet: fill-stamped lifecycles only. Unknown rows stay out.
     for lc in rows:
-        out[str(lc.symbol).upper()].append(lifecycle_pnl(lc))
+        pnl = lifecycle_pnl(lc)
+        if pnl is None:
+            continue
+        out[str(lc.symbol).upper()].append(pnl)
     return dict(out)
 
 

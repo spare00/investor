@@ -14,7 +14,8 @@ from app.core.config import Settings, get_settings
 from app.execution.position_manager import PositionManager
 from app.execution.reconciliation import ReconciliationService
 from app.intraday.events import IntradayEventBus
-from app.intraday.pnl import Lot, apply_fill_fifo
+from app.intraday.fills import fill_from_execution
+from app.intraday.pnl import as_utc, reconstruct_fifo
 from app.models import Execution, Order, PositionLifecycle, PostmarketSettlement, TradePnL
 
 
@@ -83,35 +84,55 @@ class SettlementService:
             scoped = day_execs
             scope_note = "session_day"
 
-        by_sym: dict[str, list[Execution]] = {}
-        for ex in sorted(scoped, key=lambda e: e.executed_at or datetime.now(UTC)):
-            by_sym.setdefault(ex.symbol, []).append(ex)
-
+        orders_by_id = {order.id: order for order in orders}
+        fills = []
+        for ex in executions:
+            when = ex.executed_at
+            if when is not None and as_utc(when) >= day_end:
+                continue
+            fill = fill_from_execution(ex, orders_by_id.get(ex.order_id))
+            if fill is not None:
+                fills.append(fill)
+        ledger = reconstruct_fifo(fills)
+        day_symbols = {
+            fill.symbol for fill in fills if day_start <= as_utc(fill.executed_at) < day_end
+        }
         pnl_rows: list[dict[str, Any]] = []
-        for symbol, fills in by_sym.items():
-            lots: list[Lot] = []
-            last: Any = None
-            for fill in fills:
-                order = await self.session.get(Order, fill.order_id)
-                side = (order.side if order else "buy").lower()
-                last = apply_fill_fifo(
-                    lots,
-                    side=side,
-                    quantity=float(fill.qty),
-                    price=float(fill.price),
-                    fee=0.0,
-                    equity=float(self.settings.starting_cash),
-                )
-                lots = last.remaining_lots
-            if last is not None:
-                pnl_rows.append(
-                    {
-                        "symbol": symbol,
-                        "net_realized_pl": last.net_realized_pl,
-                        "unrealized_pl": last.unrealized_pl,
-                        "conflict": last.conflict_with_broker,
-                    }
-                )
+        for fifo_book in ledger.books:
+            day_closes = [
+                close
+                for close in fifo_book.closes
+                if close.closed_at is not None and day_start <= as_utc(close.closed_at) < day_end
+            ]
+            if fifo_book.symbol not in day_symbols and not day_closes:
+                continue
+            known = [close for close in day_closes if close.gross_pnl is not None]
+            unknown = [close for close in day_closes if close.gross_pnl is None]
+            gross = (
+                round(sum(float(close.gross_pnl or 0.0) for close in known), 4) if known else None
+            )
+            fee_parts = [close.fee for close in known]
+            fee = (
+                round(sum(float(part) for part in fee_parts), 4)
+                if known and all(part is not None for part in fee_parts)
+                else None
+            )
+            net = None if gross is None else gross if fee is None else round(gross - fee, 4)
+            pnl_rows.append(
+                {
+                    "symbol": fifo_book.symbol,
+                    "currency": fifo_book.currency,
+                    "gross_realized_pl": gross,
+                    "net_realized_pl": net,
+                    "fees": fee,
+                    "fees_known": fee is not None and gross is not None,
+                    "unknown_basis_count": len(unknown),
+                    "pnl_unavailable": None
+                    if gross is not None or not unknown
+                    else "unknown_opening_inventory",
+                    "conflict": False,
+                }
+            )
 
         open_lc = list(
             (
@@ -131,7 +152,8 @@ class SettlementService:
             "venue": book,
             "position_sync": sync,
             "recon": {k: v for k, v in recon.items() if k != "book"},
-            "execution_scope": scope_note,
+            "execution_scope": "fifo_history_through_day_end",
+            "session_fill_scope": scope_note,
             "updated_at": datetime.now(UTC).isoformat(),
         }
         account_json = account if isinstance(account, dict) else {}
@@ -177,31 +199,44 @@ class SettlementService:
             tagged = await self._existing_trade_pnl(
                 symbol=row["symbol"], day=day, book=book, legacy_method=legacy_method
             )
+            gross = row.get("gross_realized_pl")
+            net = row.get("net_realized_pl")
+            stored_gross = float(gross) if gross is not None else 0.0
+            stored_net = float(net) if net is not None else 0.0
+            stored_fees = float(row["fees"]) if row.get("fees") is not None else 0.0
+            row_payload = {
+                "session_date": day,
+                "venue": book,
+                "currency": row.get("currency"),
+                "fees_known": bool(row.get("fees_known")),
+                "unknown_basis_count": int(row.get("unknown_basis_count") or 0),
+                "pnl_unavailable": row.get("pnl_unavailable"),
+            }
             if tagged is None:
                 self.session.add(
                     TradePnL(
                         id=uuid4(),
                         symbol=row["symbol"],
-                        gross_realized_pl=row["net_realized_pl"],
-                        net_realized_pl=row["net_realized_pl"],
-                        unrealized_pl=row["unrealized_pl"],
-                        fees=0.0,
+                        gross_realized_pl=stored_gross,
+                        net_realized_pl=stored_net,
+                        unrealized_pl=0.0,
+                        fees=stored_fees,
                         estimated_slippage=0.0,
                         return_pct=0.0,
                         method=lot_method,
                         conflict_with_broker=bool(row.get("conflict")),
-                        payload={"session_date": day, "venue": book},
+                        payload=row_payload,
                     )
                 )
             else:
                 tagged.method = lot_method
-                tagged.net_realized_pl = row["net_realized_pl"]
-                tagged.gross_realized_pl = row["net_realized_pl"]
-                tagged.unrealized_pl = row["unrealized_pl"]
+                tagged.gross_realized_pl = stored_gross
+                tagged.net_realized_pl = stored_net
+                tagged.unrealized_pl = 0.0
+                tagged.fees = stored_fees
                 tagged.conflict_with_broker = bool(row.get("conflict"))
                 payload = dict(tagged.payload) if isinstance(tagged.payload, dict) else {}
-                payload["session_date"] = day
-                payload["venue"] = book
+                payload.update(row_payload)
                 tagged.payload = payload
 
         await self.bus.publish(

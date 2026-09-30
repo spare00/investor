@@ -356,22 +356,28 @@ class PositionManager:
         """
         if since is None:
             since = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        rows = (
-            await self.session.execute(
-                select(PositionLifecycle.closed_at, PositionLifecycle.realized_pl)
-                .where(PositionLifecycle.status.ilike("closed"))
-                .where(PositionLifecycle.closed_at.is_not(None))
-                .where(PositionLifecycle.closed_at >= since)
-                .order_by(PositionLifecycle.closed_at.desc())
-                .limit(limit)
+        from app.intraday.pnl import lifecycle_pnl
+
+        rows = list(
+            (
+                await self.session.execute(
+                    select(PositionLifecycle)
+                    .where(PositionLifecycle.status.ilike("closed"))
+                    .where(PositionLifecycle.closed_at.is_not(None))
+                    .where(PositionLifecycle.closed_at >= since)
+                    .order_by(PositionLifecycle.closed_at.desc())
+                    .limit(limit)
+                )
             )
-        ).all()
+            .scalars()
+            .all()
+        )
         closes: list[tuple[datetime | None, float | None]] = []
-        for closed_at, realized in rows:
-            when = closed_at
+        for lc in rows:
+            when = lc.closed_at
             if when is not None and when.tzinfo is None:
                 when = when.replace(tzinfo=UTC)
-            closes.append((when, None if realized is None else float(realized)))
+            closes.append((when, lifecycle_pnl(lc)))
         return loss_streak(closes, cooldown_minutes=self.settings.cooldown_after_loss_minutes)
 
     async def portfolio_state_input(self) -> PortfolioStateInput:

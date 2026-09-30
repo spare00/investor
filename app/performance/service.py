@@ -11,7 +11,8 @@ from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.intraday.pnl import lifecycle_pnl
+from app.intraday.fills import load_fill_records
+from app.intraday.pnl import reconstruct_fifo
 from app.models import (
     AgentEvaluationRecord,
     AgentOutcomeEvaluation,
@@ -24,7 +25,6 @@ from app.models import (
     MarketSnapshot,
     PortfolioSnapshot,
     PositionLifecycle,
-    TradePnL,
 )
 from app.performance.agent_eval import (
     AgentPrediction,
@@ -41,8 +41,8 @@ from app.performance.decision_eval import (
     universe_horizon_for_plan,
 )
 from app.performance.drawdown import compute_drawdowns, current_drawdown, max_drawdown
-from app.performance.entry_expectancy import compute_entry_reason_expectancy
 from app.performance.execution_quality import compute_execution_quality
+from app.performance.fifo_ledger import books_from_ledger
 from app.performance.operational import aggregate_operational_kpis
 from app.performance.providers import compute_provider_reliability
 from app.performance.returns import (
@@ -62,14 +62,8 @@ from app.performance.risk import (
     sortino_ratio,
     tracking_error,
 )
-from app.performance.trades import (
-    ClosedTrade,
-    compute_trade_metrics,
-    group_trade_metrics_by_horizon,
-)
 from app.performance.types import CALCULATION_VERSION, MetricResult
 from app.performance.valuation import build_portfolio_valuation, positions_from_snapshot_payload
-from app.universe.entry_attribution import classify_exit_reason, read_attribution
 
 
 def _jsonable(value: Any) -> Any:
@@ -236,8 +230,7 @@ class PerformanceService:
         sampled = downsample_equity(curve, max_points=240)
         marks = await self._benchmark_marks(start, end, CHART_BENCHMARKS)
         quotes = {
-            symbol: prices_at_marks(sampled, marks.get(symbol) or [])
-            for symbol in CHART_BENCHMARKS
+            symbol: prices_at_marks(sampled, marks.get(symbol) or []) for symbol in CHART_BENCHMARKS
         }
         points = []
         for idx, (ts, value) in enumerate(sampled):
@@ -441,114 +434,20 @@ class PerformanceService:
 
     async def trade_metrics(self, period_start: datetime, period_end: datetime) -> dict[str, Any]:
         from app.models import WatchlistSymbol
-        from app.universe.horizons import UniverseHorizon
 
-        result = await self.session.execute(select(PositionLifecycle))
-        lifecycles = list(result.scalars().all())
+        fills, skipped = await load_fill_records(self.session)
+        ledger = reconstruct_fifo(fills)
+        ledger.skipped_fills += skipped
+        lifecycles = list((await self.session.execute(select(PositionLifecycle))).scalars().all())
         wl = list((await self.session.execute(select(WatchlistSymbol))).scalars().all())
         watchlist_hz = {r.symbol.upper(): str(r.horizon) for r in wl if r.symbol}
-
-        def _resolve_horizon(lc: PositionLifecycle) -> str:
-            policy = dict(lc.exit_policy or {})
-            raw = policy.get("horizon")
-            if raw:
-                try:
-                    return UniverseHorizon(str(raw).lower()).value
-                except ValueError:
-                    pass
-            sym = str(lc.symbol or "").upper()
-            if sym in watchlist_hz:
-                try:
-                    return UniverseHorizon(watchlist_hz[sym].lower()).value
-                except ValueError:
-                    return "unknown"
-            return "unknown"
-
-        trades: list[ClosedTrade] = []
-        for lc in lifecycles:
-            if lc.status != "CLOSED" or not lc.closed_at:
-                continue
-            if not (period_start <= lc.closed_at <= period_end):
-                continue
-            pnl = lifecycle_pnl(lc)
-            holding = 0.0
-            if lc.opened_at and lc.closed_at:
-                holding = (lc.closed_at - lc.opened_at).total_seconds() / 60.0
-            policy = dict(lc.exit_policy or {})
-            meta = dict(lc.metadata_json or {})
-            attr = read_attribution(lc)
-            entry = float(lc.average_entry_price or 0)
-            qty = abs(float(meta.get("opened_quantity") or lc.quantity or 0))
-            risk = None
-            if entry > 0 and lc.stop_price and qty > 0:
-                risk = abs(entry - float(lc.stop_price)) * qty
-            notional = entry * qty if entry > 0 and qty > 0 else None
-            mfe_pct = None
-            mae_pct = None
-            if entry > 0:
-                try:
-                    peak = (
-                        float(policy["peak_price"])
-                        if policy.get("peak_price") is not None
-                        else None
-                    )
-                except (TypeError, ValueError):
-                    peak = None
-                try:
-                    trough = (
-                        float(policy["trough_price"])
-                        if policy.get("trough_price") is not None
-                        else None
-                    )
-                except (TypeError, ValueError):
-                    trough = None
-                if peak is not None:
-                    mfe_pct = max(0.0, (peak - entry) / entry)
-                if trough is not None:
-                    mae_pct = max(0.0, (entry - trough) / entry)
-            exit_reason = classify_exit_reason(
-                reason=str(meta.get("exit_reason") or ""),
-                thesis=str((meta.get("exit_draft") or {}).get("reason") or ""),
-                metadata=meta,
-                horizon=_resolve_horizon(lc),
-            )
-            trades.append(
-                ClosedTrade(
-                    pnl=pnl,
-                    holding_minutes=holding,
-                    risk_amount=risk,
-                    symbol=str(lc.symbol).upper(),
-                    horizon=_resolve_horizon(lc),
-                    entry_timing=attr.get("entry_timing"),
-                    entry_source=attr.get("entry_source"),
-                    trend_at_entry=attr.get("trend_at_entry"),
-                    exit_reason=exit_reason,
-                    mfe_pct=mfe_pct,
-                    mae_pct=mae_pct,
-                    notional=notional,
-                )
-            )
-
-        if not trades:
-            result = await self.session.execute(select(TradePnL))
-            for row in result.scalars().all():
-                trades.append(
-                    ClosedTrade(
-                        pnl=row.net_realized_pl,
-                        holding_minutes=0.0,
-                        fees=row.fees,
-                        symbol=str(getattr(row, "symbol", "") or "").upper() or None,
-                        horizon="unknown",
-                    )
-                )
-        firm = compute_trade_metrics(trades)
-        firm["by_horizon"] = group_trade_metrics_by_horizon(trades)
-        firm.update(compute_entry_reason_expectancy(trades))
-        firm["unit"] = "position_lifecycle"
-        firm["horizon_note"] = (
-            "by_horizon uses lifecycle exit_policy.horizon with watchlist fallback"
+        return books_from_ledger(
+            ledger,
+            lifecycles=lifecycles,
+            watchlist_hz=watchlist_hz,
+            period_start=period_start,
+            period_end=period_end,
         )
-        return firm
 
     def execution(self, order_stats: dict[str, Any]) -> dict[str, Any]:
         return compute_execution_quality(order_stats)

@@ -7,6 +7,7 @@ unrealized number into +96,765 of realized profit.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -95,12 +96,20 @@ async def test_monitor_flags_when_no_mark_is_usable(session: AsyncSession) -> No
 def test_close_does_not_launder_a_bad_mark_into_realized_pnl() -> None:
     # The exact shape of the corrupt BHP row before the guard existed.
     lc = _lifecycle(current_price=-60.70, unrealized_pl=96_765.48)
-    assert stamp_lifecycle_close_pnl(lc) == 0.0
-    assert lc.metadata_json["pnl_unavailable"] == "no_usable_mark"
+    assert stamp_lifecycle_close_pnl(lc) is None
+    assert lc.realized_pl == 0.0
+    assert lc.metadata_json["pnl_unavailable"] == "no_fill"
 
 
-def test_close_still_prices_a_normal_exit() -> None:
+def test_close_uses_the_fill_not_the_last_mark() -> None:
     lc = _lifecycle(
         symbol="GOOGL", quantity=100.0, average_entry_price=338.56, current_price=349.20
     )
-    assert stamp_lifecycle_close_pnl(lc) == pytest.approx(1064.0, abs=0.01)
+    filled = datetime(2026, 9, 30, 4, 36, tzinfo=UTC)
+    assert (
+        stamp_lifecycle_close_pnl(lc, realized=-50.0, filled_at=filled, basis="fill_gross") == -50.0
+    )
+    assert lc.current_price == pytest.approx(349.20)
+    assert lc.closed_at == filled
+    assert lc.metadata_json["pnl_basis"] == "fill_gross"
+    assert lc.metadata_json["fees_unrecorded"] is True

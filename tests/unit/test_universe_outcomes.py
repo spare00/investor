@@ -92,7 +92,7 @@ async def test_recent_outcome_stats_by_symbol_horizon_source() -> None:
     assert by_sym["QQQ"]["trade_count"] == 3
     assert by_sym["QQQ"]["signal"] == "negative"
     assert by_sym["MSFT"]["signal"] == "insufficient"
-    assert by_sym["CBA"]["total_pnl"] == pytest.approx(-9528.0)
+    assert "CBA" not in by_sym
     assert out["by_horizon"]["scalp"]["trade_count"] == 3
     assert out["by_horizon"]["medium"]["trade_count"] == 1
     assert out["by_source"]["seed"]["trade_count"] == 3
