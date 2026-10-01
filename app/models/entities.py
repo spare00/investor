@@ -641,6 +641,58 @@ class PositionLifecycle(Base, TimestampMixin):
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONType, default=dict)
 
 
+class MethodTrial(Base, TimestampMixin):
+    """One position, one technique, one result.
+
+    Entry columns are written when the position opens. Exit columns fill in
+    at the close and are not replaced once they are known. A row opened
+    before this record, or a close whose order was not the order we intended,
+    stays in the table and stays out of the method comparison.
+    """
+
+    __tablename__ = "method_trials"
+    __table_args__ = (
+        UniqueConstraint("position_lifecycle_id", name="uq_method_trials_lifecycle"),
+        Index("ix_method_trials_strategy_status", "strategy_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    position_lifecycle_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("position_lifecycles.id"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    venue: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    strategy_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    horizon: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    entry_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entry_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    trend_at_entry: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    score_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    intended_hold_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_captured_at_open: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    holding_minutes: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    intended_order_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    broker_order_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    gross_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fee: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fees_known: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    path: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    execution_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    strategy_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cause: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    counts_for_method: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 class PositionSnapshotRecord(Base, TimestampMixin):
     __tablename__ = "position_snapshots_v2"
 

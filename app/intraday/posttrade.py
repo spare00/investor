@@ -41,6 +41,9 @@ class PostTradeReviewService:
                     lesson = judge_close(facts)
                 except Exception:  # noqa: BLE001
                     lesson = None
+                from app.performance.method_trial_store import complete_method_trial
+
+                await complete_method_trial(self.session, lc_probe)
 
         stored_pnl = lesson.gross_pnl if lesson is not None else pnl
         lesson_payload = lesson_to_dict(lesson) if lesson is not None else None

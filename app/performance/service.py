@@ -450,28 +450,17 @@ class PerformanceService:
         )
 
     async def feedback(self) -> dict[str, Any]:
-        """Lessons already written on close. Reads them oldest-first. Applies nothing."""
-        from app.models import PostTradeReviewRecord
-        from app.performance.trade_lesson import feedback_report, lesson_from_dict
+        """Method trials opened under this record. Reads them. Applies nothing."""
+        from app.models import MethodTrial
+        from app.performance.method_trial import trial_feedback
+        from app.performance.method_trial_store import trial_view
 
         rows = list(
-            (
-                await self.session.execute(
-                    select(PostTradeReviewRecord).order_by(PostTradeReviewRecord.created_at)
-                )
-            )
+            (await self.session.execute(select(MethodTrial).order_by(MethodTrial.opened_at)))
             .scalars()
             .all()
         )
-        lessons = []
-        for row in rows:
-            for raw in row.lessons or []:
-                if not isinstance(raw, dict):
-                    continue
-                lesson = lesson_from_dict(raw)
-                if lesson is not None:
-                    lessons.append(lesson)
-        return feedback_report(lessons)
+        return trial_feedback([trial_view(row) for row in rows])
 
     def execution(self, order_stats: dict[str, Any]) -> dict[str, Any]:
         return compute_execution_quality(order_stats)

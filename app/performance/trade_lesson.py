@@ -48,6 +48,7 @@ def freeze_entry_trial(existing: dict[str, Any] | None, observed: dict[str, Any]
         "currency": observed.get("currency"),
         "decision_id": observed.get("decision_id"),
         "entry_price": observed.get("entry_price"),
+        "intended_hold_minutes": observed.get("intended_hold_minutes"),
         "opened_at": observed.get("opened_at"),
         "score_kind": "heuristic" if observed.get("score") is not None else None,
     }

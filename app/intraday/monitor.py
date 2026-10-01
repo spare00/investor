@@ -412,6 +412,7 @@ class PositionMonitor:
                 existing.exit_policy = policy
             await self._attach_entry_attribution(existing)
             self._freeze_entry_trial(existing)
+            await self._open_method_trial(existing, captured_at_open=False)
             # Live exit policy follows the current watchlist. The frozen trial above does not.
             holding = await self._default_max_holding(symbol)
             overnight = await self._overnight_allowed(symbol)
@@ -470,8 +471,11 @@ class PositionMonitor:
         await self.session.flush()
         if row.stop_price is None:
             await self.stamp_horizon_stop_if_missing(row)
+        if row.take_profit_price is None:
+            await self.stamp_horizon_take_profit_if_missing(row)
         await self._attach_entry_attribution(row)
         self._freeze_entry_trial(row)
+        await self._open_method_trial(row, captured_at_open=True)
         await self.session.flush()
         return row
 
@@ -596,6 +600,9 @@ class PositionMonitor:
                     raw=str(meta.get("exit_reason_raw") or meta.get("closed_by") or ""),
                     thesis=str((meta.get("exit_draft") or {}).get("reason") or ""),
                 )
+                from app.performance.method_trial_store import complete_method_trial
+
+                await complete_method_trial(self.session, lc)
                 closed += 1
         await self.session.flush()
         return {
@@ -717,10 +724,18 @@ class PositionMonitor:
                 "currency": lifecycle.currency,
                 "decision_id": str(lifecycle.decision_id) if lifecycle.decision_id else None,
                 "entry_price": lifecycle.average_entry_price,
+                "intended_hold_minutes": lifecycle.max_holding_minutes,
                 "opened_at": opened.isoformat() if opened is not None else None,
             },
         )
         lifecycle.metadata_json = meta
+
+    async def _open_method_trial(
+        self, lifecycle: PositionLifecycle, *, captured_at_open: bool
+    ) -> None:
+        from app.performance.method_trial_store import open_method_trial
+
+        await open_method_trial(self.session, lifecycle, captured_at_open=captured_at_open)
 
     async def stamp_horizon_stop_if_missing(self, lifecycle: PositionLifecycle) -> float | None:
         """Attach the watchlist book's ATR/pct stop when the row has none.

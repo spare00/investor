@@ -4153,21 +4153,31 @@
       renderMount("perfTrades", `${tradeBody}${rawBlock(trades)}`);
 
       const strategies = feedback.by_strategy || [];
+      const pathLine = (counts) => {
+        const c = counts || {};
+        const parts = ["stop_first", "target_first", "stop_only", "target_only", "neither", "ambiguous", "unobserved"]
+          .filter((name) => c[name])
+          .map((name) => `${name} ${c[name]}`);
+        return parts.length ? parts.join(", ") : "—";
+      };
       const strategyRows = strategies.length
         ? strategies.map((row) => `<tr>
             <td>${esc(row.strategy_id)}</td>
+            <td>${esc(row.currency || "—")}</td>
             <td>${esc(fmtNum(row.closes, 0))}</td>
             <td>${esc(fmtNum(row.wins, 0))}</td>
             <td>${esc(fmtNum(row.losses, 0))}</td>
             <td>${esc(fmtMoney(row.gross_pnl))}</td>
             <td>${esc(fmtMoney(row.expectancy))}</td>
+            <td>${row.mean_holding_minutes == null ? "—" : esc(fmtNum(row.mean_holding_minutes, 1))}</td>
+            <td>${esc(pathLine(row.path_counts))}</td>
           </tr>`).join("")
         : "";
       const proposals = feedback.proposals || [];
       const proposalRows = proposals.length
         ? proposals.map((row) => `<tr>
             <td>${esc(row.action)}</td>
-            <td>${esc(row.strategy_id || row.symbol || row.cause || "—")}</td>
+            <td>${esc(row.strategy_id || row.symbol || row.cause || "—")}${row.currency ? " " + esc(row.currency) : ""}</td>
             <td>${esc(row.reason || "")}</td>
             <td>${row.applied ? "applied" : "not applied"}</td>
           </tr>`).join("")
@@ -4176,10 +4186,13 @@
       const breakLine = breaks.length
         ? breaks.map((row) => `${row.cause} (${(row.symbols || []).join(", ")})`).join(" · ")
         : "none";
+      const excluded = feedback.excluded || {};
+      const excludedLine = `late entry ${fmtNum(excluded.entry_not_captured_at_open, 0)}, broken ${fmtNum(excluded.execution_broken, 0)}, unknown P&L ${fmtNum(excluded.pnl_unknown, 0)}, still open ${fmtNum(excluded.open, 0)}`;
       renderMount("perfFeedback", `
-        <div class="muted">Faithful closes only. ${esc(fmtNum(feedback.strategy_close_count, 0))} in the score, ${esc(fmtNum(feedback.lesson_count, 0))} lessons. A draft is not a change.</div>
+        <div class="muted">Comparable trials only: opened under this record, faithful exit, known gross. ${esc(fmtNum(feedback.comparable_count, 0))} in the score, ${esc(fmtNum(feedback.trial_count, 0))} trials. A draft is not a change.</div>
+        <div class="muted" style="margin:0.35rem 0">Kept out of the score: ${esc(excludedLine)}</div>
         <div class="muted" style="margin:0.35rem 0">Execution breaks: ${esc(breakLine)}</div>
-        <div class="metric-scroll">${dataTable(["Strategy", "Closes", "Wins", "Losses", "Gross", "Expectancy"], strategyRows)}</div>
+        <div class="metric-scroll">${dataTable(["Strategy", "Ccy", "Closes", "Wins", "Losses", "Gross", "Expectancy", "Hold min", "Path"], strategyRows)}</div>
         <div class="muted" style="margin:0.85rem 0 0.35rem">Next change, not applied</div>
         <div class="metric-scroll">${dataTable(["Action", "Subject", "Reason", "Applied"], proposalRows)}</div>
         ${rawBlock(feedback)}`);
