@@ -298,6 +298,35 @@ async def test_lifecycle_inherits_horizon_hold_policy(session: AsyncSession) -> 
 
 
 @pytest.mark.asyncio
+async def test_entry_trial_keeps_the_horizon_from_open(session: AsyncSession) -> None:
+    from sqlalchemy import select
+
+    from app.intraday.monitor import PositionMonitor
+    from app.models import WatchlistSymbol
+
+    settings = Settings(universe_mode="dynamic", trade_allowlist=["SPY"])
+    session.add(
+        WatchlistSymbol(symbol="SPY", horizon="scalp", status="active", priority=80, thesis="t")
+    )
+    await session.flush()
+    mon = PositionMonitor(session, settings=settings)
+    opened = await mon.ensure_lifecycle_from_broker(symbol="SPY", quantity=1, avg_entry=100)
+    trial = dict(opened.metadata_json or {})["trial"]
+    assert trial["frozen"] is True
+    assert trial["strategy_id"] == "scalp:untagged@book-v1"
+
+    row = (
+        await session.execute(select(WatchlistSymbol).where(WatchlistSymbol.symbol == "SPY"))
+    ).scalar_one()
+    row.horizon = "short"
+    await session.flush()
+    again = await mon.ensure_lifecycle_from_broker(symbol="SPY", quantity=1, avg_entry=100)
+    kept = dict(again.metadata_json or {})["trial"]
+    assert kept["strategy_id"] == "scalp:untagged@book-v1"
+    assert dict(again.exit_policy or {})["horizon"] == "short"
+
+
+@pytest.mark.asyncio
 async def test_snapshot_roster_shows_pool_and_listed_days(session: AsyncSession) -> None:
     from datetime import UTC, datetime, timedelta
     from uuid import uuid4

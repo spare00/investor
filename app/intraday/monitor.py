@@ -410,8 +410,9 @@ class PositionMonitor:
                 policy = dict(existing.exit_policy or {})
                 policy["stop_loss"] = stop_price
                 existing.exit_policy = policy
-            # Re-sync horizon policy on upsert so day→short rehorizon doesn't
-            # keep overnight_allowed=False / stale max_holding from open day.
+            await self._attach_entry_attribution(existing)
+            self._freeze_entry_trial(existing)
+            # Live exit policy follows the current watchlist. The frozen trial above does not.
             holding = await self._default_max_holding(symbol)
             overnight = await self._overnight_allowed(symbol)
             hz = await self._watchlist_horizon(symbol)
@@ -432,7 +433,6 @@ class PositionMonitor:
             if existing.stop_price is None:
                 await self.stamp_horizon_stop_if_missing(existing)
             await self.session.flush()
-            await self._attach_entry_attribution(existing)
             return existing
         holding = await self._default_max_holding(symbol)
         overnight = await self._overnight_allowed(symbol)
@@ -471,6 +471,8 @@ class PositionMonitor:
         if row.stop_price is None:
             await self.stamp_horizon_stop_if_missing(row)
         await self._attach_entry_attribution(row)
+        self._freeze_entry_trial(row)
+        await self.session.flush()
         return row
 
     async def _stamp_close_from_fills(
@@ -686,6 +688,39 @@ class PositionMonitor:
 
         await copy_entry_attribution_to_lifecycle(self.session, lifecycle)
         await self.session.flush()
+
+    def _freeze_entry_trial(self, lifecycle: PositionLifecycle) -> None:
+        """Write the technique once. A later horizon change does not rewrite it."""
+        from app.performance.trade_lesson import freeze_entry_trial
+        from app.universe.entry_attribution import read_attribution
+
+        meta = dict(lifecycle.metadata_json or {})
+        if isinstance(meta.get("trial"), dict) and meta["trial"].get("frozen") is True:
+            return
+        attr = read_attribution(lifecycle)
+        policy = dict(lifecycle.exit_policy or {})
+        opened = lifecycle.opened_at
+        score = meta.get("entry_score")
+        if score is None:
+            score = meta.get("probability_estimate")
+        meta["trial"] = freeze_entry_trial(
+            meta.get("trial") if isinstance(meta.get("trial"), dict) else None,
+            {
+                "horizon": policy.get("horizon"),
+                "entry_reason": attr.get("entry_timing"),
+                "entry_source": attr.get("entry_source"),
+                "trend_at_entry": attr.get("trend_at_entry"),
+                "score": score,
+                "stop_price": lifecycle.stop_price,
+                "target_price": lifecycle.take_profit_price,
+                "venue": lifecycle.venue,
+                "currency": lifecycle.currency,
+                "decision_id": str(lifecycle.decision_id) if lifecycle.decision_id else None,
+                "entry_price": lifecycle.average_entry_price,
+                "opened_at": opened.isoformat() if opened is not None else None,
+            },
+        )
+        lifecycle.metadata_json = meta
 
     async def stamp_horizon_stop_if_missing(self, lifecycle: PositionLifecycle) -> float | None:
         """Attach the watchlist book's ATR/pct stop when the row has none.

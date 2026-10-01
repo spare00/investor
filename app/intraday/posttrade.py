@@ -164,12 +164,16 @@ async def _close_facts(session: AsyncSession, lc: PositionLifecycle) -> Any:
     ledger = reconstruct_fifo(fills)
     gross = _gross_for_lifecycle(ledger.books, lc)
     policy = dict(lc.exit_policy or {})
-    horizon = policy.get("horizon")
-    reason = read_attribution(lc).get("entry_timing")
+    trial = dict(lc.metadata_json or {}).get("trial")
+    trial = trial if isinstance(trial, dict) else {}
+    horizon = trial.get("horizon") or policy.get("horizon")
+    reason = trial.get("entry_reason") or read_attribution(lc).get("entry_timing")
+    frozen_id = str(trial.get("strategy_id") or "") or None
     return CloseFacts(
         symbol=symbol,
         horizon=str(horizon) if horizon else None,
         entry_reason=str(reason) if reason else None,
+        strategy_id=frozen_id,
         intended_order_type=intended,
         broker_order_type=broker,
         gross_pnl=gross,

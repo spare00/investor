@@ -146,3 +146,39 @@ def test_draft_appears_only_after_enough_faithful_losses() -> None:
     assert len(drafts) == 1
     assert drafts[0]["applied"] is False
     assert drafts[0]["strategy_id"] == "scalp:chase@book-v1"
+
+
+def test_entry_trial_is_not_rewritten_after_it_is_frozen() -> None:
+    from app.performance.trade_lesson import freeze_entry_trial
+
+    first = freeze_entry_trial(
+        None,
+        {
+            "horizon": "scalp",
+            "entry_reason": "chase",
+            "score": 0.62,
+            "stop_price": 99.0,
+            "currency": "AUD",
+        },
+    )
+    later = freeze_entry_trial(
+        first,
+        {"horizon": "short", "entry_reason": "oversold_bounce", "score": 0.9},
+    )
+    assert later["strategy_id"] == "scalp:chase@book-v1"
+    assert later["horizon"] == "scalp"
+    assert later["score_kind"] == "heuristic"
+    assert later is not first
+
+    lesson = judge_close(
+        CloseFacts(
+            symbol="CBA",
+            horizon="short",
+            entry_reason="oversold_bounce",
+            strategy_id=later["strategy_id"],
+            intended_order_type="stop",
+            broker_order_type="stop",
+            gross_pnl=-1.0,
+        )
+    )
+    assert lesson.strategy_id == "scalp:chase@book-v1"

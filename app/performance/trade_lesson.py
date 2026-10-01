@@ -24,11 +24,42 @@ def strategy_id(horizon: str | None, entry_reason: str | None = None) -> str:
     return f"{book}:{reason}@{STRATEGY_VERSION}"
 
 
+def freeze_entry_trial(existing: dict[str, Any] | None, observed: dict[str, Any]) -> dict[str, Any]:
+    """Keep the technique observed at entry. Later watchlist edits must not relabel it."""
+    if isinstance(existing, dict) and existing.get("frozen") is True:
+        return dict(existing)
+    horizon = observed.get("horizon")
+    reason = observed.get("entry_reason")
+    trial = {
+        "frozen": True,
+        "strategy_version": STRATEGY_VERSION,
+        "strategy_id": strategy_id(
+            str(horizon) if horizon else None,
+            str(reason) if reason else None,
+        ),
+        "horizon": horizon,
+        "entry_reason": reason,
+        "entry_source": observed.get("entry_source"),
+        "trend_at_entry": observed.get("trend_at_entry"),
+        "score": observed.get("score"),
+        "stop_price": observed.get("stop_price"),
+        "target_price": observed.get("target_price"),
+        "venue": observed.get("venue"),
+        "currency": observed.get("currency"),
+        "decision_id": observed.get("decision_id"),
+        "entry_price": observed.get("entry_price"),
+        "opened_at": observed.get("opened_at"),
+        "score_kind": "heuristic" if observed.get("score") is not None else None,
+    }
+    return trial
+
+
 @dataclass(frozen=True, slots=True)
 class CloseFacts:
     symbol: str
     horizon: str | None = None
     entry_reason: str | None = None
+    strategy_id: str | None = None
     intended_order_type: str | None = None
     broker_order_type: str | None = None
     gross_pnl: float | None = None
@@ -101,7 +132,7 @@ def execution_verdict(intended: str | None, broker: str | None) -> tuple[str, st
 
 def judge_close(facts: CloseFacts) -> TradeLesson:
     verdict, cause = execution_verdict(facts.intended_order_type, facts.broker_order_type)
-    sid = strategy_id(facts.horizon, facts.entry_reason)
+    sid = facts.strategy_id or strategy_id(facts.horizon, facts.entry_reason)
     symbol = str(facts.symbol or "").upper()
     if verdict == "broken":
         return TradeLesson(
