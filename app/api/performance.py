@@ -132,6 +132,12 @@ async def performance_trades(
     return await _svc(session).trade_metrics(start, end)
 
 
+@router.get("/performance/feedback")
+async def performance_feedback(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
+    """Strategy scoreboard and execution breaks. Does not change the playbook."""
+    return await _svc(session).feedback()
+
+
 @router.get("/performance/execution")
 async def performance_execution(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     rows = list((await session.execute(select(Order))).scalars().all())

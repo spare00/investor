@@ -1299,6 +1299,10 @@
         <h2>Trade Metrics</h2>
         <div id="perfTrades" class="muted">Loading…</div>
       </section>
+      <section class="full">
+        <h2>Strategy feedback</h2>
+        <div id="perfFeedback" class="muted">Loading…</div>
+      </section>
       <section>
         <h2>Execution Quality</h2>
         <div id="perfExecution" class="muted">Loading…</div>
@@ -3993,12 +3997,13 @@
     }
 
     async function refreshPerformance() {
-      const [portfolio, returns, risk, drawdowns, trades, execution, equityCurve] = await Promise.all([
+      const [portfolio, returns, risk, drawdowns, trades, feedback, execution, equityCurve] = await Promise.all([
         fetchJson("/performance/portfolio"),
         fetchJson("/performance/returns"),
         fetchJson("/performance/risk"),
         fetchJson("/performance/drawdowns"),
         fetchJson("/performance/trades"),
+        fetchJson("/performance/feedback"),
         fetchJson("/performance/execution"),
         fetchJson(`/performance/equity-curve?period=${encodeURIComponent(equityChartPeriod)}`),
       ]);
@@ -4146,6 +4151,38 @@
           currencyKeys.map((ccy) => tradeBookHtml(currencyBooks[ccy], ccy)).join("")
         : tradeBookHtml(trades, "Trades");
       renderMount("perfTrades", `${tradeBody}${rawBlock(trades)}`);
+
+      const strategies = feedback.by_strategy || [];
+      const strategyRows = strategies.length
+        ? strategies.map((row) => `<tr>
+            <td>${esc(row.strategy_id)}</td>
+            <td>${esc(fmtNum(row.closes, 0))}</td>
+            <td>${esc(fmtNum(row.wins, 0))}</td>
+            <td>${esc(fmtNum(row.losses, 0))}</td>
+            <td>${esc(fmtMoney(row.gross_pnl))}</td>
+            <td>${esc(fmtMoney(row.expectancy))}</td>
+          </tr>`).join("")
+        : "";
+      const proposals = feedback.proposals || [];
+      const proposalRows = proposals.length
+        ? proposals.map((row) => `<tr>
+            <td>${esc(row.action)}</td>
+            <td>${esc(row.strategy_id || row.symbol || row.cause || "—")}</td>
+            <td>${esc(row.reason || "")}</td>
+            <td>${row.applied ? "applied" : "not applied"}</td>
+          </tr>`).join("")
+        : "";
+      const breaks = feedback.execution_breaks || [];
+      const breakLine = breaks.length
+        ? breaks.map((row) => `${row.cause} (${(row.symbols || []).join(", ")})`).join(" · ")
+        : "none";
+      renderMount("perfFeedback", `
+        <div class="muted">Faithful closes only. ${esc(fmtNum(feedback.strategy_close_count, 0))} in the score, ${esc(fmtNum(feedback.lesson_count, 0))} lessons. A draft is not a change.</div>
+        <div class="muted" style="margin:0.35rem 0">Execution breaks: ${esc(breakLine)}</div>
+        <div class="metric-scroll">${dataTable(["Strategy", "Closes", "Wins", "Losses", "Gross", "Expectancy"], strategyRows)}</div>
+        <div class="muted" style="margin:0.85rem 0 0.35rem">Next change, not applied</div>
+        <div class="metric-scroll">${dataTable(["Action", "Subject", "Reason", "Applied"], proposalRows)}</div>
+        ${rawBlock(feedback)}`);
 
       renderMount("perfExecution", `
         ${kpiGrid([

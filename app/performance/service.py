@@ -449,6 +449,30 @@ class PerformanceService:
             period_end=period_end,
         )
 
+    async def feedback(self) -> dict[str, Any]:
+        """Lessons already written on close. Reads them oldest-first. Applies nothing."""
+        from app.models import PostTradeReviewRecord
+        from app.performance.trade_lesson import feedback_report, lesson_from_dict
+
+        rows = list(
+            (
+                await self.session.execute(
+                    select(PostTradeReviewRecord).order_by(PostTradeReviewRecord.created_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        lessons = []
+        for row in rows:
+            for raw in row.lessons or []:
+                if not isinstance(raw, dict):
+                    continue
+                lesson = lesson_from_dict(raw)
+                if lesson is not None:
+                    lessons.append(lesson)
+        return feedback_report(lessons)
+
     def execution(self, order_stats: dict[str, Any]) -> dict[str, Any]:
         return compute_execution_quality(order_stats)
 

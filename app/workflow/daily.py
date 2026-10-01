@@ -1636,7 +1636,7 @@ class DailyWorkflowService:
                         symbol=lc.symbol,
                         outcome="closed" if lc.status == "CLOSED" else "pending_close",
                         exit_reason="postmarket_review",
-                        pnl=float(lc.realized_pl or lc.unrealized_pl or 0),
+                        pnl=None,
                     )
                     if out.get("review_id"):
                         review_ids.append(str(out["review_id"]))

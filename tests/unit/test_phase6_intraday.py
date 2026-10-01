@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -21,7 +21,7 @@ from app.intraday.monitor import EXIT_INTENT_REQUIRED, PositionMonitor
 from app.intraday.pnl import apply_fill_fifo
 from app.intraday.risk import DynamicRiskRevalidator
 from app.intraday.service import IntradayService
-from app.models import Execution, Order, PositionLifecycle, TradePnL
+from app.models import Execution, Order, PositionLifecycle, PostTradeReviewRecord, TradePnL
 from app.risk import PortfolioRiskView
 from app.schemas.cio import CIODecision, SymbolActionPlan
 from app.schemas.common import MarketRegime, OrderType, PortfolioAction, SymbolAction
@@ -276,6 +276,82 @@ async def test_settlement_and_posttrade(session: AsyncSession) -> None:
     )
     assert review["strategy_auto_changed"] is False
     assert review["agent_assessment_ids"]
+
+
+@pytest.mark.asyncio
+async def test_posttrade_does_not_score_a_stop_sent_as_a_limit(session: AsyncSession) -> None:
+    opened = datetime(2026, 9, 30, 4, 32, tzinfo=UTC)
+    closed = datetime(2026, 9, 30, 4, 36, tzinfo=UTC)
+    lc = PositionLifecycle(
+        id=uuid4(),
+        symbol="CBA",
+        status="CLOSED",
+        quantity=0,
+        average_entry_price=170.0,
+        venue="AU",
+        currency="AUD",
+        opened_at=opened,
+        closed_at=closed,
+        exit_policy={"horizon": "short"},
+        realized_pl=0.0,
+    )
+    buy_id = uuid4()
+    sell_id = uuid4()
+    session.add(lc)
+    session.add_all(
+        [
+            Order(
+                id=buy_id,
+                symbol="CBA",
+                side="buy",
+                qty=100,
+                order_type="limit",
+                status="FILLED",
+                idempotency_key=f"buy-{buy_id}",
+                raw_payload={"venue": "AU", "currency": "AUD"},
+            ),
+            Order(
+                id=sell_id,
+                symbol="CBA",
+                side="sell",
+                qty=100,
+                order_type="limit",
+                status="FILLED",
+                idempotency_key=f"protect-stop:{lc.id}",
+                raw_payload={"venue": "AU", "currency": "AUD"},
+            ),
+            Execution(
+                id=uuid4(),
+                order_id=buy_id,
+                symbol="CBA",
+                qty=100,
+                price=170.0,
+                executed_at=opened,
+            ),
+            Execution(
+                id=uuid4(),
+                order_id=sell_id,
+                symbol="CBA",
+                qty=100,
+                price=169.0,
+                executed_at=closed,
+            ),
+        ]
+    )
+    await session.flush()
+    review = await IntradayService(session, settings=_settings()).posttrade.create_review(
+        position_lifecycle_id=lc.id,
+        symbol="CBA",
+        outcome="closed",
+        exit_reason="test",
+    )
+    assert review["execution_verdict"] == "broken"
+    assert review["counts_for_strategy"] is False
+    assert review["strategy_auto_changed"] is False
+    row = await session.get(PostTradeReviewRecord, UUID(review["review_id"]))
+    assert row is not None
+    assert row.pnl == -100.0
+    assert row.lessons[0]["cause"] == "protective_stop_sent_as_limit"
 
 
 @pytest.mark.asyncio
