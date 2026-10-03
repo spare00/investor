@@ -29,5 +29,5 @@ Prints path to this document and lightweight config checks.
 
 ## Not audited
 
-- Third-party Alpaca API pen test
+- Third-party IBKR API pen test
 - LLM prompt injection regression suite (see Phase 4 docs)

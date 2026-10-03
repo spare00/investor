@@ -8,7 +8,7 @@ External Providers → Provider Adapters → Canonical Models
 
 - Adapters never call Broker or LLM.
 - Default: `ENABLE_EXTERNAL_DATA=false` → fixture providers only.
-- Real adapters: Alpaca market quotes (needs keys + flags), SEC EDGAR filings (needs `ENABLE_SEC_COLLECTION`).
+- Real adapters: IBKR market quotes (needs IB Gateway and the market-data flags), SEC EDGAR filings (needs `ENABLE_SEC_COLLECTION`).
 - Legacy `CollectionBundle` is still produced for `AgentPipeline` compatibility.
 
 See also: `provider_adapters.md`, `canonical_models.md`, `data_quality.md`.

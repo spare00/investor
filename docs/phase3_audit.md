@@ -29,7 +29,7 @@ Command: `pytest tests/ -q` → **122 passed**
 ## Missing (for Phase 4)
 
 - Real provider adapter layer with circuit breaker / provenance / conflict models
-- Wired Alpaca market data (scaffold returns empty / falls back to stub)
+- Market data beyond the stub (now IBKR quotes when external data is enabled; otherwise the fixture)
 - SEC / news / macro beyond stubs
 - Context builders with untrusted-data wrappers
 - High-importance market event generation tied to intraday triggers
@@ -48,7 +48,7 @@ Command: `pytest tests/ -q` → **122 passed**
 ## Compatibility Concerns
 
 - Agents consume `CollectionBundle` / normalized DTOs; Phase 4 must keep that contract or adapt via Context Builders
-- Existing Alpaca/dashboard code remains; must stay outside scheduler + daily SM auto path
+- Dashboard code remains; broker submit must stay outside the scheduler and the daily state machine until paper automation is unlocked
 
 ## Tests Executed
 

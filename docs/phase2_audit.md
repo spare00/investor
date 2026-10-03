@@ -35,7 +35,7 @@ Command: `pytest tests/unit -q` → **93 passed**
 ## Compatibility Concerns
 
 - Dual phase numbering in README (legacy 1–7 vs roadmap 2–7) — documented, not blocking
-- Existing Alpaca/dashboard code stays; must not be driven by Phase 3 scheduler
+- Dashboard stays; the broker adapter must not be driven by the Phase 3 scheduler
 
 ## Tests Executed
 

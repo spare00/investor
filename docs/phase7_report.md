@@ -56,7 +56,7 @@ Migration `0006_phase7_performance_ops`. Packages: `app/performance`, `app/alert
 
 ## 37–38. Tests & Safety
 
-182 passed / 2 skipped (Alpaca smoke opt-in). Live trading **disabled**; automated execution **disabled** by default.
+182 passed / 2 skipped. Live trading **disabled**; automated execution **disabled** by default. Paper broker is IBKR.
 
 ## Known Limitations
 

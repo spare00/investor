@@ -16,7 +16,7 @@
 ## Explicitly not redone (ahead / deferred)
 
 - Live news/market providers (Phase 4)
-- Alpaca paper execution already present — left intact; analysis path does not call it (Phase 5+)
+- Paper execution is a later broker adapter (now IBKR); the analysis path does not call it (Phase 5+)
 - Full scheduler state machine / DST calendar (Phase 3)
 - Dashboard polish / performance analytics (Phase 6)
 

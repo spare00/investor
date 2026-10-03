@@ -1,19 +1,19 @@
 # Phase 5 Audit (pre Phase 6)
 
 Date: 2026-08-04  
-Command: `pytest tests/ -q` → **148 passed, 1 skipped** (Alpaca smoke opt-in)
+Command: `pytest tests/ -q` → **148 passed, 1 skipped**
 
 ## Implemented Correctly
 
 - Broker interface (`BrokerClient` Protocol) isolated; Agents never import brokers
 - MockBroker supports submit/partial/fill/cancel/replace/timeout/failure/idempotency
-- Alpaca adapter refuses non-paper URL and `ENABLE_LIVE_TRADING`
-- Factory hard-blocks live environment before constructing Alpaca
+- IBKR adapter refuses a live environment and `ENABLE_LIVE_TRADING`
+- Factory hard-blocks a live environment before constructing IBKR
 - CIO Decision → Order Intent separation via `ExecutionService`
 - Manual approval path blocks submit until `APPROVED`
 - `client_order_id` / `idempotency_key` unique in DB; ExecutionService timeout → UNKNOWN + client-id lookup
 - Emergency Stop blocks new orders and cancels opens (positions not closed by default)
-- Credentials are `SecretStr`; Alpaca errors redacted; not passed into Agent Context
+- Credentials are `SecretStr`; broker errors are redacted; they are not passed into Agent Context
 - Defaults: mock provider, orders/connection/automation off, manual approval on, live false
 
 ## Partially Implemented

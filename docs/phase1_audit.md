@@ -11,7 +11,7 @@ Repo: `investor/` (not `stocktrader`)
 - Deterministic Risk Engine (`app/risk/`) with unit tests
 - Bottom-up pipeline: MI → Macro∥Quant → Risk → Devil → CIO (`app/agents/pipeline.py`)
 - LLM adapter: OpenAI-compatible client + stub/fake client (`app/services/llm.py`)
-- Broker interface + Alpaca paper path (ahead of original Phase 1/2 scope; kept)
+- Broker interface (ahead of original Phase 1/2 scope; now Mock and IBKR paper)
 - No `stocktrader` dependency
 - Secrets: `.env` gitignored; `.env.example` placeholders only
 - Unit tests: 78 passing at audit time (`pytest tests/unit`)
@@ -57,4 +57,4 @@ pytest tests/unit -q
 4. Extend schemas with optional Phase 2 fields / `INSUFFICIENT_DATA` without breaking pipeline
 5. Cap LLM validation repair to one retry then safe NO_TRADE / fail-closed
 6. Add Phase 2 docs and prompt tests
-7. Keep Alpaca/dashboard/scheduler as **ahead-of-roadmap** code; do not rip out
+7. Keep the dashboard and scheduler as **ahead-of-roadmap** code; broker execution stays Mock or IBKR paper

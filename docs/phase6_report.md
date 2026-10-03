@@ -12,7 +12,7 @@ Phase 6 adds event bus, position lifecycle/monitor, dynamic risk, stops/TP, clos
 pytest tests/ -q
 ```
 
-Alpaca intraday smoke: **not run** (`RUN_ALPACA_PAPER_INTRADAY_SMOKE_TESTS` unset).
+Paper broker is IBKR.
 
 ## Known limitations
 

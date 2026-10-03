@@ -18,7 +18,7 @@ not the default order approvers.
 ```
 6-Agent pipeline → CIO Decision → ExecutionValidator + Risk Engine
         → Order Intents
-        → Paper broker submit (Mock / Alpaca Paper)
+        → Paper broker submit (Mock / IBKR Paper)
 ```
 
 Unlock paper automation:

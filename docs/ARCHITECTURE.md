@@ -41,7 +41,7 @@ CIO output is advisory until Risk Engine + Execution Validator approve.
 
 ## Phase 1 out of scope
 
-- Real Alpaca order placement
+- Real broker order placement
 - Full SQLAlchemy table migrations for all domain entities
 - Agent LLM calls
 - Scheduler jobs

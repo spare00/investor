@@ -6,7 +6,7 @@ Command: `pytest tests/ -q` → **135 passed**
 ## Implemented Correctly
 
 - Provider adapters isolated from Agents (`app/providers/`); agents consume Context Builders / `CollectionBundle`
-- Fixture providers return Canonical models; Alpaca quotes + SEC EDGAR opt-in behind flags
+- Fixture providers return Canonical models; IBKR quotes and SEC EDGAR are opt-in behind flags
 - Market/news/SEC/economic canonical models with provenance
 - News dedup + clustering; untrusted text wrappers for prompt-injection defense
 - Premarket analysis uses `DataCollectionPipeline` → legacy bundle → 6-agent chain
@@ -19,7 +19,7 @@ Command: `pytest tests/ -q` → **135 passed**
 - Quality/freshness stored on canonical records and in collection `quality_summary`; Context includes quality dicts but Agents do not yet weight every field in prompts
 - Material conflicts mostly `SINGLE_SOURCE_ONLY` in fixture mode (secondary providers rarely co-called)
 - Collection run persistence lean (API in-memory cache + migration tables; not all writes go through DB on every collect)
-- Alpaca market adapter covers latest quotes; full OHLCV history limited
+- IBKR market adapter covers latest quotes; full OHLCV history is limited
 
 ## Missing (for Phase 5)
 
@@ -31,7 +31,7 @@ Command: `pytest tests/ -q` → **135 passed**
 
 ## Incorrect or Risky
 
-- `SimulatedBroker` lives inside `alpaca.py` and is selected implicitly when keys missing — foot-gun outside tests
+- Broker selection is explicit: `mock`, or `ibkr` when the connection flag is on. A missing provider does not silently become a live broker
 - Dual orchestrators: legacy `WorkflowService` can submit when `enable_broker_orders=true`; daily SM still never submits (by design) — confusing for operators
 - `enable_automated_execution` logged but not distinctly enforced vs manual approval
 
@@ -42,7 +42,7 @@ Command: `pytest tests/ -q` → **135 passed**
 
 ## Security Concerns
 
-- Ensure Alpaca credentials never enter Agent Context (currently not passed — keep)
+- Broker credentials must stay out of Agent Context (they are not passed — keep it that way)
 - Live URL must be refused when `ENABLE_LIVE_TRADING=false` regardless of token mistakes
 
 ## Compatibility Concerns

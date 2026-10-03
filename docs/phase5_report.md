@@ -8,11 +8,11 @@ See `docs/phase4_audit.md`. Core data layer verified; fixture mode works without
 
 ## 2. Corrections Applied Before Phase 5
 
-Explicit `BROKER_PROVIDER=mock` default; OrderManager gated; live URL refused on Alpaca adapter init.
+Explicit `BROKER_PROVIDER=mock` default; OrderManager gated; the factory refuses a live environment before constructing IBKR.
 
 ## 3. Broker Architecture Decisions
 
-Factory + Mock/Alpaca adapters; shared `BrokerError`; REST/httpx for Alpaca; ExecutionService owns intent path.
+Factory plus Mock and IBKR adapters; shared `BrokerError`; IBKR uses the TWS API; ExecutionService owns the intent path.
 
 ## 4–21. Implementation map
 
@@ -20,7 +20,7 @@ Factory + Mock/Alpaca adapters; shared `BrokerError`; REST/httpx for Alpaca; Exe
 |------|----------|
 | Canonical models / SM | `app/brokers/models.py` |
 | MockBroker | `app/brokers/mock.py` |
-| Alpaca Paper | `app/brokers/alpaca.py` |
+| IBKR Paper | `app/brokers/ibkr.py` |
 | Factory / live block | `app/brokers/factory.py` |
 | Sizing | `app/execution/sizing.py` |
 | Pretrade | `app/execution/pretrade.py` |
@@ -53,11 +53,9 @@ pytest tests/ -q
 # 148 passed, 1 skipped
 ```
 
-Skipped: `test_alpaca_paper_smoke_opt_in` (requires `RUN_ALPACA_PAPER_SMOKE_TESTS=true`).
+## 29. Paper broker
 
-## 29. Alpaca Paper Smoke Test Status
-
-**Not executed.** Opt-in flag was not set; no paper credentials were used. No Alpaca paper orders were submitted.
+Paper orders use `app/brokers/ibkr.py` when `BROKER_PROVIDER=ibkr`. Otherwise the factory uses Mock.
 
 ## 30. Broker Order Safety Verification
 
