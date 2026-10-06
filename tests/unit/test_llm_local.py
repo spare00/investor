@@ -77,6 +77,42 @@ def test_local_does_not_block_when_cloud_budget_exhausted(tmp_path) -> None:
     payload = snap.to_dict()
     assert payload["display_pct"] == 0
     assert payload["month_aud_estimate"] == 0
+    assert snap.calls == 0
+    assert snap.total_tokens == 0
+    assert not (tmp_path / "budget.json").exists()
+
+
+def test_local_ledger_does_not_block_a_later_cloud_runtime(tmp_path) -> None:
+    path = tmp_path / "budget.json"
+    local = Settings(
+        llm_runtime="local",
+        llm_budget_enforce=True,
+        llm_monthly_aud_budget=20.0,
+        llm_daily_token_budget=0,
+        llm_daily_call_budget=0,
+        llm_budget_state_path=str(path),
+        llm_api_key=None,
+    )
+    record_llm_usage(prompt_tokens=1_500_000, completion_tokens=120_000, settings=local)
+    record_llm_usage(prompt_tokens=1_500_000, completion_tokens=120_000, settings=local)
+    reset_llm_budget_for_tests()
+    cloud = Settings(
+        llm_runtime="cloud",
+        llm_base_url="https://api.openai.com/v1",
+        llm_model="gpt-5.4-nano",
+        llm_api_key=SecretStr("sk-test"),
+        llm_budget_enforce=True,
+        llm_monthly_aud_budget=20.0,
+        llm_daily_token_budget=0,
+        llm_daily_call_budget=0,
+        llm_budget_state_path=str(path),
+    )
+    snap = snapshot_llm_budget(cloud)
+    assert snap.calls == 0
+    assert snap.total_tokens == 0
+    assert snap.month_calls == 0
+    assert snap.blocked is False
+    assert_llm_budget_allows_call(cloud)
 
 
 def test_local_job_timeout_and_fake_llm_flag() -> None:

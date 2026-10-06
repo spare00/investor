@@ -7,6 +7,8 @@ prompt/completion tokens using configured per-1M USD rates and AUD/USD.
 
 When ``llm_daily_token_budget`` / ``llm_daily_call_budget`` are 0, daily caps are
 sliced from ``llm_monthly_aud_budget / trading_days`` using model $/token rates.
+Local and embedded calls are not written to this ledger. Only billable cloud
+responses increment the day and month counters.
 """
 
 from __future__ import annotations
@@ -462,10 +464,17 @@ def record_llm_usage(
     completion_tokens: int = 0,
     settings: Settings | None = None,
 ) -> LLMBudgetSnapshot:
-    """Record usage from a completed API response and emit soft-limit warnings."""
+    """Record usage from a completed cloud API response and emit soft-limit warnings.
+
+    Local and embedded runtimes return the current snapshot without touching
+    the ledger. Those calls are not OpenAI spend, and mixing them in would
+    block the first cloud call after a switch.
+    """
     global _prompt_tokens, _completion_tokens, _calls, _warned_soft
     global _month_prompt_tokens, _month_completion_tokens, _month_calls, _month_warned_soft
     cfg = settings or get_settings()
+    if cfg.llm_is_local():
+        return snapshot_llm_budget(cfg)
     with _lock:
         day, month = _roll_period(cfg)
         add_p = max(0, int(prompt_tokens))
