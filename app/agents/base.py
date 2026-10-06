@@ -97,16 +97,19 @@ class BaseAgent[InputT: BaseModel, OutputT: BaseModel](ABC):
             return result
         except Exception as exc:  # noqa: BLE001 — isolate failures at agent boundary
             logger.exception("agent_failed", agent=self.name.value, run_id=str(run_id))
-            fallback = self.fallback_output(payload, reason=str(exc))
-            if fallback is not None:
-                logger.warning(
-                    "agent_fallback_used",
-                    agent=self.name.value,
-                    run_id=str(run_id),
-                    reason=str(exc),
-                )
-                mark_agent_finished(self.name.value, outcome="fallback", error=str(exc))
-                return fallback
+            # Local only. The compact path is built so 14B rarely needs this.
+            # Cloud must not trade on the Python rules brain after a failed call.
+            if self.settings.llm_is_local():
+                fallback = self.fallback_output(payload, reason=str(exc))
+                if fallback is not None:
+                    logger.warning(
+                        "agent_fallback_used",
+                        agent=self.name.value,
+                        run_id=str(run_id),
+                        reason=str(exc),
+                    )
+                    mark_agent_finished(self.name.value, outcome="fallback", error=str(exc))
+                    return fallback
             mark_agent_finished(self.name.value, outcome="failed", error=str(exc))
             raise AgentExecutionError(f"{self.name.value} failed: {exc}") from exc
 

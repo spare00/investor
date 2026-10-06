@@ -36,6 +36,7 @@ Pretrade → (optional manual brake) → ExecutionService / paper broker
 Live trading remains hard-blocked. Automated paper submit stays off until
 `ENABLE_BROKER_ORDERS` + `ENABLE_AUTOMATED_EXECUTION` are explicitly set.
 
-Intraday evals share the scheduler 8-minute job cap. `LLM_RUNTIME=local|cloud` only
-changes where chat runs (see `docs/agent_architecture.md`). Watch eval wall time vs
-that cap as the watchlist grows (`committee_watch` on `/dashboard/summary`).
+Intraday evals use the runtime job cap: 8 minutes local, 15 minutes cloud.
+`LLM_RUNTIME` also changes which roles call the model and how large the brief is
+(see `docs/agent_architecture.md`). Watch eval wall time vs that cap as the
+watchlist grows (`committee_watch` on `/dashboard/summary`).

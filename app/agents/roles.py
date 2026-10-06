@@ -1,7 +1,14 @@
 """Per-agent split: Python owns facts, LLM owns a single judgment.
 
-Weekday committee must finish inside the 8-minute job cap.
-Weekend Universe Manager is a separate job — it may spend minutes and one repair round.
+Local and cloud are different budgets, switched only by ``llm_is_local()``.
+
+Local ($0, one GPU): the tape in the brief is uncapped — tokens are free.
+Answers stay short, Quant and Risk skip chat, weekday calls are one shot, and
+the job cap is 8 minutes so 14B finishes instead of falling back.
+
+Cloud (billable): every judgment role calls the model. Decision roles get a
+longer timeout and the full output cap so reasoning plus JSON both fit. A
+failed cloud call is not replaced by the local rules brain.
 """
 
 from __future__ import annotations
@@ -42,17 +49,28 @@ class AgentRole:
     def num_ctx_for(self, settings: Settings) -> int:
         if not settings.llm_is_local():
             return 0
-        return min(self.num_ctx, max(1, int(settings.llm_local_num_ctx)))
+        # One window for every local role. Do not re-apply the old per-role
+        # 4k/8k thrift cap — local context is not billed.
+        return max(1, int(settings.llm_local_num_ctx))
 
     def max_tokens_for(self, settings: Settings) -> int:
         if settings.llm_is_local():
+            # Short answers. Decode time is what blows the 8-minute cap.
             cap = max(64, int(settings.llm_local_max_tokens))
             return min(self.max_tokens, cap)
-        return settings.llm_max_tokens
+        # Cloud output includes reasoning tokens. Decision slots keep the
+        # full cap; fast slots stay smaller so soft roles do not spend it.
+        cap = max(256, int(settings.llm_max_tokens))
+        if self.model_slot == "decision":
+            return cap
+        return min(cap, 1024)
 
     def timeout_seconds_for(self, settings: Settings) -> int:
         if not settings.llm_is_local():
-            return max(1, int(settings.llm_timeout_seconds))
+            base = max(1, int(settings.llm_timeout_seconds))
+            if self.model_slot == "decision":
+                return max(base, int(settings.llm_cloud_decision_timeout_seconds))
+            return base
         if self.allow_local_repair:
             return max(1, int(settings.llm_local_universe_timeout_seconds))
         return max(1, int(settings.llm_local_timeout_seconds))

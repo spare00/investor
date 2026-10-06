@@ -48,7 +48,7 @@ def test_local_cio_uses_8k_decision_slot_capped_by_settings() -> None:
     assert cio.model_name(settings) == "qwen2.5:14b-ctx"
     assert mi.model_name(settings) == "qwen2.5:7b"
     assert cio.num_ctx_for(settings) == 8192
-    assert mi.num_ctx_for(settings) == 4096
+    assert mi.num_ctx_for(settings) == 8192
     assert cio.max_tokens_for(settings) == 700
     assert mi.max_tokens_for(settings) == 500
 
@@ -213,7 +213,57 @@ async def test_local_pipeline_quant_and_risk_are_python() -> None:
     assert result.risk.trace.model_name == "risk-engine"
     # MI + Macro + Devil + CIO only (Quant/Risk skipped). Local: one attempt each.
     assert len(stub.calls) == 4
-    assert stub.calls[0]["num_ctx"] == "4096"
-    assert stub.calls[-1]["num_ctx"] == "8192"  # CIO decision slot
+    window = str(settings.llm_local_num_ctx)
+    assert stub.calls[0]["num_ctx"] == window
+    assert stub.calls[-1]["num_ctx"] == window
     assert stub.calls[-1]["max_tokens"] == "700"
     assert stub.calls[-1]["timeout_seconds"] == "180"
+
+
+def test_cloud_decision_roles_keep_a_quality_budget() -> None:
+    cloud = Settings(
+        llm_runtime="cloud",
+        llm_base_url="https://api.openai.com/v1",
+        llm_model="gpt-5.4-nano",
+        llm_api_key=None,
+        llm_max_tokens=4096,
+        llm_timeout_seconds=60,
+        llm_cloud_decision_timeout_seconds=180,
+    )
+    quant = role_for(AgentName.QUANT_STRATEGIST)
+    cio = role_for(AgentName.CIO)
+    mi = role_for(AgentName.MARKET_INTELLIGENCE)
+    assert quant.skip_llm(cloud) is False
+    assert quant.max_tokens_for(cloud) == 4096
+    assert cio.max_tokens_for(cloud) == 4096
+    assert mi.max_tokens_for(cloud) == 1024
+    assert quant.timeout_seconds_for(cloud) == 180
+    assert mi.timeout_seconds_for(cloud) == 60
+    assert quant.repair_attempts_for(cloud) == 2
+    assert cloud.effective_job_action_timeout_seconds() == 900
+
+
+@pytest.mark.asyncio
+async def test_cloud_llm_failure_does_not_use_local_rules() -> None:
+    from app.agents.base import AgentExecutionError
+    from app.agents.market_intelligence import MarketIntelligenceAgent
+    from app.schemas.market_intelligence import MarketIntelligenceInput
+    from app.services.llm import LLMError
+
+    class Boom(StubLLMClient):
+        async def complete_json(self, **kwargs):  # type: ignore[no-untyped-def]
+            raise LLMError("down")
+
+    payload = MarketIntelligenceInput(as_of=NOW)
+    local = Settings(llm_runtime="local", llm_api_key=None)
+    local_out = await MarketIntelligenceAgent(llm=Boom(), settings=local).run(payload)
+    assert local_out.trace.model_name == "fallback-rules"
+
+    cloud = Settings(
+        llm_runtime="cloud",
+        llm_base_url="https://api.openai.com/v1",
+        llm_model="gpt-5.4-nano",
+        llm_api_key=None,
+    )
+    with pytest.raises(AgentExecutionError):
+        await MarketIntelligenceAgent(llm=Boom(), settings=cloud).run(payload)

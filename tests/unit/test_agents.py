@@ -16,6 +16,7 @@ from app.agents import (
     QuantStrategistAgent,
     RiskManagerAgent,
 )
+from app.core.config import Settings
 from app.schemas.cio import CIOInput
 from app.schemas.common import RiskVerdict
 from app.schemas.devils_advocate import DevilsAdvocateInput, ProposedThesis
@@ -28,6 +29,14 @@ from app.services.llm import StubLLMClient
 from app.services.normalize import NormalizedMacroSnapshot, NormalizedMarketSnapshot, NormalizedNews
 
 NOW = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _offline_local_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rules fallbacks belong to the local runtime. Cloud raises instead."""
+    local = Settings(llm_runtime="local", llm_api_key=None)
+    monkeypatch.setattr("app.agents.base.get_settings", lambda: local)
+    monkeypatch.setattr("app.agents.pipeline.get_settings", lambda: local)
 
 
 @pytest.fixture

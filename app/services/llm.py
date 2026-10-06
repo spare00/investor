@@ -22,6 +22,22 @@ from app.services.llm_budget import (
 logger = get_logger(__name__)
 
 
+_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh"})
+
+
+def _reasoning_chat_model(model: str) -> bool:
+    """GPT-5 and o-series chat models reject ``max_tokens``."""
+    name = (model or "").strip().lower()
+    return name.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _reasoning_effort(settings: Settings) -> str:
+    raw = (settings.llm_reasoning_effort or "low").strip().lower()
+    if raw in _REASONING_EFFORTS:
+        return raw
+    return "low"
+
+
 def _retry_llm_call(exc: BaseException) -> bool:
     """Retry transport/HTTP failures. Do not retry full timeouts — they already
     burned llm_*_timeout_seconds and a local 14B call can be ~3 minutes."""
@@ -144,15 +160,20 @@ class OpenAICompatibleClient:
         ctx = (
             num_ctx if num_ctx is not None else (cfg.llm_local_num_ctx if cfg.llm_is_local() else 0)
         )
+        model_name = model or cfg.llm_model
         payload: dict[str, Any] = {
-            "model": model or cfg.llm_model,
-            "temperature": cfg.llm_temperature if temperature is None else temperature,
-            "max_tokens": tok,
+            "model": model_name,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         }
+        if (not cfg.llm_is_local()) and _reasoning_chat_model(model_name):
+            payload["max_completion_tokens"] = tok
+            payload["reasoning_effort"] = _reasoning_effort(cfg)
+        else:
+            payload["temperature"] = cfg.llm_temperature if temperature is None else temperature
+            payload["max_tokens"] = tok
         if cfg.llm_json_object_response:
             payload["response_format"] = {"type": "json_object"}
         if cfg.llm_is_local() and ctx > 0:

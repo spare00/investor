@@ -165,6 +165,9 @@ async def health() -> dict[str, Any]:
         "llm_runtime": settings.llm_runtime,
         "llm_is_local": settings.llm_is_local(),
         "llm_model": settings.llm_model,
+        "llm_reasoning_effort": (
+            None if settings.llm_is_local() else settings.llm_reasoning_effort
+        ),
         "llm_local_num_ctx": settings.llm_local_num_ctx,
         "llm_local_max_tokens": settings.llm_local_max_tokens,
         "llm_local_fast_model": settings.llm_local_fast_model or None,

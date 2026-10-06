@@ -128,7 +128,7 @@ async def recent_outcome_stats(
     }
 
 
-def committee_lessons(stats: dict[str, Any], *, limit: int = 8) -> list[dict[str, Any]]:
+def committee_lessons(stats: dict[str, Any], *, limit: int | None = 8) -> list[dict[str, Any]]:
     """Compact closed-trade rows for CIO/Quant briefs (not a live risk override)."""
     rows: list[dict[str, Any]] = []
     for item in stats.get("by_symbol") or []:
@@ -152,7 +152,9 @@ def committee_lessons(stats: dict[str, Any], *, limit: int = 8) -> list[dict[str
             }
         )
     rows.sort(key=lambda r: abs(float(r.get("pnl") or 0.0)), reverse=True)
-    return rows[: max(1, min(int(limit or 8), 12))]
+    if limit is None:
+        return rows
+    return rows[: max(1, int(limit))]
 
 
 async def symbol_close_pnls(

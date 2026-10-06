@@ -65,8 +65,13 @@ async def test_agent_records_prompt_hash_in_trace() -> None:
 
     from app.schemas.market_intelligence import MarketIntelligenceInput
 
-    # Empty stub forces validation failure → fallback; still exercises prompt load path.
-    agent = MarketIntelligenceAgent(llm=FakeLLMProvider({}))
+    # Empty stub forces validation failure → local rules fallback.
+    from app.core.config import Settings
+
+    agent = MarketIntelligenceAgent(
+        llm=FakeLLMProvider({}),
+        settings=Settings(llm_runtime="local", llm_api_key=None),
+    )
     loaded = agent.load_prompt()
     assert loaded.sha256
     out = await agent.run(

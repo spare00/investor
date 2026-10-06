@@ -154,9 +154,9 @@ LLM_BUDGET_EXCEEDED = Counter(
 
 SCHEDULER_JOB_DURATION = Histogram(
     "investor_scheduler_job_duration_seconds",
-    "Scheduler job wall time (intraday evals can approach the 8-minute cap)",
+    "Scheduler job wall time (local cap 8 min, cloud cap 15 min)",
     ["kind"],
-    buckets=(30, 60, 120, 180, 240, 300, 360, 420, 480, 600),
+    buckets=(30, 60, 120, 180, 240, 300, 360, 420, 480, 600, 900),
 )
 SCHEDULER_JOB_TIMEOUTS = Counter(
     "investor_scheduler_job_timeouts_total",

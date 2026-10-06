@@ -19,11 +19,8 @@ logger = get_logger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 _job_log: list[dict[str, Any]] = []
 
-# Bound a single due-job action so a wedged IBKR/LLM call cannot pin
-# daily_workflow_dispatch forever (APScheduler max_instances=1).
-# Local and cloud share the 8-minute cap.
-_JOB_ACTION_TIMEOUT_SECONDS = 480
-_CATCH_UP_TIMEOUT_SECONDS = 480
+# Due-job wait_for uses Settings.effective_job_action_timeout_seconds():
+# 8 minutes local, 15 minutes cloud. Broker recon stays short.
 _BROKER_RECON_TIMEOUT_SECONDS = 120
 
 

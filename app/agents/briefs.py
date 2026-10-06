@@ -1,12 +1,15 @@
-"""Compact, decision-first user briefs for local (and cloud) LLM agents.
+"""Decision-first user briefs. Size follows the LLM runtime.
 
-Full Pydantic dumps confuse small models and blow the context window.
-Each brief is: one question, objective numbers, a JSON answer contract.
+Local tokens are free, so the brief keeps the tape (names, events, session
+closes). Answers stay short via the output cap so 14B still finishes.
+Cloud clips the same brief because those tokens are billed.
+Both stay QUESTION / DATA / ANSWER — never a full Pydantic dump.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -32,7 +35,65 @@ def _compact(data: Any) -> str:
     return json.dumps(data, default=str, separators=(",", ":"), ensure_ascii=True)
 
 
-def _clip_obj(value: Any, *, n: int = 6) -> Any:
+@dataclass(frozen=True, slots=True)
+class BriefBudget:
+    """How much tape a brief may include. None means the whole list.
+
+    Local is uncapped. Cloud integers are the billable clip.
+    """
+
+    local: bool
+    news: int | None
+    symbols: int | None
+    index_bars: int | None
+    events: int | None
+    views: int | None
+    theses: int | None
+    lessons: int | None
+    watch: int | None
+    positions: int | None
+    session_bars: int | None
+
+
+_LOCAL_BUDGET = BriefBudget(
+    local=True,
+    news=None,
+    symbols=None,
+    index_bars=None,
+    events=None,
+    views=None,
+    theses=None,
+    lessons=None,
+    watch=None,
+    positions=None,
+    session_bars=None,
+)
+_CLOUD_BUDGET = BriefBudget(
+    local=False,
+    news=24,
+    symbols=40,
+    index_bars=12,
+    events=16,
+    views=24,
+    theses=12,
+    lessons=16,
+    watch=40,
+    positions=24,
+    session_bars=8,
+)
+
+
+def brief_budget() -> BriefBudget:
+    from app.core.config import get_settings
+
+    try:
+        local = get_settings().llm_is_local()
+    except Exception:  # noqa: BLE001 — a missing config must not blow the context window
+        local = True
+    return _LOCAL_BUDGET if local else _CLOUD_BUDGET
+
+
+def _clip_obj(value: Any, *, n: int | None = 6) -> Any:
     if isinstance(value, dict):
         return dict(list(value.items())[:n])
     if isinstance(value, list):
@@ -51,7 +112,9 @@ def _drop_empty(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _watch_by_book(rows: list[dict] | None, *, limit: int = 16) -> dict[str, list[str]]:
+def _watch_by_book(
+    rows: list[dict] | None, *, limit: int | None = 16, per_book: int | None = 8
+) -> dict[str, list[str]]:
     grouped: dict[str, list[str]] = {"scalp": [], "day": [], "short": []}
     for raw in (rows or [])[:limit]:
         if not isinstance(raw, dict):
@@ -60,12 +123,15 @@ def _watch_by_book(rows: list[dict] | None, *, limit: int = 16) -> dict[str, lis
         if not sym:
             continue
         hz = str(raw.get("horizon") or "").strip().lower()
-        if hz in grouped and len(grouped[hz]) < 8:
-            grouped[hz].append(sym)
+        if hz not in grouped:
+            continue
+        if per_book is not None and len(grouped[hz]) >= per_book:
+            continue
+        grouped[hz].append(sym)
     return {k: v for k, v in grouped.items() if v}
 
 
-def _watch_rows(rows: list[dict] | None, *, limit: int = 16) -> list[dict[str, Any]]:
+def _watch_rows(rows: list[dict] | None, *, limit: int | None = 16) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for raw in (rows or [])[:limit]:
         if not isinstance(raw, dict):
@@ -110,6 +176,16 @@ def _bar_row(bar: BarSnapshot, watchlist: list[dict] | None = None) -> dict[str,
     hit = detect_stealth_accumulation(bar.session_history, avg_volume=bar.avg_volume_20d)
     if hit.detected and horizon_for_symbol(bar.symbol, watchlist) == "short":
         row["stealth"] = hit.brief()
+    keep = brief_budget().session_bars
+    if bar.session_history and keep != 0:
+        history = bar.session_history if keep is None else bar.session_history[-int(keep) :]
+        path = [
+            _drop_empty({"d": sess.session_date, "c": sess.close, "v": sess.volume})
+            for sess in history
+        ]
+        path = [item for item in path if item]
+        if path:
+            row["path"] = path
     return row
 
 
@@ -117,7 +193,7 @@ def _mi_summary(mi: MarketIntelligenceOutput | None) -> dict[str, Any]:
     if mi is None:
         return {}
     events = []
-    for ev in (mi.market_events or [])[:6]:
+    for ev in (mi.market_events or [])[: brief_budget().events]:
         events.append(
             _drop_empty(
                 {
@@ -147,7 +223,7 @@ def _quant_summary(quant: QuantStrategistOutput | None) -> dict[str, Any]:
     if quant is None:
         return {}
     views = []
-    for view in (quant.symbol_views or [])[:10]:
+    for view in (quant.symbol_views or [])[: brief_budget().views]:
         ez = view.entry_zone
         views.append(
             _drop_empty(
@@ -189,16 +265,18 @@ def _risk_summary(risk: RiskManagerOutput | None) -> dict[str, Any]:
 
 
 def _ask(question: str, data: Any, answer: str) -> str:
-    return (
-        f"QUESTION: {question}\n"
-        f"DATA: {_compact(data)}\n"
-        f"ANSWER: {answer} JSON only. Short strings. Decide now."
+    pace = (
+        "Short strings. Decide now."
+        if brief_budget().local
+        else "Use only DATA. Put the judgment in the schema fields."
     )
+    return f"QUESTION: {question}\nDATA: {_compact(data)}\nANSWER: {answer} JSON only. {pace}"
 
 
 def market_intelligence_brief(payload: MarketIntelligenceInput) -> str:
+    budget = brief_budget()
     news = []
-    for item in payload.news_items[:12]:
+    for item in payload.news_items[: budget.news]:
         news.append(
             _drop_empty(
                 {
@@ -211,9 +289,9 @@ def market_intelligence_brief(payload: MarketIntelligenceInput) -> str:
         )
     data = {
         "as_of": _iso(payload.as_of),
-        "held": [s.upper() for s in payload.portfolio_symbols[:16]],
-        "allow": [s.upper() for s in payload.allowlist[:16]],
-        "watch": _watch_rows(payload.watchlist),
+        "held": [s.upper() for s in payload.portfolio_symbols[: budget.watch]],
+        "allow": [s.upper() for s in payload.allowlist[: budget.watch]],
+        "watch": _watch_rows(payload.watchlist, limit=budget.watch),
         "news": news,
         "n_news": len(payload.news_items),
         "earnings_n": len(payload.earnings_summaries or []),
@@ -242,8 +320,10 @@ def macro_brief(payload: MacroStrategistInput) -> str:
             "wti": m.wti_oil,
             "gold": m.gold,
             "hy_bps": m.hy_credit_spread_bps,
-            "geo": (payload.geopolitical_events or [])[:4],
-            "themes": _clip_obj(payload.market_intelligence_summary),
+            "geo": (payload.geopolitical_events or [])[: brief_budget().events],
+            "themes": _clip_obj(
+                payload.market_intelligence_summary, n=brief_budget().events
+            ),
         }
     )
     return _ask(
@@ -254,21 +334,26 @@ def macro_brief(payload: MacroStrategistInput) -> str:
 
 
 def quant_brief(payload: QuantStrategistInput) -> str:
+    budget = brief_budget()
+    per_book = None if budget.local else 16
     data = {
         "as_of": _iso(payload.as_of),
         "vix": payload.vix,
         "ad": payload.advance_decline,
-        "index": [_bar_row(b, payload.watchlist) for b in payload.index_bars[:6]],
-        "symbols": [
-            _bar_row(b, payload.watchlist) for b in (payload.symbol_bars or payload.index_bars)[:16]
+        "index": [
+            _bar_row(b, payload.watchlist) for b in payload.index_bars[: budget.index_bars]
         ],
-        "watch": _watch_rows(payload.watchlist),
-        "books": _watch_by_book(payload.watchlist),
+        "symbols": [
+            _bar_row(b, payload.watchlist)
+            for b in (payload.symbol_bars or payload.index_bars)[: budget.symbols]
+        ],
+        "watch": _watch_rows(payload.watchlist, limit=budget.watch),
+        "books": _watch_by_book(payload.watchlist, limit=budget.watch, per_book=per_book),
         "playbooks": playbook_cards(),
-        "themes": _clip_obj(payload.market_intelligence_summary),
+        "themes": _clip_obj(payload.market_intelligence_summary, n=budget.events),
     }
     if payload.recent_lessons:
-        data["lessons"] = payload.recent_lessons[:8]
+        data["lessons"] = payload.recent_lessons[: budget.lessons]
     return _ask(
         "From these bars only: trend AND location. Dip in strength / bounce in "
         "weakness. Skip falling knives. If stealth is listed, follow the multi-day "
@@ -281,6 +366,7 @@ def quant_brief(payload: QuantStrategistInput) -> str:
 
 
 def risk_brief(payload: RiskManagerInput, engine_preview: dict[str, Any] | None = None) -> str:
+    budget = brief_budget()
     port = payload.portfolio
     pos = [
         _drop_empty(
@@ -292,7 +378,7 @@ def risk_brief(payload: RiskManagerInput, engine_preview: dict[str, Any] | None 
                 "venue": p.venue,
             }
         )
-        for p in (port.positions or [])[:12]
+        for p in (port.positions or [])[: budget.positions]
     ]
     trades = [
         _drop_empty(
@@ -304,7 +390,7 @@ def risk_brief(payload: RiskManagerInput, engine_preview: dict[str, Any] | None 
                 "stop": t.stop_loss,
             }
         )
-        for t in (payload.proposed_trades or [])[:8]
+        for t in (payload.proposed_trades or [])[: budget.theses]
     ]
     data = {
         "engine": engine_preview or {},
@@ -346,7 +432,7 @@ def devil_brief(payload: DevilsAdvocateInput) -> str:
                 "sum": t.summary[:160],
             }
         )
-        for t in (payload.proposed_theses or [])[:6]
+        for t in (payload.proposed_theses or [])[: brief_budget().theses]
     ]
     data = {
         "as_of": _iso(payload.as_of),
@@ -357,7 +443,7 @@ def devil_brief(payload: DevilsAdvocateInput) -> str:
         "macro_conf": payload.macro.confidence if payload.macro else None,
         "quant": _quant_summary(payload.quant),
         "risk": _risk_summary(payload.risk),
-        "watch": _watch_rows(payload.watchlist, limit=8),
+        "watch": _watch_rows(payload.watchlist, limit=brief_budget().watch),
     }
     return _ask(
         "Is the thesis already priced in? prefer_no_trade true only on "
@@ -368,6 +454,8 @@ def devil_brief(payload: DevilsAdvocateInput) -> str:
 
 
 def cio_brief(payload: CIOInput) -> str:
+    budget = brief_budget()
+    per_book = None if budget.local else 16
     positions = [
         _drop_empty(
             {
@@ -378,15 +466,15 @@ def cio_brief(payload: CIOInput) -> str:
                 "venue": p.venue,
             }
         )
-        for p in (payload.positions or [])[:16]
+        for p in (payload.positions or [])[: budget.positions]
     ]
     data = {
         "as_of": _iso(payload.as_of),
         "cash_pct": payload.portfolio_cash_pct,
         "positions": positions or ["FLAT"],
-        "allow": [s.upper() for s in payload.allowlist[:16]],
-        "watch": _watch_rows(payload.watchlist),
-        "books": _watch_by_book(payload.watchlist),
+        "allow": [s.upper() for s in payload.allowlist[: budget.watch]],
+        "watch": _watch_rows(payload.watchlist, limit=budget.watch),
+        "books": _watch_by_book(payload.watchlist, limit=budget.watch, per_book=per_book),
         "playbooks": playbook_cards(),
         "mi": _mi_summary(payload.market_intelligence),
         "macro": _drop_empty(
@@ -395,8 +483,8 @@ def cio_brief(payload: CIOInput) -> str:
                     payload.macro.market_regime, "value", payload.macro.market_regime
                 ),
                 "conf": payload.macro.confidence,
-                "bull": (payload.macro.bullish_factors or [])[:3],
-                "bear": (payload.macro.bearish_factors or [])[:3],
+                "bull": (payload.macro.bullish_factors or [])[: None if budget.local else 6],
+                "bear": (payload.macro.bearish_factors or [])[: None if budget.local else 6],
             }
         ),
         "quant": _quant_summary(payload.quant),
@@ -412,7 +500,7 @@ def cio_brief(payload: CIOInput) -> str:
         ),
     }
     if payload.recent_lessons:
-        data["lessons"] = payload.recent_lessons[:8]
+        data["lessons"] = payload.recent_lessons[: budget.lessons]
     return _ask(
         "Decide per book. 초단타/단타/단기 follow their own playbook. Ignore medium. "
         "Paper: excess cash above the 30% floor is opportunity cost only with an allowed setup. "
@@ -437,7 +525,7 @@ def _universe_outcomes(raw: object) -> dict[str, Any]:
         {
             "lookback": raw.get("lookback_days"),
             "by_horizon": raw.get("by_horizon") or {},
-            "lessons": committee_lessons(raw, limit=8),
+            "lessons": committee_lessons(raw, limit=brief_budget().lessons),
         }
     )
 
@@ -475,7 +563,7 @@ def universe_brief(payload: UniverseManagerInput) -> str:
         "watch_by_sector": watch_by_sector,
         "membership_counts": membership_counts,
         "regime": payload.market_regime,
-        "themes": (payload.themes or [])[:8],
+        "themes": (payload.themes or [])[: brief_budget().events],
         "limits": {"membership": payload.watchlist_limit, "working": payload.focus_limit},
         "outcomes": _universe_outcomes(payload.recent_outcomes),
     }

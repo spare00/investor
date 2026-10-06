@@ -23,12 +23,12 @@ The pipeline stays the same. Inference target is a switch, not a fork of the fir
 
 | `LLM_RUNTIME` | Chat backend | Spend cap | Typical operator use |
 |---------------|--------------|-----------|----------------------|
-| `cloud` (Settings default) | OpenAI-compatible URL (`LLM_BASE_URL` / `LLM_MODEL`, e.g. `gpt-4o-mini`) | Monthly AUD / daily token budget | Billable API, Macro∥Quant in parallel |
-| `local` | On-box Ollama (or any loopback OpenAI-compatible server) | Off — Python skip + 8-minute job cap instead | Paper firm on this Mac |
+| `cloud` (Settings default) | OpenAI-compatible URL (`LLM_BASE_URL` / `LLM_MODEL`) | Monthly AUD / daily token budget. Decision roles may reason (`LLM_REASONING_EFFORT`, default `low`) inside a 15-minute job | Billable API. Quality path: every judgment role calls the model |
+| `local` | On-box Ollama (or any loopback OpenAI-compatible server) | Off. Quant/Risk skip chat, compact briefs, 8-minute job cap | Paper firm on this Mac. Shaped so 14B finishes instead of falling back |
 
 `GET /health` reports `llm_runtime`, `llm_is_local`, `llm_model`, and per-agent `agent_roles`. When local, leftover `gpt-*` / `openai.com` values in `.env` are rewritten to the local model and loopback URL. Flip back with `LLM_RUNTIME=cloud` plus a real API key — agent code does not need a rewrite.
 
-Local 14B must finish inside the scheduler **8-minute** `job_action_timeout` (`JOB_ACTION_TIMEOUT_SECONDS_LOCAL=480`, same cap as cloud). Compact QUESTION/DATA/ANSWER briefs keep request `num_ctx` at 4k–8k. Optional `LLM_LOCAL_FAST_MODEL` (e.g. `qwen2.5:7b`) can take the “fast” slot; empty means every chat agent uses the 14B decision model.
+Local 14B must finish inside the scheduler **8-minute** cap (`JOB_ACTION_TIMEOUT_SECONDS_LOCAL=480`). The tape in the brief is not clipped — local tokens are free, and `LLM_LOCAL_NUM_CTX` is the model window (default 32768). Answers stay short (`LLM_LOCAL_MAX_TOKENS`), Quant/Risk skip chat, and weekday agents get one shot. That is what keeps generation inside the cap. Cloud uses `JOB_ACTION_TIMEOUT_SECONDS` (default 900), clips briefs because tokens are billed, and a failed cloud call raises instead of substituting the local rules. Optional `LLM_LOCAL_FAST_MODEL` (e.g. `qwen2.5:7b`) can take the local “fast” slot; empty means every local chat agent uses the 14B decision model.
 
 ## Python vs LLM (local vs cloud)
 
@@ -36,12 +36,12 @@ Python always owns indicators, Hard Vetoes, and broker HTTP. Chat is only for ju
 
 | Agent | Python owns | Cloud LLM | Local LLM (`LLM_RUNTIME=local`) |
 |-------|-------------|-----------|----------------------------------|
-| Market Intelligence | News fetch, dedupe, symbol tagging | Themes / importance | Same chat, smaller ctx |
-| Macro Strategist | Rates/CPI/curve snapshot | `market_regime` | Same chat |
-| Quant Strategist | OHLCV, SMA/RSI/ATR, horizon stops | Tape narrative | **Skip chat** — Python fallback |
-| Risk Manager | Hard Veto engine | Soft warnings | **Skip chat** — engine only |
-| Devil’s Advocate | Compact upstream briefs | Prefer-no-trade + counterpoint | Same chat |
-| CIO | Positions, allowlist, stop enrichment | Portfolio/symbol actions | Same chat |
+| Market Intelligence | News fetch, dedupe, symbol tagging | Themes / importance, clipped news | Same chat, full news set, short answer |
+| Macro Strategist | Rates/CPI/curve snapshot | `market_regime` | Same chat, full snapshot |
+| Quant Strategist | OHLCV, SMA/RSI/ATR, horizon stops | Tape judgment on a clipped book | **Skip chat** — Python tape |
+| Risk Manager | Hard Veto engine | Soft warnings only | **Skip chat** — engine only |
+| Devil’s Advocate | Upstream briefs | Prefer-no-trade + counterpoint | Same chat, full upstream brief |
+| CIO | Positions, allowlist, stop enrichment | Portfolio/symbol actions | Same chat, full book, short answer |
 
 `app/agents/roles.py` is the source of truth (`skip_llm_when_local`, `num_ctx`, `max_tokens`, `model_slot`). Outcome `python` / `python-rules` / `risk-engine` on the dashboard is a successful local skip, not a failed LLM call.
 
@@ -72,7 +72,7 @@ Deterministic engine vetoes are authoritative. CIO schema validation rejects ris
 
 ## Prompts
 
-Runtime loads `prompts/{agent}/system_v1.md` plus `prompts/shared/common_rules.md` and `output_contract.md`. Prompt version and SHA-256 are recorded on `trace`. Local runs use shorter decision-first briefs so 14B stays inside the job cap.
+Runtime loads `prompts/{agent}/system_v1.md` plus `prompts/shared/common_rules.md` and `output_contract.md`. Prompt version and SHA-256 are recorded on `trace`. Local runs send the full brief budget in `app/agents/briefs.py`. Cloud runs use the clipped budget.
 
 ## Growing the book
 

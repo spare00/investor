@@ -211,3 +211,54 @@ async def test_local_complete_json_skips_spend_gate(tmp_path, monkeypatch) -> No
     assert (_Http.posted.get("options") or {}).get("num_ctx") == 8192
     assert (_Http.posted.get("options") or {}).get("num_predict") == 800
     assert _Http.posted.get("max_tokens") == 800
+
+
+@pytest.mark.asyncio
+async def test_gpt5_cloud_payload_omits_rejected_params(tmp_path, monkeypatch) -> None:
+    settings = Settings(
+        llm_runtime="cloud",
+        llm_base_url="https://api.openai.com/v1",
+        llm_model="gpt-5.4-nano",
+        llm_api_key=SecretStr("sk-test"),
+        llm_budget_enforce=False,
+        llm_budget_state_path=str(tmp_path / "budget.json"),
+        llm_max_tokens=4096,
+        llm_temperature=0.2,
+        llm_json_object_response=True,
+    )
+    client = OpenAICompatibleClient(settings)
+
+    class _Resp:
+        status_code = 200
+
+        def json(self) -> dict:
+            return {
+                "model": "gpt-5.4-nano",
+                "choices": [{"message": {"content": '{"ok": true}'}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            }
+
+    class _Http:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self) -> _Http:
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        posted: dict = {}
+
+        async def post(self, *args, **kwargs):
+            _Http.posted = kwargs.get("json") or {}
+            return _Resp()
+
+    monkeypatch.setattr("app.services.llm.httpx.AsyncClient", _Http)
+    out = await client.complete_json(system_prompt="s", user_prompt="u")
+    assert "ok" in out.content
+    assert _Http.posted.get("max_completion_tokens") == 4096
+    assert _Http.posted.get("reasoning_effort") == "low"
+    assert "max_tokens" not in _Http.posted
+    assert "temperature" not in _Http.posted
+    assert _Http.posted.get("response_format") == {"type": "json_object"}

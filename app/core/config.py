@@ -82,7 +82,13 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.2
     llm_max_tokens: int = 4096
-    llm_timeout_seconds: int = 60
+    llm_timeout_seconds: int = 120
+    # Cloud decision agents (Quant, CIO, Universe Manager). Fast roles stay on
+    # llm_timeout_seconds. Local ignores this and uses the local timeouts.
+    llm_cloud_decision_timeout_seconds: int = 180
+    # GPT-5 / o-series only. none|low|medium|high|xhigh. Local never sends it.
+    # low is a reasoning pass that still fits the cloud job cap.
+    llm_reasoning_effort: str = "low"
     llm_max_retries: int = 2
     # cloud = billable OpenAI-compatible API (AUD token budget).
     # local = embedded runtime (Ollama / LM Studio on loopback) — no spend cap.
@@ -92,17 +98,20 @@ class Settings(BaseSettings):
     llm_local_timeout_seconds: int = 180
     # Weekend Universe Manager only — weekday committee stays on llm_local_timeout_seconds.
     llm_local_universe_timeout_seconds: int = 600
-    # Request window for local chat. Briefs fit in 8k; 32k only slows Ollama.
-    llm_local_num_ctx: int = 8192
+    # Local context window. Tokens are free, so this is the model window
+    # (Qwen2.5 is 32k), not a spend cap. Output length stays on
+    # llm_local_max_tokens so generation still finishes inside the job.
+    llm_local_num_ctx: int = 32768
     llm_local_max_tokens: int = 800
     # Optional smaller tag (e.g. qwen2.5:7b). Empty = use llm_local_model.
     llm_local_fast_model: str = ""
     llm_json_object_response: bool = True
     # Session reanalysis cap when local (cloud still uses max_intraday_reanalyses).
     max_intraday_reanalyses_local: int = 180
-    # Scheduler wait_for around one due job (analysis + 6 sequential agents).
-    # Local uses the same 8-minute cap — if 14B cannot finish, shrink the work.
-    job_action_timeout_seconds: int = 480
+    # Scheduler wait_for around one due job.
+    # Cloud (15 min) lets a reasoned committee finish. Local stays at 8 minutes
+    # and skips Quant/Risk chat so 14B does not die mid-pipeline.
+    job_action_timeout_seconds: int = 900
     job_action_timeout_seconds_local: int = 480
     # LLM spend guard: monthly AUD is the source of truth. Daily token/call
     # budgets auto-split across trading days when set to 0.

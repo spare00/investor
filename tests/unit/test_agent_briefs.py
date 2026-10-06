@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from app.agents.briefs import (
+    _CLOUD_BUDGET,
+    _LOCAL_BUDGET,
     cio_brief,
     devil_brief,
     macro_brief,
@@ -92,6 +94,23 @@ def test_quant_brief_uses_bar_table_not_full_dump() -> None:
     assert "NVDA" in text
     assert "seed " not in text
     assert "trace" not in text
+
+
+def test_brief_budget_switches_with_runtime(monkeypatch) -> None:
+    bars = [BarSnapshot(symbol=f"S{i}", last=10.0 + i) for i in range(50)]
+    payload = QuantStrategistInput(as_of=_now(), symbol_bars=bars)
+
+    monkeypatch.setattr("app.agents.briefs.brief_budget", lambda: _LOCAL_BUDGET)
+    local = quant_brief(payload)
+    assert "S49" in local
+    assert "Decide now." in local
+
+    monkeypatch.setattr("app.agents.briefs.brief_budget", lambda: _CLOUD_BUDGET)
+    cloud = quant_brief(payload)
+    assert "S39" in cloud
+    assert "S40" not in cloud
+    assert "Decide now." not in cloud
+    assert "schema fields" in cloud
 
 
 def test_cio_brief_summarizes_upstream_instead_of_nested_reports() -> None:
