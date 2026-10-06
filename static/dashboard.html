@@ -880,29 +880,28 @@
     }
     .office-roster {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 0.5rem;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.75rem;
       margin-top: 0.85rem;
     }
     .office-roster .row {
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 0.45rem 0.55rem;
+      padding: 0.75rem;
       background: #121820;
-      font-size: 0.78rem;
+      font-size: 0.85rem;
     }
-    .office-roster .row .muted { font-size: 0.72rem; }
-    @media (max-width: 720px) {
-      .office-stage { min-height: 360px; height: 70vh; }
-    }
-    .agent-card-head {
+    .office-roster-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 0.5rem;
-      margin-bottom: 0.4rem;
+      margin-bottom: 0.35rem;
     }
-    .agent-card-head h3 { margin: 0; font-size: 0.85rem; }
+    .office-roster .row .muted { font-size: 0.72rem; margin-top: 0.2rem; }
+    @media (max-width: 720px) {
+      .office-stage { min-height: 360px; height: 70vh; }
+    }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     th, td { text-align: left; padding: 0.4rem 0.3rem; border-bottom: 1px solid var(--line); }
     .metric-scroll { overflow-x: auto; max-width: 100%; }
@@ -912,7 +911,6 @@
     th { color: var(--muted); font-weight: 500; font-size: 0.75rem; }
     ul { margin: 0; padding-left: 1.1rem; color: var(--muted); }
     li { margin: 0.35rem 0; }
-    .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; }
     .briefing-toolbar {
       display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; margin-bottom: 0.85rem;
     }
@@ -1006,8 +1004,6 @@
       border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem; margin-top: 0.65rem;
       background: color-mix(in srgb, var(--bg) 55%, var(--panel));
     }
-    .agent-card { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem; background: #121820; min-height: 110px; }
-    .agent-card h3 { margin: 0 0 0.4rem; font-size: 0.85rem; }
     .muted { color: var(--muted); font-size: 0.8rem; }
     .kpi-grid {
       display: grid;
@@ -1198,10 +1194,6 @@
         <div id="universeFocus" style="margin-top:0.5rem"></div>
         <div id="universeRoster" class="universe-roster" style="margin-top:0.5rem"></div>
         <div class="muted" style="margin-top:0.45rem">Full roster + horizon book → Operations tab</div>
-      </section>
-      <section class="full">
-        <h2>Six Agents — Latest Opinions</h2>
-        <div class="agent-grid" id="agents"></div>
       </section>
     </div>
 
@@ -2718,12 +2710,27 @@
       const roster = document.getElementById("officeRoster");
       if (roster) {
         roster.innerHTML = OFFICE_STAFF.map((s) => {
-          const a = { ...(agents[s.id] || {}), ...(lamps[s.id] || {}) };
-          const lamp = a.lamp || "silent";
-          const tone = lamp === "failed" ? "bad" : lamp === "running" ? "good" : (lamp === "stale" ? "warn" : "");
+          const opinion = agents[s.id] || {};
+          const live = lamps[s.id] || {};
+          const lamp = live.lamp || opinion.lamp || "silent";
+          const label = live.lamp_label || opinion.lamp_label || lamp;
+          const detail = live.lamp_detail || opinion.lamp_detail || "";
+          const opinionLine = opinion.payload ? summarizeAgent(s.id, opinion.payload) : "—";
+          const meta = [
+            opinion.model_name || "",
+            opinion.data_quality_score != null ? `q ${opinion.data_quality_score}` : "",
+          ].filter(Boolean).join(" · ");
+          const title = `${s.title}: ${label}${detail ? " — " + detail : ""}`;
           return `<div class="row">
-            <div>${esc(s.short)} · ${esc(s.title)} ${pill(a.lamp_label || lamp, tone)}</div>
-            <div class="muted">${esc(a.lamp_detail || summarizeAgent(s.id, a.payload))}</div>
+            <div class="office-roster-head">
+              <strong>${esc(s.short)} · ${esc(s.title)}</strong>
+              <span class="agent-lamp lamp-${esc(lamp)}" title="${esc(title)}">
+                <span class="dot" aria-hidden="true"></span>${esc(label)}
+              </span>
+            </div>
+            <div>${esc(opinionLine)}</div>
+            ${detail ? `<div class="muted">${esc(detail)}</div>` : ""}
+            ${meta ? `<div class="muted">${esc(meta)}</div>` : ""}
           </div>`;
         }).join("");
       }
@@ -3711,21 +3718,6 @@
             return `<li class="mono"><span class="muted">runtime</span> ${esc(j.id || j.name)}: ${esc(fmtJobWhen(j, opsClockVenue))}</li>`;
           }).join("")
         : `<li class="muted">No runtime pollers</li>`;
-      document.getElementById("agents").innerHTML = AGENT_ORDER.map(name => {
-        const a = (data.agents || {})[name];
-        const lamp = a?.lamp || "silent";
-        const label = a?.lamp_label || "inactive";
-        return `<div class="agent-card">
-          <div class="agent-card-head">
-            <h3>${name}</h3>
-            <span class="agent-lamp lamp-${lamp}" title="${(a?.lamp_detail || label).replace(/"/g, "&quot;")}">
-              <span class="dot" aria-hidden="true"></span>${label}
-            </span>
-          </div>
-          <div class="muted">${a ? summarizeAgent(name, a.payload) : "—"}</div>
-          <div class="muted">${a?.model_name || ""} ${a?.data_quality_score != null ? "· q " + a.data_quality_score : ""}</div>
-        </div>`;
-      }).join("");
       document.getElementById("positions").innerHTML = (data.positions || []).length
         ? data.positions.map(p => `<tr><td>${p.symbol}</td><td>${p.venue || "US"}</td><td>${p.quantity}</td><td>${Number(p.market_value).toFixed(2)}${p.currency ? " " + p.currency : ""}</td><td>${Number(p.unrealized_pnl).toFixed(2)}</td><td>${p.sector}</td></tr>`).join("")
         : `<tr><td colspan="6" class="muted">None</td></tr>`;
