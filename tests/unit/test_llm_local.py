@@ -262,3 +262,73 @@ async def test_gpt5_cloud_payload_omits_rejected_params(tmp_path, monkeypatch) -
     assert "max_tokens" not in _Http.posted
     assert "temperature" not in _Http.posted
     assert _Http.posted.get("response_format") == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_gpt5_empty_content_retries_without_reasoning(tmp_path, monkeypatch) -> None:
+    settings = Settings(
+        llm_runtime="cloud",
+        llm_base_url="https://api.openai.com/v1",
+        llm_model="gpt-5.4-nano",
+        llm_api_key=SecretStr("sk-test"),
+        llm_budget_enforce=False,
+        llm_budget_state_path=str(tmp_path / "budget.json"),
+        llm_max_tokens=4096,
+        llm_reasoning_effort="low",
+    )
+    client = OpenAICompatibleClient(settings)
+    bodies = [
+        {
+            "model": "gpt-5.4-nano",
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"content": ""},
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 1024,
+                "completion_tokens_details": {"reasoning_tokens": 1024},
+            },
+        },
+        {
+            "model": "gpt-5.4-nano",
+            "choices": [{"finish_reason": "stop", "message": {"content": '{"ok": true}'}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 8},
+        },
+    ]
+
+    class _Resp:
+        def __init__(self, body: dict) -> None:
+            self.status_code = 200
+            self._body = body
+
+        def json(self) -> dict:
+            return self._body
+
+    class _Http:
+        posts: list[dict] = []
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self) -> _Http:
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def post(self, *args, **kwargs):
+            body = kwargs.get("json") or {}
+            _Http.posts.append(body)
+            return _Resp(bodies[len(_Http.posts) - 1])
+
+    monkeypatch.setattr("app.services.llm.httpx.AsyncClient", _Http)
+    out = await client.complete_json(system_prompt="s", user_prompt="u", max_tokens=1024)
+    assert "ok" in out.content
+    assert len(_Http.posts) == 2
+    assert _Http.posts[0]["reasoning_effort"] == "low"
+    assert _Http.posts[0]["max_completion_tokens"] == 1024
+    assert _Http.posts[1]["reasoning_effort"] == "none"
+    assert _Http.posts[1]["max_completion_tokens"] == 4096

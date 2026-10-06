@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from app.core.config import Settings
 from app.intraday.events import IntradayEventBus
 from app.universe.reeval import (
+    effective_reeval_gap_minutes,
     global_reeval_gap_minutes,
     min_reeval_seconds_for_symbols,
     planned_intraday_interval_minutes,
@@ -106,6 +107,21 @@ def test_align_cio_horizons_from_watchlist() -> None:
     out = align_cio_horizons(decision, [{"symbol": "MSFT", "horizon": "medium"}])
     assert out.symbol_actions[0].time_horizon is TimeHorizon.POSITION
     assert out.symbol_actions[0].max_holding_time_minutes == 60 * 24 * 60
+
+
+def test_cloud_runtime_gap_ignores_a_two_minute_local_plan() -> None:
+    cloud = Settings(
+        llm_runtime="cloud",
+        llm_base_url="https://api.openai.com/v1",
+        llm_model="gpt-5.4-nano",
+        max_intraday_reanalyses=12,
+    )
+    # 390m US cash session / 18 ticks → 22m. Scalp's 2m horizon does not win.
+    assert effective_reeval_gap_minutes(["QQQ"], {"QQQ": "scalp"}, cloud, session_minutes=390) == 22
+    local = Settings(
+        llm_runtime="local", llm_api_key=None, llm_base_url="http://127.0.0.1:11434/v1"
+    )
+    assert effective_reeval_gap_minutes(["QQQ"], {"QQQ": "scalp"}, local, session_minutes=390) == 2
 
 
 def test_planned_interval_floors_by_llm_budget() -> None:

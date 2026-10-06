@@ -1081,7 +1081,7 @@ class DailyWorkflowService:
                 from sqlalchemy import select as sa_select
 
                 from app.models import PositionLifecycle
-                from app.universe.reeval import global_reeval_gap_minutes
+                from app.universe.reeval import effective_reeval_gap_minutes
                 from app.universe.service import UniverseService
 
                 open_syms = [
@@ -1114,7 +1114,17 @@ class DailyWorkflowService:
                     if is_active_strategy_horizon(h)
                 }
                 cadence_syms = [str(s).upper() for s in open_syms if str(s).upper() in cadence_map]
-                need_gap = global_reeval_gap_minutes(cadence_syms, cadence_map, self.settings)
+                session_mins = None
+                if status.session.regular_open and status.session.regular_close:
+                    session_mins = (
+                        status.session.regular_close - status.session.regular_open
+                    ).total_seconds() / 60.0
+                need_gap = effective_reeval_gap_minutes(
+                    cadence_syms,
+                    cadence_map,
+                    self.settings,
+                    session_minutes=session_mins,
+                )
                 if (
                     gap < need_gap
                     and effective_trigger == "interval"
@@ -1989,48 +1999,7 @@ class DailyWorkflowService:
         # Include the force-close window. CIO analysis is already skipped there;
         # previously jobs stopped 30m before close so last_force_close never ran.
         end = close_t
-        session_mins = max(0.0, (end - open_t).total_seconds() / 60.0)
-        try:
-            from sqlalchemy import select as sa_select
-
-            from app.models import PositionLifecycle
-            from app.universe.reeval import planned_intraday_interval_minutes
-            from app.universe.service import UniverseService
-
-            univ = UniverseService(self.session, settings=cfg)
-            hz_map = await univ.horizon_by_symbol()
-            book = self.venue.value
-            open_syms = [
-                p.symbol.upper()
-                for p in (
-                    await self.session.execute(
-                        sa_select(PositionLifecycle).where(
-                            PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"]),
-                            PositionLifecycle.venue == book,
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            ]
-            # Cadence follows open books when invested; otherwise focus/entry set —
-            # not the entire watchlist (one scalp name must not force dense ticks
-            # on a medium-only book).
-            if open_syms:
-                plan_horizons = [hz_map[s] for s in open_syms if s in hz_map]
-            else:
-                focus_syms = await univ.collection_universe(holdings=[], venue=self.venue.value)
-                plan_horizons = [hz_map[s] for s in focus_syms if s in hz_map]
-            from app.universe.book_strategy import filter_strategy_horizons
-
-            plan_horizons = filter_strategy_horizons(plan_horizons)
-            if not plan_horizons:
-                plan_horizons = filter_strategy_horizons(list(hz_map.values())) or ["day"]
-            interval_min = planned_intraday_interval_minutes(
-                plan_horizons, cfg, session_minutes=session_mins
-            )
-        except Exception:  # noqa: BLE001
-            interval_min = max(1, int(cfg.intraday_reevaluation_interval_minutes))
+        interval_min = await self._resolve_intraday_interval(session)
 
         existing = list(
             (
@@ -2120,8 +2089,151 @@ class DailyWorkflowService:
                         )
                     )
                     created += 1
+        self._remember_intraday_cadence(run, interval_min)
         await self.session.flush()
         return created
+
+    async def _resolve_intraday_interval(self, session: Any) -> int:
+        """Minutes between intraday ticks for this runtime and the books in play."""
+        cfg = self.settings
+        session_mins = 0.0
+        if getattr(session, "regular_open", None) and getattr(session, "regular_close", None):
+            session_mins = max(
+                0.0, (session.regular_close - session.regular_open).total_seconds() / 60.0
+            )
+        try:
+            from sqlalchemy import select as sa_select
+
+            from app.models import PositionLifecycle
+            from app.universe.book_strategy import filter_strategy_horizons
+            from app.universe.reeval import planned_intraday_interval_minutes
+            from app.universe.service import UniverseService
+
+            univ = UniverseService(self.session, settings=cfg)
+            hz_map = await univ.horizon_by_symbol()
+            book = self.venue.value
+            open_syms = [
+                p.symbol.upper()
+                for p in (
+                    await self.session.execute(
+                        sa_select(PositionLifecycle).where(
+                            PositionLifecycle.status.in_(["OPEN", "ADDING", "REDUCING"]),
+                            PositionLifecycle.venue == book,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            ]
+            # Cadence follows open books when invested; otherwise focus/entry set —
+            # not the entire watchlist (one scalp name must not force dense ticks
+            # on a medium-only book).
+            if open_syms:
+                plan_horizons = [hz_map[s] for s in open_syms if s in hz_map]
+            else:
+                focus_syms = await univ.collection_universe(holdings=[], venue=self.venue.value)
+                plan_horizons = [hz_map[s] for s in focus_syms if s in hz_map]
+            plan_horizons = filter_strategy_horizons(plan_horizons)
+            if not plan_horizons:
+                plan_horizons = filter_strategy_horizons(list(hz_map.values())) or ["day"]
+            return planned_intraday_interval_minutes(
+                plan_horizons, cfg, session_minutes=session_mins
+            )
+        except Exception:  # noqa: BLE001
+            return max(1, int(cfg.intraday_reevaluation_interval_minutes))
+
+    def _remember_intraday_cadence(self, run: DailyWorkflowRun, interval_min: int) -> None:
+        meta = dict(run.metadata_json or {})
+        meta["intraday_cadence"] = {
+            "llm_local": bool(self.settings.llm_is_local()),
+            "interval_minutes": int(interval_min),
+        }
+        run.metadata_json = meta
+
+    async def align_intraday_cadence(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Rebuild remaining ticks when local/cloud spacing no longer matches the rows.
+
+        Planning writes the interval once. A later runtime switch must not leave a
+        cloud skip-list in place, or a 2-minute local plan calling the billed model.
+        """
+        now = now or datetime.now(UTC)
+        today = now.astimezone(self.calendar.market_tz).date()
+        days = [today]
+        nxt = self.calendar.get_next_trading_day(today)
+        if nxt != today:
+            days.append(nxt)
+        sessions: list[dict[str, Any]] = []
+        for day in days:
+            sessions.append(await self._align_intraday_session(day.isoformat(), now=now))
+        return {
+            "replanned": any(bool(part.get("replanned")) for part in sessions),
+            "sessions": sessions,
+        }
+
+    async def _align_intraday_session(self, session_date: str, *, now: datetime) -> dict[str, Any]:
+        run = await self.get_current(session_date)
+        if run is None:
+            return {"session_date": session_date, "replanned": False, "reason": "no_run"}
+        session_info = self.calendar.get_session(date.fromisoformat(run.session_date))
+        close_t = session_info.regular_close
+        if not session_info.is_trading_day or session_info.regular_open is None or close_t is None:
+            return {"session_date": session_date, "replanned": False, "reason": "non_trading_day"}
+        if close_t <= now:
+            return {"session_date": session_date, "replanned": False, "reason": "session_closed"}
+
+        desired = await self._resolve_intraday_interval(session_info)
+        rows = list(
+            (
+                await self.session.execute(
+                    select(ScheduledJobRecord).where(
+                        ScheduledJobRecord.session_date == run.session_date,
+                        ScheduledJobRecord.job_key.like(self._jk("intraday_eval_") + "%"),
+                        ScheduledJobRecord.status == "planned",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        future: list[datetime] = []
+        for row in rows:
+            planned = row.planned_at
+            if planned.tzinfo is None:
+                planned = planned.replace(tzinfo=UTC)
+            if planned >= now:
+                future.append(planned)
+        future.sort()
+        gaps = [(b - a).total_seconds() / 60.0 for a, b in zip(future, future[1:], strict=False)]
+        stored = dict(run.metadata_json or {}).get("intraday_cadence") or {}
+        stored_local = stored.get("llm_local")
+        runtime_changed = stored_local is not None and bool(stored_local) != bool(
+            self.settings.llm_is_local()
+        )
+        if len(gaps) >= 1:
+            ordered = sorted(gaps)
+            median = ordered[len(ordered) // 2]
+            spacing_changed = abs(median - desired) > 0.51
+        else:
+            remaining = (close_t - now).total_seconds() / 60.0
+            median = None
+            spacing_changed = remaining > float(desired) * 2
+        if not runtime_changed and not spacing_changed:
+            return {
+                "session_date": session_date,
+                "replanned": False,
+                "reason": "aligned",
+                "interval_minutes": desired,
+                "median_gap_minutes": median,
+            }
+        out = await self.replan_intraday_jobs(run.session_date, now=now)
+        return {
+            "session_date": session_date,
+            "replanned": not bool(out.get("skipped")),
+            "interval_minutes": desired,
+            "median_gap_minutes": median,
+            "purged": out.get("purged"),
+            "created": out.get("created"),
+        }
 
     async def replan_intraday_jobs(
         self,

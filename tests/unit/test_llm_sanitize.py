@@ -527,3 +527,126 @@ def test_sanitize_cio_promotes_hold_when_symbol_exits() -> None:
     )
     assert cio.portfolio_action.value == "REDUCE"
     assert cio.symbol_actions[0].action.value == "PARTIAL_SELL"
+
+
+def test_kitchen_sink_mi_keeps_data_quality_score() -> None:
+    """gpt-5.4-nano emits CIO fields next to events; the score must survive prune."""
+    from app.agents.llm_sanitize import sanitize_for_model
+
+    mi = MarketIntelligenceOutput.model_validate(
+        sanitize_for_model(
+            {
+                "timestamp": "2026-10-06T14:48:39+00:00",
+                "data_quality_score": 0.1,
+                "challenge_score": 0.6,
+                "market_regime": "INSUFFICIENT_DATA",
+                "overall_verdict": "rejected",
+                "portfolio_action": "NO_TRADE",
+                "cash_target_pct": 100,
+                "events": [],
+                "symbol_actions": [],
+                "trend_state": "sideways",
+            },
+            MarketIntelligenceOutput,
+        )
+    )
+    assert mi.data_quality_score == 0.1
+    assert mi.market_events == []
+
+
+def test_kitchen_sink_macro_and_quant_keep_scores() -> None:
+    from app.agents.llm_sanitize import sanitize_for_model
+    from app.schemas.macro_strategist import MacroStrategistOutput
+    from app.schemas.quant_strategist import QuantStrategistOutput
+
+    shared = {
+        "timestamp": "2026-10-06T14:55:00+00:00",
+        "portfolio_action": "NO_TRADE",
+        "symbol_actions": [],
+        "cash_target_pct": 100,
+        "overall_verdict": "rejected",
+    }
+    macro = MacroStrategistOutput.model_validate(
+        sanitize_for_model(
+            {
+                **shared,
+                "market_regime": "NEUTRAL",
+                "data_quality_score": 0.2,
+            },
+            MacroStrategistOutput,
+        )
+    )
+    assert macro.data_quality_score == 0.2
+    assert macro.confidence == 0.5
+
+    quant = QuantStrategistOutput.model_validate(
+        sanitize_for_model(
+            {
+                **shared,
+                "market_trend_state": "sideways",
+                "market_momentum_state": "steady",
+                "market_volatility_state": "normal",
+                "market_breadth_state": "mixed",
+                "market_liquidity_state": "normal",
+                "data_quality_score": 0.7,
+            },
+            QuantStrategistOutput,
+        )
+    )
+    assert quant.data_quality_score == 0.7
+
+
+def test_kitchen_sink_devil_fills_omitted_required_fields() -> None:
+    from app.agents.llm_sanitize import sanitize_for_model
+    from app.schemas.devils_advocate import DevilsAdvocateOutput
+
+    devil = DevilsAdvocateOutput.model_validate(
+        sanitize_for_model(
+            {
+                "timestamp": "2026-10-06T15:00:00+00:00",
+                "portfolio_action": "NO_TRADE",
+                "symbol_actions": [],
+                "cash_target_pct": 100,
+                "market_regime": "NEUTRAL",
+            },
+            DevilsAdvocateOutput,
+        )
+    )
+    assert devil.prefer_no_trade is False
+    assert devil.strongest_reason_thesis_is_wrong
+    assert devil.challenge_score == 0.5
+
+
+def test_nested_portfolio_action_becomes_an_enum() -> None:
+    from app.agents.llm_sanitize import sanitize_for_model
+    from app.schemas.cio import CIODecision
+    from app.schemas.risk_manager import RiskManagerOutput
+
+    cio = CIODecision.model_validate(
+        sanitize_for_model(
+            {
+                "timestamp": "2026-10-06T15:11:00+00:00",
+                "portfolio_action": {"action": "HOLD", "cash_target_pct": 99.9},
+                "symbol_actions": [],
+                "market_regime": "NEUTRAL",
+            },
+            CIODecision,
+        )
+    )
+    assert cio.portfolio_action.value == "HOLD"
+    assert cio.cash_target_pct == 99.9
+
+    risk = RiskManagerOutput.model_validate(
+        sanitize_for_model(
+            {
+                "timestamp": "2026-10-06T15:11:00+00:00",
+                "portfolio_action": "NO_TRADE",
+                "cash_target_pct": 100,
+                "cash_pct": 100,
+                "gross_exposure_pct": 0,
+                "symbol_actions": [],
+            },
+            RiskManagerOutput,
+        )
+    )
+    assert risk.overall_verdict.value == "approved"

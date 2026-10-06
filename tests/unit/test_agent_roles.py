@@ -236,7 +236,16 @@ def test_cloud_decision_roles_keep_a_quality_budget() -> None:
     assert quant.skip_llm(cloud) is False
     assert quant.max_tokens_for(cloud) == 4096
     assert cio.max_tokens_for(cloud) == 4096
-    assert mi.max_tokens_for(cloud) == 1024
+    # gpt-5 reasoning shares the completion cap, so fast roles cannot stay at 1024.
+    assert mi.max_tokens_for(cloud) == 4096
+    mini = Settings(
+        llm_runtime="cloud",
+        llm_base_url="https://api.openai.com/v1",
+        llm_model="gpt-4o-mini",
+        llm_api_key=None,
+        llm_max_tokens=4096,
+    )
+    assert role_for(AgentName.MARKET_INTELLIGENCE).max_tokens_for(mini) == 1024
     assert quant.timeout_seconds_for(cloud) == 180
     assert mi.timeout_seconds_for(cloud) == 60
     assert quant.repair_attempts_for(cloud) == 2

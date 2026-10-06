@@ -7,8 +7,9 @@ Answers stay short, Quant and Risk skip chat, weekday calls are one shot, and
 the job cap is 8 minutes so 14B finishes instead of falling back.
 
 Cloud (billable): every judgment role calls the model. Decision roles get a
-longer timeout and the full output cap so reasoning plus JSON both fit. A
-failed cloud call is not replaced by the local rules brain.
+longer timeout. Reasoning models (gpt-5, o-series) get the full output cap on
+every role, because reasoning tokens share that cap and a short cap comes back
+empty. A failed cloud call is not replaced by the local rules brain.
 """
 
 from __future__ import annotations
@@ -59,9 +60,11 @@ class AgentRole:
             cap = max(64, int(settings.llm_local_max_tokens))
             return min(self.max_tokens, cap)
         # Cloud output includes reasoning tokens. Decision slots keep the
-        # full cap; fast slots stay smaller so soft roles do not spend it.
+        # full cap. Non-reasoning fast slots stay smaller. Reasoning models
+        # spend the same cap on hidden reasoning, so a 1024 ceiling returns
+        # an empty message once that budget is gone.
         cap = max(256, int(settings.llm_max_tokens))
-        if self.model_slot == "decision":
+        if self.model_slot == "decision" or _reasoning_output_shares_cap(settings):
             return cap
         return min(cap, 1024)
 
@@ -79,6 +82,14 @@ class AgentRole:
         if settings.llm_is_local() and not self.allow_local_repair:
             return 1
         return 2
+
+
+def _reasoning_output_shares_cap(settings: Settings) -> bool:
+    """GPT-5 and o-series count reasoning against max_completion_tokens."""
+    if settings.llm_is_local():
+        return False
+    name = (settings.llm_model or "").strip().lower()
+    return name.startswith(("gpt-5", "o1", "o3", "o4"))
 
 
 # Context sizes assume the compact QUESTION/DATA/ANSWER briefs, not full dumps.

@@ -54,6 +54,28 @@ def global_reeval_gap_minutes(
     return max(1.0, min_reeval_seconds_for_symbols(symbols, horizon_by_symbol, settings) / 60.0)
 
 
+def effective_reeval_gap_minutes(
+    symbols: list[str],
+    horizon_by_symbol: dict[str, str],
+    settings: Settings,
+    *,
+    session_minutes: float | None = None,
+) -> float:
+    """Horizon cooldown, raised to the cloud spend floor when the session length is known.
+
+    A schedule planned under the local 2-minute cadence must not keep calling the
+    billed model every tick after the runtime switches to cloud.
+    """
+    horizon_gap = global_reeval_gap_minutes(symbols, horizon_by_symbol, settings)
+    horizons = [horizon_by_symbol.get(str(s).upper()) for s in symbols]
+    floor = planned_intraday_interval_minutes(
+        [h for h in horizons if h],
+        settings,
+        session_minutes=session_minutes,
+    )
+    return max(horizon_gap, float(floor))
+
+
 def planned_intraday_interval_minutes(
     horizons: list[str] | None,
     settings: Settings,

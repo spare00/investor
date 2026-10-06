@@ -657,8 +657,9 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
                     if scen_key in view:
                         view[scen_key] = _normalize_scenario(view[scen_key])
 
-    if looks_risk and not looks_cio and not looks_quant:
+    if looks_risk and not looks_cio and not looks_quant and not looks_mi:
         # Input-only / prompt-echo field — not on RiskManagerOutput.
+        # Keep it when the payload is also a market-intelligence sheet.
         out.pop("data_quality_score", None)
         out.setdefault("cash_pct", 50.0)
         out.setdefault("gross_exposure_pct", 0.0)
@@ -705,6 +706,7 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
                 out[key] = _as_string_list(out.get(key))
 
     if looks_cio:
+        _unwrap_portfolio_action(out)
         explicit_regime = _first_explicit_regime(out)
         out["market_regime"] = explicit_regime or MarketRegime.NEUTRAL.value
         ra = out.get("risk_approval")
@@ -717,8 +719,7 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
             }
         elif not isinstance(ra, bool):
             out["risk_approval"] = _unwrap_bool(ra) if ra is not None else True
-        for junk in (
-            "data_quality_score",
+        junk = [
             "devil",
             "overall_verdict",
             "risk",
@@ -729,8 +730,13 @@ def _agent_shape_fixes(out: dict[str, Any]) -> dict[str, Any]:
             "allowlist",
             "watchlist",
             "portfolio_cash_pct",
-        ):
-            out.pop(junk, None)
+        ]
+        # A kitchen-sink reply can look like CIO and MI at once. Dropping the
+        # score here makes MarketIntelligenceOutput fail after prune.
+        if not looks_mi:
+            junk.insert(0, "data_quality_score")
+        for key in junk:
+            out.pop(key, None)
         out.setdefault("hedge_required", False)
         out.setdefault("risk_conditions", [])
         out["risk_conditions"] = _as_string_list(out.get("risk_conditions"))
@@ -799,12 +805,109 @@ def prune_to_model(data: dict[str, Any], model: type[Any]) -> dict[str, Any]:
     return out
 
 
+def _unwrap_portfolio_action(out: dict[str, Any]) -> None:
+    """gpt-5 sometimes nests the book action: {action, cash_target_pct}."""
+    pa = out.get("portfolio_action")
+    if not isinstance(pa, dict):
+        return
+    if "cash_target_pct" not in out and pa.get("cash_target_pct") is not None:
+        out["cash_target_pct"] = pa.get("cash_target_pct")
+    inner = pa.get("portfolio_action", pa.get("action", pa.get("value")))
+    if hasattr(inner, "value"):
+        inner = inner.value
+    if inner is None or inner == "":
+        out.pop("portfolio_action", None)
+        return
+    out["portfolio_action"] = inner
+
+
+def _restore_stripped_scores(
+    pruned: dict[str, Any],
+    model: type[Any],
+    source: dict[str, Any],
+) -> None:
+    """Put back scores the CIO/risk cleanup removes from a kitchen-sink reply.
+
+    gpt-5.4-nano often emits every agent's fields in one object. The CIO cleanup
+    drops ``data_quality_score`` so CIO validation stays strict. After prune, the
+    target model still needs that score.
+    """
+    from pydantic import BaseModel
+
+    if (
+        not isinstance(pruned, dict)
+        or not isinstance(model, type)
+        or not issubclass(model, BaseModel)
+    ):
+        return
+    specs = (
+        ("data_quality_score", 0.4, False),
+        ("confidence", 0.5, True),
+    )
+    for name, default, percent_ok in specs:
+        field = model.model_fields.get(name)
+        if field is None or name in pruned or not field.is_required():
+            continue
+        raw = source.get(name) if isinstance(source, dict) else None
+        if raw is None:
+            pruned[name] = default
+            continue
+        clamped = _clamp_unit(raw, percent_ok=percent_ok)
+        pruned[name] = clamped if isinstance(clamped, (int, float)) else default
+    field = model.model_fields.get("overall_verdict")
+    raw_verdict = source.get("overall_verdict") if isinstance(source, dict) else None
+    if (
+        field is not None
+        and "overall_verdict" not in pruned
+        and field.is_required()
+        and raw_verdict not in (None, "")
+    ):
+        coerced = coerce_enum_value(RiskVerdict, raw_verdict)
+        if isinstance(coerced, RiskVerdict):
+            pruned["overall_verdict"] = coerced.value
+
+
+_REQUIRED_TEXT_DEFAULTS: dict[str, Any] = {
+    # Filled only when the target model requires the field and the reply omitted it.
+    # Kitchen-sink objects look like CIO, so the devil cleanup (which skips CIO-shaped
+    # payloads) never runs, and these required strings would otherwise fail the job.
+    "strongest_reason_thesis_is_wrong": "Unspecified challenge",
+    "information_already_in_price": False,
+    "information_already_in_price_rationale": "",
+    "opposing_market_scenario": "Unspecified opposing scenario",
+    "prefer_no_trade": False,
+    "prefer_no_trade_rationale": "",
+    "challenge_score": 0.5,
+    # Risk LLM is commentary only. A missing verdict must not buy a second call.
+    "overall_verdict": "approved",
+}
+
+
+def _fill_omitted_required(pruned: dict[str, Any], model: type[Any]) -> None:
+    from pydantic import BaseModel
+
+    if (
+        not isinstance(pruned, dict)
+        or not isinstance(model, type)
+        or not issubclass(model, BaseModel)
+    ):
+        return
+    for name, default in _REQUIRED_TEXT_DEFAULTS.items():
+        field = model.model_fields.get(name)
+        if field is None or name in pruned or not field.is_required():
+            continue
+        pruned[name] = default
+
+
 def sanitize_for_model(data: dict[str, Any], model: type[Any]) -> dict[str, Any]:
     """Sanitize then prune to the agent's output model fields."""
     cleaned = sanitize_llm_payload(data)
     if not isinstance(cleaned, dict):
         return cleaned
-    return prune_to_model(cleaned, model)
+    pruned = prune_to_model(cleaned, model)
+    _restore_stripped_scores(pruned, model, data if isinstance(data, dict) else {})
+    _fill_omitted_required(pruned, model)
+    return pruned
 
 
 def sanitize_llm_payload(data: dict[str, Any]) -> dict[str, Any]:

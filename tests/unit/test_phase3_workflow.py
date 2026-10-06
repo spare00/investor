@@ -11,7 +11,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.config import clear_settings_cache, get_settings
+from app.core.config import Settings, clear_settings_cache, get_settings
 from app.core.database import Base
 from app.core.scheduler import _scheduler_enabled, start_scheduler
 from app.execution.ops_persistence import persist_trading_controls, restore_trading_controls
@@ -176,6 +176,44 @@ async def test_replan_intraday_jobs_after_horizon_change(session: AsyncSession) 
     assert after_planned
     # Medium + budget → fewer remaining ticks than original full-day scalp plan
     assert len(after_planned) < len(before_intra)
+
+
+@pytest.mark.asyncio
+async def test_align_intraday_cadence_switches_with_runtime(session: AsyncSession) -> None:
+    cloud = get_settings()
+    assert cloud.llm_is_local() is False
+    svc = DailyWorkflowService(session, settings=cloud)
+    await svc.prepare(session_date="2026-08-03")
+    now = datetime(2026, 8, 3, 16, 0, tzinfo=UTC)  # noon ET, session still open
+
+    local = Settings(
+        llm_runtime="local",
+        llm_base_url="http://127.0.0.1:11434/v1",
+        llm_model="qwen2.5:14b",
+        llm_api_key=None,
+    )
+    local_svc = DailyWorkflowService(session, settings=local)
+    switched = await local_svc.align_intraday_cadence(now=now)
+    assert switched["replanned"] is True
+    us = next(part for part in switched["sessions"] if part["session_date"] == "2026-08-03")
+    assert us["interval_minutes"] <= 5
+    planned = [
+        j
+        for j in await local_svc.planned_jobs("2026-08-03")
+        if j["job_key"].startswith("US:intraday_eval_") and j["status"] == "planned"
+    ]
+    times = sorted(datetime.fromisoformat(j["planned_at"]) for j in planned)
+    gaps = [(b - a).total_seconds() / 60.0 for a, b in zip(times, times[1:], strict=False)]
+    assert gaps
+    assert abs(sorted(gaps)[len(gaps) // 2] - us["interval_minutes"]) <= 1
+
+    again = await local_svc.align_intraday_cadence(now=now)
+    assert again["replanned"] is False
+
+    back = await svc.align_intraday_cadence(now=now)
+    assert back["replanned"] is True
+    cloud_us = next(part for part in back["sessions"] if part["session_date"] == "2026-08-03")
+    assert cloud_us["interval_minutes"] >= 20
 
 
 @pytest.mark.asyncio

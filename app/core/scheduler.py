@@ -343,6 +343,16 @@ async def _ensure_sessions_prepared(session: Any, settings: Settings) -> list[st
                 session_date=day.isoformat(),
                 note=result.get("note") or result.get("current_state"),
             )
+        try:
+            aligned = await svc.align_intraday_cadence(now=now)
+            if aligned.get("replanned"):
+                logger.info(
+                    "intraday_cadence_aligned",
+                    venue=venue.value,
+                    sessions=aligned.get("sessions"),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("intraday_cadence_align_failed", venue=venue.value)
     # Drop labels for days no longer in the rolling window.
     for stale in [k for k in _PREPARE_CACHE if k not in live_labels]:
         _PREPARE_CACHE.pop(stale, None)

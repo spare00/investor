@@ -38,6 +38,26 @@ def _reasoning_effort(settings: Settings) -> str:
     return "low"
 
 
+def _choice_content(data: dict[str, Any]) -> str:
+    """Visible assistant text. Reasoning models sometimes return a parts list."""
+    try:
+        message = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise LLMError("Unexpected LLM response shape") from exc
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                parts.append(str(part.get("text") or part.get("content") or ""))
+        return "".join(parts)
+    return ""
+
+
 def _retry_llm_call(exc: BaseException) -> bool:
     """Retry transport/HTTP failures. Do not retry full timeouts — they already
     burned llm_*_timeout_seconds and a local 14B call can be ~3 minutes."""
@@ -208,11 +228,46 @@ class OpenAICompatibleClient:
                 )
                 raise LLMError(f"LLM HTTP {response.status_code}")
             data = response.json()
-
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise LLMError("Unexpected LLM response shape") from exc
+            content = _choice_content(data if isinstance(data, dict) else {})
+            # Reasoning can consume the whole completion budget and leave content "".
+            # One follow-up with reasoning off uses the same request budget.
+            if (
+                not content.strip()
+                and (not cfg.llm_is_local())
+                and _reasoning_chat_model(model_name)
+                and payload.get("reasoning_effort") != "none"
+            ):
+                choice = (data.get("choices") or [{}])[0] if isinstance(data, dict) else {}
+                usage = data.get("usage") if isinstance(data, dict) else {}
+                details = (usage or {}).get("completion_tokens_details") or {}
+                logger.warning(
+                    "llm_empty_content",
+                    finish=choice.get("finish_reason") if isinstance(choice, dict) else None,
+                    reasoning_tokens=details.get("reasoning_tokens"),
+                    max_completion_tokens=tok,
+                )
+                spent_prompt, spent_completion = usage_from_openai_response(
+                    data if isinstance(data, dict) else None
+                )
+                if spent_prompt or spent_completion:
+                    record_llm_usage(
+                        prompt_tokens=spent_prompt,
+                        completion_tokens=spent_completion,
+                        settings=cfg,
+                    )
+                payload = dict(payload)
+                payload["reasoning_effort"] = "none"
+                payload["max_completion_tokens"] = max(int(tok), int(cfg.llm_max_tokens))
+                response = await client.post(url, headers=headers, json=payload)
+                if response.status_code >= 400:
+                    logger.error(
+                        "llm_http_error",
+                        status=response.status_code,
+                        body=response.text[:500],
+                    )
+                    raise LLMError(f"LLM HTTP {response.status_code}")
+                data = response.json()
+                content = _choice_content(data if isinstance(data, dict) else {})
 
         prompt_t, completion_t = usage_from_openai_response(
             data if isinstance(data, dict) else None
