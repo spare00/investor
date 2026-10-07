@@ -256,7 +256,7 @@ class DataCollectionService:
 
         history: dict[str, list[Any]] = {}
         try:
-            since = bundle.collected_at - timedelta(days=18)
+            since = bundle.collected_at - timedelta(days=90)
             by_sym = await self.market_repo.recent_by_symbol(universe, since=since)
             for sym, rows in by_sym.items():
                 history[sym] = collapse_snapshots_to_sessions(rows, symbol=sym)

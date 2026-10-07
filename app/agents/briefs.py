@@ -502,9 +502,10 @@ def cio_brief(payload: CIOInput) -> str:
     if payload.recent_lessons:
         data["lessons"] = payload.recent_lessons[: budget.lessons]
     return _ask(
-        "Decide per book. 초단타/단타/단기 follow their own playbook. Ignore medium. "
-        "Paper: excess cash above the 30% floor is opportunity cost only with an allowed setup. "
-        "Scalp/day stand down in sideways. Prefer dip_buy and bounce. Skip falling knives. "
+        "Decide per book. You own cash_target_pct. Risk only guards the cash floor. "
+        "Scalp/day stand down in a sideways box. "
+        "Short/medium: buy a rising name that is not extended and hold it. "
+        "100% cash with that setup is a miss. "
         "Fill up to 3 new names/book when the tape allows. cash_target falls when you buy. "
         "Take the book target; do not hold a loser hoping for a bounce. "
         "Devil is advisory. Do not repeat negative-signal names "

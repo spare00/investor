@@ -4,7 +4,7 @@ Stops, caps, and overnight policy already live on HorizonPolicy.
 This module is the missing piece: Quant entry/exit *rules* and CIO action
 choice so scalp / day / short are not one generic 2% continuation model.
 
-Medium is held if already open, but is not a research or entry book.
+Medium is a hold book: own a rising name that is not extended, for weeks.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ ACTIVE_STRATEGY_HORIZONS: frozenset[str] = frozenset(
         UniverseHorizon.SCALP.value,
         UniverseHorizon.DAY.value,
         UniverseHorizon.SHORT.value,
+        UniverseHorizon.MEDIUM.value,
     }
 )
 
@@ -196,6 +197,41 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         max_new_per_cycle=3,
         cio_time_horizon=TimeHorizon.SWING,
     ),
+    "medium": BookPlaybook(
+        horizon="medium",
+        label_ko="중기",
+        summary=(
+            "Hold a name that is already rising and not extended. "
+            "Weeks, not a same-day round trip. Wider stop. "
+            "Sell a break of the trend, not a quiet pullback."
+        ),
+        min_probability=0.52,
+        entry_zone_pct=0.015,
+        target_pct=0.06,
+        target_size_pct=12.0,
+        risk_budget_pct=0.20,
+        require_uptrend=False,
+        allow_sideways_momentum=False,
+        require_accelerating=False,
+        require_volume_accel=False,
+        volume_accel_mult=1.0,
+        require_short_ma=False,
+        require_session_structure=False,
+        prefer_rsi_min=40.0,
+        prefer_rsi_max=70.0,
+        rsi_hard_min=None,
+        rsi_hard_max=None,
+        reject_liquidity=frozenset({LiquidityState.STRESSED}),
+        sell_if_exhausted=False,
+        sell_if_liquidity_stressed=False,
+        sell_if_downtrend=True,
+        reduce_if_exhausted=True,
+        new_only_regimes=frozenset(
+            {MarketRegime.RISK_ON, MarketRegime.STRONG_RISK_ON, MarketRegime.NEUTRAL}
+        ),
+        max_new_per_cycle=2,
+        cio_time_horizon=TimeHorizon.POSITION,
+    ),
 }
 
 
@@ -209,7 +245,7 @@ def playbook_for(horizon: str | None) -> BookPlaybook | None:
 
 
 def filter_strategy_horizons(horizons: Iterable[str | None]) -> list[str]:
-    """Drop medium / unknown so cadence and focus follow tradable books."""
+    """Drop unknown horizons so cadence follows a real book."""
     out: list[str] = []
     for raw in horizons:
         key = str(raw or "").strip().lower()

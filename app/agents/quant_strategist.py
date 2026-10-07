@@ -25,6 +25,109 @@ from app.schemas.quant_strategist import (
 )
 
 
+def _session_closes(bar: BarSnapshot) -> list[float]:
+    """Session closes, oldest first. Quotes never carry SMA, so this is the tape."""
+    closes: list[float] = []
+    for row in bar.session_history or []:
+        raw = getattr(row, "close", None)
+        if raw is None and isinstance(row, dict):
+            raw = row.get("close")
+        try:
+            px = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if px > 0:
+            closes.append(px)
+    last = float(bar.last) if bar.last else 0.0
+    if last > 0 and (not closes or abs(closes[-1] - last) / last > 1e-4):
+        closes.append(last)
+    return closes
+
+
+def _sma(values: list[float], n: int) -> float | None:
+    if n <= 0 or len(values) < n:
+        return None
+    window = values[-n:]
+    return sum(window) / len(window)
+
+
+def _rsi(closes: list[float], n: int = 14) -> float | None:
+    if len(closes) < n + 1:
+        return None
+    gains = 0.0
+    losses = 0.0
+    for prev, cur in zip(closes[-(n + 1) : -1], closes[-n:], strict=False):
+        delta = cur - prev
+        if delta >= 0:
+            gains += delta
+        else:
+            losses -= delta
+    if losses <= 0:
+        return 100.0 if gains > 0 else 50.0
+    rs = (gains / n) / (losses / n)
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def swing_trend(closes: list[float]) -> TrendState:
+    """Short/medium backdrop from session closes when SMA50/200 were never stored.
+
+    A flat box stays sideways. A rising average with price still on it — not
+    extended — is an uptrend the hold books can own. A break under that average
+    is a downtrend.
+    """
+    if len(closes) < 8:
+        return TrendState.SIDEWAYS
+    last = closes[-1]
+    fast_n = 8
+    slow_n = 20 if len(closes) >= 20 else max(fast_n, len(closes) // 2)
+    fast = _sma(closes, fast_n)
+    slow = _sma(closes, slow_n)
+    if fast is None or slow is None or slow <= 0 or fast <= 0:
+        return TrendState.SIDEWAYS
+    prior = closes[-slow_n:-fast_n] if len(closes) >= slow_n else closes[: len(closes) // 2]
+    recent = closes[-fast_n:]
+    if not prior or not recent:
+        return TrendState.SIDEWAYS
+    prior_avg = sum(prior) / len(prior)
+    recent_avg = sum(recent) / len(recent)
+    if prior_avg <= 0:
+        return TrendState.SIDEWAYS
+    drift = recent_avg / prior_avg - 1.0
+    rising = drift >= 0.01 and fast >= slow * 0.995
+    holding = last >= fast * 0.97
+    not_extended = last <= fast * 1.06
+    if rising and holding and not_extended:
+        return TrendState.UP
+    if last < fast * 0.98 and fast < slow:
+        return TrendState.DOWN
+    return TrendState.SIDEWAYS
+
+
+def enrich_bar_indicators(bar: BarSnapshot) -> BarSnapshot:
+    """Fill SMA/RSI from session closes when the quote left them empty."""
+    closes = _session_closes(bar)
+    updates: dict[str, float] = {}
+    if bar.sma_20 is None:
+        sma20 = _sma(closes, 20) or (_sma(closes, 8) if len(closes) >= 8 else None)
+        if sma20 is not None:
+            updates["sma_20"] = round(sma20, 4)
+    if bar.sma_50 is None:
+        sma50 = _sma(closes, 50)
+        if sma50 is not None:
+            updates["sma_50"] = round(sma50, 4)
+    if bar.sma_200 is None:
+        sma200 = _sma(closes, 200)
+        if sma200 is not None:
+            updates["sma_200"] = round(sma200, 4)
+    if bar.rsi_14 is None:
+        rsi = _rsi(closes)
+        if rsi is not None:
+            updates["rsi_14"] = round(rsi, 2)
+    if not updates:
+        return bar
+    return bar.model_copy(update=updates)
+
+
 def _trend(bar: BarSnapshot, horizon: str = "short") -> TrendState:
     hz = str(horizon or "short").lower()
     if hz == "scalp":
@@ -59,7 +162,8 @@ def _trend(bar: BarSnapshot, horizon: str = "short") -> TrendState:
             return TrendState.UP
         if bar.last < bar.sma_50 < bar.sma_200:
             return TrendState.DOWN
-    return TrendState.SIDEWAYS
+        return TrendState.SIDEWAYS
+    return swing_trend(_session_closes(bar))
 
 
 def _volume_accelerating(bar: BarSnapshot, *, mult: float = 1.15) -> bool:
@@ -183,7 +287,8 @@ class QuantStrategistAgent(BaseAgent[QuantStrategistInput, QuantStrategistOutput
         minutes_to_close = (
             minutes_to_close_fn(payload.as_of) if getattr(payload, "as_of", None) else None
         )
-        for bar in bars:
+        for raw in bars:
+            bar = enrich_bar_indicators(raw)
             horizon = horizon_for_symbol(bar.symbol, payload.watchlist)
             trend = _trend(bar, horizon)
             mom = _momentum(bar, horizon)

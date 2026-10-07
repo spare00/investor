@@ -97,14 +97,19 @@ def _cio_payload(quant, *, positions=None, allowlist=None, watchlist=None) -> CI
     )
 
 
-def test_filter_drops_medium() -> None:
-    assert filter_strategy_horizons(["scalp", "medium", "day", "medium"]) == ["scalp", "day"]
+def test_filter_keeps_hold_books() -> None:
+    assert filter_strategy_horizons(["scalp", "medium", "day", "medium"]) == [
+        "scalp",
+        "medium",
+        "day",
+    ]
 
 
 def test_qqq_defaults_to_scalp() -> None:
     assert horizon_for_symbol("QQQ") == "scalp"
     assert playbook_for("scalp") is not None
-    assert playbook_for("medium") is None
+    assert playbook_for("medium") is not None
+    assert playbook_for("medium").label_ko == "중기"
 
 
 def test_scalp_allows_rsi_69_when_tape_accelerates() -> None:
@@ -607,6 +612,68 @@ def test_ensure_cio_fills_remaining_slots_when_cash_is_heavy() -> None:
     symbols = {a.symbol for a in out.symbol_actions if a.action == SymbolAction.SCALE_IN}
     assert symbols == {"QQQ"}
     assert out.cash_target_pct == 90.0
+
+
+def test_cio_deploys_a_rising_short_when_cash_is_the_whole_book() -> None:
+    from datetime import date, timedelta
+
+    from app.agents.cio import ensure_cio_takes_setups
+    from app.agents.quant_strategist import swing_trend
+    from app.schemas.cio import CIODecision
+    from app.schemas.common import TrendState
+    from app.schemas.quant_strategist import SessionBar
+
+    start = date(2026, 8, 3)
+    rising = [100.0 + i * 0.6 for i in range(18)] + [109.5, 108.8, 108.2, 107.6, 107.2, 107.0]
+    flat = [100.0 for _ in range(24)]
+    assert swing_trend(rising) == TrendState.UP
+    assert swing_trend(flat) == TrendState.SIDEWAYS
+
+    def bar(symbol: str, closes: list[float]):
+        history = [
+            SessionBar(session_date=(start + timedelta(days=i)).isoformat(), close=px)
+            for i, px in enumerate(closes)
+        ]
+        return BarSnapshot(symbol=symbol, last=closes[-1], session_history=history)
+
+    watch = [
+        {"symbol": "MSFT", "horizon": "short"},
+        {"symbol": "BOX", "horizon": "short"},
+    ]
+    quant = QuantStrategistAgent().fallback_output(
+        QuantStrategistInput(
+            as_of=NOW,
+            symbol_bars=[bar("MSFT", rising), bar("BOX", flat)],
+            watchlist=watch,
+        ),
+        reason="local_python_owns",
+    )
+    idle = CIODecision(
+        timestamp=NOW,
+        market_regime=MarketRegime.NEUTRAL,
+        portfolio_action=PortfolioAction.STAY_CASH,
+        cash_target_pct=100,
+        risk_approval=True,
+        reason_not_to_trade="cash is fine",
+    )
+    out = ensure_cio_takes_setups(
+        idle,
+        quant=quant,
+        watchlist=watch,
+        positions=[],
+        allowlist=["MSFT", "BOX"],
+        risk_ok=True,
+        regime=MarketRegime.NEUTRAL,
+        max_position_pct=10.0,
+        enabled=True,
+        cash_pct=100.0,
+        min_cash_pct=30.0,
+    )
+    bought = {a.symbol for a in out.symbol_actions if a.action == SymbolAction.SCALE_IN}
+    assert "MSFT" in bought
+    assert "BOX" not in bought
+    assert out.cash_target_pct < 100
+    assert out.reason_not_to_trade is None
 
 
 def test_reconcile_nameless_entry_drops_empty_scale_in() -> None:

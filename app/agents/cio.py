@@ -35,6 +35,10 @@ _ENTRY_ACTIONS = {
     SymbolAction.SCALE_IN,
 }
 
+# Short and medium are hold books. Scalp and day are not filled from a cash pile.
+_HOLD_BOOKS = frozenset({"short", "medium"})
+_CASH_DRAG_BUFFER_PCT = 10.0
+
 
 def cash_target_after_plans(
     *,
@@ -161,26 +165,63 @@ def ensure_cio_takes_setups(
     min_cash_pct: float = 30.0,
     minutes_to_close: float | None = None,
 ) -> CIODecision:
-    """Keep the CIO call. Do not replace a pass with playbook buys.
+    """CIO owns the cash pile. Scalp/day may sit out a box. Short/medium may not.
 
-    Injecting Quant setups whenever cash sat above the floor cleared
-    reason_not_to_trade and rebought the same tape. The arguments stay so
-    existing callers compile; none of them add entries anymore.
+    Risk only stops cash from falling through the floor. Leaving the account at
+    100% while a short or medium name is rising and not extended is the CIO
+    skipping that job. A sideways box is still not bought.
     """
-    del (
-        quant,
-        watchlist,
-        positions,
-        allowlist,
-        risk_ok,
-        regime,
-        max_position_pct,
-        enabled,
-        cash_pct,
-        min_cash_pct,
-        minutes_to_close,
+    if not enabled or not risk_ok or not decision.risk_approval:
+        return decision
+    watch = watchlist or []
+    entering = [p for p in decision.symbol_actions if p.action in _ENTRY_ACTIONS]
+    hold_entries = [p for p in entering if horizon_for_symbol(p.symbol, watch) in _HOLD_BOOKS]
+    cash_heavy = float(cash_pct) >= float(min_cash_pct) + _CASH_DRAG_BUFFER_PCT
+    if hold_entries and not cash_heavy:
+        return decision
+    held = [
+        str(p.symbol).upper()
+        for p in (positions or [])
+        if abs(getattr(p, "quantity", 0) or 0) > 1e-9
+    ]
+    already = {p.symbol.upper() for p in entering}
+    new_counts: dict[str, int] = {}
+    for plan in entering:
+        hz = horizon_for_symbol(plan.symbol, watch)
+        new_counts[hz] = new_counts.get(hz, 0) + 1
+    extras = [
+        plan
+        for plan in quant_entry_plans(
+            views=list(getattr(quant, "symbol_views", None) or []),
+            watchlist=watch,
+            held_symbols=held + list(already),
+            regime=regime,
+            max_position_pct=max_position_pct,
+            allowlist=allowlist,
+            new_counts=new_counts,
+            minutes_to_close=minutes_to_close,
+        )
+        if horizon_for_symbol(plan.symbol, watch) in _HOLD_BOOKS
+    ]
+    if not extras:
+        return decision
+    from app.universe.book_strategy import portfolio_action_from_symbol_actions
+
+    taken = {p.symbol.upper() for p in extras}
+    kept = [p for p in decision.symbol_actions if str(p.symbol).upper() not in taken]
+    merged = kept + extras
+    return decision.model_copy(
+        update={
+            "symbol_actions": merged,
+            "portfolio_action": portfolio_action_from_symbol_actions(merged),
+            "reason_not_to_trade": None,
+            "cash_target_pct": cash_target_after_plans(
+                current_cash_pct=cash_pct,
+                min_cash_pct=min_cash_pct,
+                plans=merged,
+            ),
+        }
     )
-    return decision
 
 
 def reconcile_nameless_entry(decision: CIODecision, *, has_positions: bool) -> CIODecision:

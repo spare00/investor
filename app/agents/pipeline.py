@@ -347,24 +347,28 @@ class AgentPipeline:
                     )
                 except (TypeError, ValueError, AttributeError):
                     continue
-            bar = BarSnapshot(
-                symbol=m.symbol,
-                last=m.last,
-                open=m.open,
-                high=m.high,
-                low=m.low,
-                volume=m.volume,
-                avg_volume_20d=m.avg_volume_20d,
-                atr_14=m.atr_14,
-                rsi_14=m.rsi_14,
-                sma_20=m.sma_20,
-                sma_50=m.sma_50,
-                sma_200=m.sma_200,
-                bid=m.bid,
-                ask=m.ask,
-                premarket_change_pct=m.premarket_change_pct,
-                gap_pct=m.gap_pct,
-                session_history=history,
+            from app.agents.quant_strategist import enrich_bar_indicators
+
+            bar = enrich_bar_indicators(
+                BarSnapshot(
+                    symbol=m.symbol,
+                    last=m.last,
+                    open=m.open,
+                    high=m.high,
+                    low=m.low,
+                    volume=m.volume,
+                    avg_volume_20d=m.avg_volume_20d,
+                    atr_14=m.atr_14,
+                    rsi_14=m.rsi_14,
+                    sma_20=m.sma_20,
+                    sma_50=m.sma_50,
+                    sma_200=m.sma_200,
+                    bid=m.bid,
+                    ask=m.ask,
+                    premarket_change_pct=m.premarket_change_pct,
+                    gap_pct=m.gap_pct,
+                    session_history=history,
+                )
             )
             if m.symbol in index_syms:
                 index_bars.append(bar)
