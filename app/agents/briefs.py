@@ -22,7 +22,13 @@ from app.schemas.market_intelligence import MarketIntelligenceInput, MarketIntel
 from app.schemas.quant_strategist import BarSnapshot, QuantStrategistInput, QuantStrategistOutput
 from app.schemas.risk_manager import RiskManagerInput, RiskManagerOutput
 from app.schemas.universe_manager import UniverseManagerInput
-from app.universe.book_strategy import playbook_cards
+from app.universe.allocation import (
+    CASH_HARD_PCT,
+    CASH_SOFT_PCT,
+    sleeve_ceiling,
+    sleeve_target,
+)
+from app.universe.book_strategy import horizon_for_symbol, playbook_cards
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -321,9 +327,7 @@ def macro_brief(payload: MacroStrategistInput) -> str:
             "gold": m.gold,
             "hy_bps": m.hy_credit_spread_bps,
             "geo": (payload.geopolitical_events or [])[: brief_budget().events],
-            "themes": _clip_obj(
-                payload.market_intelligence_summary, n=brief_budget().events
-            ),
+            "themes": _clip_obj(payload.market_intelligence_summary, n=brief_budget().events),
         }
     )
     return _ask(
@@ -340,9 +344,7 @@ def quant_brief(payload: QuantStrategistInput) -> str:
         "as_of": _iso(payload.as_of),
         "vix": payload.vix,
         "ad": payload.advance_decline,
-        "index": [
-            _bar_row(b, payload.watchlist) for b in payload.index_bars[: budget.index_bars]
-        ],
+        "index": [_bar_row(b, payload.watchlist) for b in payload.index_bars[: budget.index_bars]],
         "symbols": [
             _bar_row(b, payload.watchlist)
             for b in (payload.symbol_bars or payload.index_bars)[: budget.symbols]
@@ -453,6 +455,24 @@ def devil_brief(payload: DevilsAdvocateInput) -> str:
     )
 
 
+def _sleeve_weights(payload: CIOInput) -> dict[str, dict[str, float]]:
+    """Current book weights next to the aim and the band the CIO may use."""
+    used = {name: 0.0 for name in ("scalp", "day", "short", "medium")}
+    for pos in payload.positions or []:
+        horizon = horizon_for_symbol(pos.symbol, payload.watchlist)
+        if horizon not in used:
+            continue
+        used[horizon] += abs(float(pos.weight_pct or 0))
+    return {
+        name: {
+            "w": round(weight, 1),
+            "aim": sleeve_target(name),
+            "max": sleeve_ceiling(name),
+        }
+        for name, weight in used.items()
+    }
+
+
 def cio_brief(payload: CIOInput) -> str:
     budget = brief_budget()
     per_book = None if budget.local else 16
@@ -471,6 +491,9 @@ def cio_brief(payload: CIOInput) -> str:
     data = {
         "as_of": _iso(payload.as_of),
         "cash_pct": payload.portfolio_cash_pct,
+        "cash_aim": CASH_SOFT_PCT,
+        "cash_floor": CASH_HARD_PCT,
+        "sleeves": _sleeve_weights(payload),
         "positions": positions or ["FLAT"],
         "allow": [s.upper() for s in payload.allowlist[: budget.watch]],
         "watch": _watch_rows(payload.watchlist, limit=budget.watch),
@@ -502,14 +525,16 @@ def cio_brief(payload: CIOInput) -> str:
     if payload.recent_lessons:
         data["lessons"] = payload.recent_lessons[: budget.lessons]
     return _ask(
-        "Decide per book. Standing weights: cash 20, scalp 20, day 20, short 20, medium 20. "
+        "You own the size of the whole book. Read sleeves and cash before every buy or sell. "
+        "Each sleeve aims at 20 and may sit a little under or over, up to max. "
+        "Cash aims at 20 and may fall to the floor of 10 so a sleeve can use that buffer. "
+        "Invested book stops at 90. Do not add once a sleeve is at max. "
         "Top a sleeve up only when that book's own setup fires. "
         "Scalp/day stand down in a sideways box and stay underweight. "
         "Medium is the stable index sleeve (SPY, QQQ, Nasdaq/ASX twins): hold for weeks. "
         "Short is single names that can pay within days to two weeks. "
         "100% cash with a valid setup in an underweight sleeve is a miss. "
-        "Cash 20 is a soft buffer a sleeve may spend. Hard floor is 10. "
-        "cash_target falls when you buy and stays at or above 10. "
+        "cash_target falls when you buy and stays at or above the floor. "
         "Take the book target; do not hold a loser hoping for a bounce. "
         "Devil is advisory. Do not repeat negative-signal names "
         "unless the tape is clearly different. "

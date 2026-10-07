@@ -266,7 +266,7 @@ def reconcile_nameless_entry(decision: CIODecision, *, has_positions: bool) -> C
 class CIOAgent(BaseAgent[CIOInput, CIODecision]):
     name = AgentName.CIO
     prompt_file = "system_v1.md"
-    prompt_version = "2.8.0"
+    prompt_version = "2.9.0"
 
     def output_model(self) -> type[CIODecision]:
         return CIODecision

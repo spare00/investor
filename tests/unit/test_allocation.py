@@ -8,6 +8,7 @@ from app.universe.allocation import (
     assigned_horizon,
     deployable_cash_pct,
     entry_notional_pct,
+    sleeve_ceiling,
     sleeve_room,
     sleeve_target,
 )
@@ -39,23 +40,25 @@ def test_cash_between_the_soft_target_and_the_hard_floor_can_fund_a_sleeve() -> 
     assert deployable_cash_pct(cash_pct=100.0, hard_floor_pct=CASH_HARD_PCT) == 90.0
 
 
-def test_a_full_sleeve_has_no_room_for_another_name() -> None:
+def test_a_sleeve_may_sit_a_little_over_or_under_its_aim() -> None:
     assert sleeve_target("medium") == 20.0
-    assert sleeve_room("medium", 10.0) == 10.0
-    assert sleeve_room("medium", 20.0) == 0.0
+    assert sleeve_ceiling("medium") == 25.0
+    assert sleeve_room("medium", 12.0) == 13.0
+    assert sleeve_room("medium", 20.0) == 5.0
+    assert sleeve_room("medium", 25.0) == 0.0
     assert (
         entry_notional_pct(
             horizon="medium",
-            used_pct=12.0,
+            used_pct=20.0,
             max_position_pct=10.0,
             target_size_pct=10.0,
         )
-        == 8.0
+        == 5.0
     )
     assert (
         entry_notional_pct(
             horizon="scalp",
-            used_pct=20.0,
+            used_pct=25.0,
             max_position_pct=10.0,
             target_size_pct=10.0,
         )
