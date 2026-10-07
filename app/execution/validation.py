@@ -276,6 +276,10 @@ class ExecutionValidator:
                 risk_mult=risk_mult,
             )
             qty = float(sizing.shares)
+            target_pct = float(plan.target_position_pct or 0)
+            if target_pct > 0 and price > 0 and portfolio.equity > 0:
+                slot = int((portfolio.equity * target_pct / 100.0) // price)
+                qty = float(min(qty, slot))
             if qty <= 0:
                 return f"{symbol}:sized_to_zero"
             intent = TradeIntent(

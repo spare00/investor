@@ -105,8 +105,13 @@ def test_filter_keeps_hold_books() -> None:
     ]
 
 
-def test_qqq_defaults_to_scalp() -> None:
-    assert horizon_for_symbol("QQQ") == "scalp"
+def test_index_defaults_to_the_medium_sleeve() -> None:
+    assert horizon_for_symbol("QQQ") == "medium"
+    assert horizon_for_symbol("SPY") == "medium"
+    assert horizon_for_symbol("NDQ") == "medium"
+    assert horizon_for_symbol("NVDA") == "scalp"
+    assert horizon_for_symbol("IWM") == "day"
+    assert horizon_for_symbol("BHP") == "short"
     assert playbook_for("scalp") is not None
     assert playbook_for("medium") is not None
     assert playbook_for("medium").label_ko == "중기"
@@ -334,14 +339,15 @@ def test_a_wider_target_lowers_the_bar_it_has_to_clear() -> None:
     # Same 1% stop, but aiming for 2% instead of 0.8%.
     with_wide_target = 0.01 / (0.02 + 0.01)
     assert required_probability("scalp") > with_wide_target
-    assert risk_mult_for_horizon("scalp", firm_risk_pct=0.5) == 0.3
-    assert risk_mult_for_horizon("day", firm_risk_pct=0.5) == 0.3
-    assert risk_mult_for_horizon("short", firm_risk_pct=0.5) == 0.3
+    assert risk_mult_for_horizon("scalp", firm_risk_pct=0.5) == 1.0
+    assert risk_mult_for_horizon("day", firm_risk_pct=0.5) == 1.0
+    assert risk_mult_for_horizon("short", firm_risk_pct=0.5) == 1.0
+    assert risk_mult_for_horizon("medium", firm_risk_pct=0.5) == 1.0
     tight = notional_pct_for_risk(horizon="scalp", entry=100.0, stop=99.0, max_position_pct=15.0)
-    wide = notional_pct_for_risk(horizon="short", entry=100.0, stop=97.0, max_position_pct=15.0)
-    # 0.15% / 1% = 15% raw, capped at scalp 8%. Wider 3% stop → 5% notional.
-    assert tight == 8.0
-    assert wide == 5.0
+    wide = notional_pct_for_risk(horizon="short", entry=100.0, stop=92.0, max_position_pct=15.0)
+    # 0.5% / 1% = 50 raw, capped at the 10% slot. 0.5% / 8% stop = 6.25.
+    assert tight == 10.0
+    assert wide == 6.25
     assert tight > wide
 
 
@@ -511,7 +517,7 @@ def test_cio_fallback_enters_while_holding_when_devil_prefers_no() -> None:
     assert all(a.action != SymbolAction.SCALE_IN for a in out.symbol_actions)
 
 
-def test_ensure_cio_takes_setups_keeps_the_pass() -> None:
+def test_ensure_cio_fills_an_empty_scalp_sleeve() -> None:
     from app.agents.cio import ensure_cio_takes_setups
     from app.schemas.cio import CIODecision
 
@@ -541,10 +547,13 @@ def test_ensure_cio_takes_setups_keeps_the_pass() -> None:
         regime=MarketRegime.RISK_ON,
         max_position_pct=10.0,
         enabled=True,
+        cash_pct=100.0,
+        min_cash_pct=20.0,
     )
-    assert out.portfolio_action == PortfolioAction.NO_TRADE
-    assert out.symbol_actions == []
-    assert out.reason_not_to_trade == "wait for confirmation"
+    assert out.portfolio_action == PortfolioAction.SCALE_IN
+    assert {a.symbol for a in out.symbol_actions} == {"QQQ"}
+    assert out.reason_not_to_trade is None
+    assert out.cash_target_pct == 90.0
     blocked = ensure_cio_takes_setups(
         idle,
         quant=quant,
@@ -557,6 +566,59 @@ def test_ensure_cio_takes_setups_keeps_the_pass() -> None:
         enabled=True,
     )
     assert blocked.portfolio_action == PortfolioAction.NO_TRADE
+
+
+def test_cash_buffer_funds_a_sleeve_down_to_the_hard_floor() -> None:
+    from app.agents.cio import ensure_cio_takes_setups
+    from app.schemas.cio import CIODecision
+
+    quant = QuantStrategistAgent().fallback_output(
+        QuantStrategistInput(
+            as_of=NOW,
+            symbol_bars=[_scalp_bar()],
+            watchlist=[{"symbol": "QQQ", "horizon": "scalp"}],
+        ),
+        reason="local_python_owns",
+    )
+    idle = CIODecision(
+        timestamp=NOW,
+        market_regime=MarketRegime.RISK_ON,
+        portfolio_action=PortfolioAction.NO_TRADE,
+        cash_target_pct=16,
+        risk_approval=True,
+        reason_not_to_trade="cash is the buffer",
+    )
+    out = ensure_cio_takes_setups(
+        idle,
+        quant=quant,
+        watchlist=[{"symbol": "QQQ", "horizon": "scalp"}],
+        positions=[],
+        allowlist=["QQQ"],
+        risk_ok=True,
+        regime=MarketRegime.RISK_ON,
+        max_position_pct=10.0,
+        enabled=True,
+        cash_pct=16.0,
+        min_cash_pct=10.0,
+    )
+    assert {a.symbol for a in out.symbol_actions} == {"QQQ"}
+    assert out.symbol_actions[0].target_position_pct == 6.0
+    assert out.cash_target_pct == 10.0
+    held_at_floor = ensure_cio_takes_setups(
+        idle,
+        quant=quant,
+        watchlist=[{"symbol": "QQQ", "horizon": "scalp"}],
+        positions=[],
+        allowlist=["QQQ"],
+        risk_ok=True,
+        regime=MarketRegime.RISK_ON,
+        max_position_pct=10.0,
+        enabled=True,
+        cash_pct=10.0,
+        min_cash_pct=10.0,
+    )
+    assert held_at_floor.symbol_actions == []
+    assert held_at_floor.cash_target_pct == 16
 
 
 def test_ensure_cio_fills_remaining_slots_when_cash_is_heavy() -> None:
@@ -610,8 +672,12 @@ def test_ensure_cio_fills_remaining_slots_when_cash_is_heavy() -> None:
         min_cash_pct=30.0,
     )
     symbols = {a.symbol for a in out.symbol_actions if a.action == SymbolAction.SCALE_IN}
-    assert symbols == {"QQQ"}
-    assert out.cash_target_pct == 90.0
+    assert symbols == {"QQQ", "SPY"}
+    qqq = next(a for a in out.symbol_actions if a.symbol == "QQQ")
+    spy = next(a for a in out.symbol_actions if a.symbol == "SPY")
+    assert qqq.target_position_pct == 8.0
+    assert spy.target_position_pct == 10.0
+    assert out.cash_target_pct == 72.0
 
 
 def test_cio_deploys_a_rising_short_when_cash_is_the_whole_book() -> None:
@@ -701,8 +767,8 @@ def test_portfolio_action_promotes_hold_when_partial_sell() -> None:
     )
 
 
-def test_ndq_defaults_to_au_scalp() -> None:
-    assert horizon_for_symbol("NDQ") == "scalp"
+def test_ndq_defaults_to_the_medium_sleeve() -> None:
+    assert horizon_for_symbol("NDQ") == "medium"
 
 
 def test_align_blocks_short_reduce_when_swing_holds() -> None:

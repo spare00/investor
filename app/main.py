@@ -196,6 +196,7 @@ async def status() -> dict[str, Any]:
         "risk": {
             "max_position_pct": settings.max_position_pct,
             "min_cash_pct": settings.min_cash_pct,
+            "cash_soft_pct": settings.cash_soft_pct,
             "daily_max_loss_pct": settings.daily_max_loss_pct,
             "max_drawdown_pct": settings.max_drawdown_pct,
         },

@@ -61,20 +61,18 @@ class UniverseService:
         now = utc_now()
         n = 0
 
-        def _horizon_for(sym: str, venue: Venue, index: int) -> str:
+        def _horizon_for(sym: str, venue: Venue, _index: int) -> str:
+            from app.universe.allocation import assigned_horizon
+
+            forced = assigned_horizon(sym)
+            if forced:
+                return forced
             if venue == Venue.AU:
-                if sym == "NDQ":
-                    return UniverseHorizon.SCALP.value
-                if sym in {"VAS", "JPEQ"}:
+                if sym == "JPEQ":
                     return UniverseHorizon.DAY.value
                 return UniverseHorizon.SHORT.value
-            indexes = {"SPY", "QQQ", "IWM", "DIA"}
-            if sym in indexes:
-                return UniverseHorizon.SCALP.value if index < 2 else UniverseHorizon.DAY.value
-            if sym in {"NVDA", "TSLA", "AMD", "META", "AAPL"}:
+            if sym in {"AMD", "AAPL"}:
                 return UniverseHorizon.DAY.value
-            if sym in {"MSFT", "AMZN", "GOOGL", "AVGO"}:
-                return UniverseHorizon.SHORT.value
             return UniverseHorizon.SHORT.value
 
         seed_books: list[tuple[Venue, list[str]]] = [
@@ -119,10 +117,10 @@ class UniverseService:
         return n
 
     async def _repair_seed_horizons(self, rows: list[WatchlistSymbol]) -> int:
-        """Keep AU tape (NDQ) on scalp even if it was seeded as short/day earlier."""
+        """Keep the standing sleeve roster on its book. Held names stay put."""
         from app.models.entities import Position
+        from app.universe.allocation import assigned_horizon
 
-        desired = {"NDQ": UniverseHorizon.SCALP.value}
         held = {
             str(p.symbol or "").upper()
             for p in (await self.session.execute(select(Position))).scalars().all()
@@ -130,17 +128,21 @@ class UniverseService:
         }
         changed = 0
         for row in rows:
-            want = desired.get(str(row.symbol or "").upper())
-            if not want or row.horizon == want:
+            sym = str(row.symbol or "").upper()
+            want = assigned_horizon(sym)
+            if not want or sym in held:
                 continue
-            if str(row.symbol or "").upper() in held:
-                continue
-            if str(row.source or "") not in {"seed", "repair", ""}:
-                continue
-            row.horizon = want
-            row.thesis = f"Seeded into {want} book from AU allowlist"
-            row.source = "seed"
-            changed += 1
+            dirty = False
+            if row.horizon != want:
+                row.horizon = want
+                row.thesis = f"Standing {want} sleeve"
+                dirty = True
+            if row.status != "active":
+                row.status = "active"
+                dirty = True
+            if dirty:
+                row.source = "repair"
+                changed += 1
         return changed
 
     def _default_horizon(self, sym: str) -> str:
@@ -148,17 +150,16 @@ class UniverseService:
 
         name = sym.upper().strip()
         venue = venue_for_universe_symbol(self.settings, name)
+        from app.universe.allocation import assigned_horizon
+
+        forced = assigned_horizon(name)
+        if forced:
+            return forced
         if venue == "AU":
-            if name == "NDQ":
-                return UniverseHorizon.SCALP.value
-            if name in {"VAS", "JPEQ", "IOZ"}:
+            if name == "JPEQ":
                 return UniverseHorizon.DAY.value
             return UniverseHorizon.SHORT.value
-        if name in {"SPY", "QQQ"}:
-            return UniverseHorizon.SCALP.value
-        if name in {"IWM", "DIA"}:
-            return UniverseHorizon.DAY.value
-        if name in {"NVDA", "TSLA", "AMD", "META", "AAPL"}:
+        if name in {"AMD", "AAPL"}:
             return UniverseHorizon.DAY.value
         return UniverseHorizon.SHORT.value
 

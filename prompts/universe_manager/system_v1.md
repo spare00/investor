@@ -12,7 +12,11 @@ Python owns membership (S&P 500 / ASX snapshot, screened, sector-rotated onto th
 
 1. Pick 4–8 industries given regime and themes.
 2. From the current watch pick `focus_symbols` ≤ focus_limit (~10) as next week's working set.
-3. Assign each working name a horizon (scalp / day / short / medium). Medium is for names you would hold for weeks.
+3. Assign each working name a horizon.
+   - medium: stable long-uptrend indexes only (SPY, QQQ, DIA, VAS, IOZ, NDQ). Hold for weeks.
+   - short: single names that can pay within days to two weeks.
+   - day: a same-session trade. Flatten before the close.
+   - scalp: same-day liquid single names (NVDA, TSLA). Never the index sleeve.
 
 Weekday CIO uses the working set with tape/charts. You only run on the weekend review.
 

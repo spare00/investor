@@ -115,7 +115,7 @@ def _drop_empty(row: dict[str, Any]) -> dict[str, Any]:
 def _watch_by_book(
     rows: list[dict] | None, *, limit: int | None = 16, per_book: int | None = 8
 ) -> dict[str, list[str]]:
-    grouped: dict[str, list[str]] = {"scalp": [], "day": [], "short": []}
+    grouped: dict[str, list[str]] = {"scalp": [], "day": [], "short": [], "medium": []}
     for raw in (rows or [])[:limit]:
         if not isinstance(raw, dict):
             continue
@@ -502,11 +502,14 @@ def cio_brief(payload: CIOInput) -> str:
     if payload.recent_lessons:
         data["lessons"] = payload.recent_lessons[: budget.lessons]
     return _ask(
-        "Decide per book. You own cash_target_pct. Risk only guards the cash floor. "
-        "Scalp/day stand down in a sideways box. "
-        "Short/medium: buy a rising name that is not extended and hold it. "
-        "100% cash with that setup is a miss. "
-        "Fill up to 3 new names/book when the tape allows. cash_target falls when you buy. "
+        "Decide per book. Standing weights: cash 20, scalp 20, day 20, short 20, medium 20. "
+        "Top a sleeve up only when that book's own setup fires. "
+        "Scalp/day stand down in a sideways box and stay underweight. "
+        "Medium is the stable index sleeve (SPY, QQQ, Nasdaq/ASX twins): hold for weeks. "
+        "Short is single names that can pay within days to two weeks. "
+        "100% cash with a valid setup in an underweight sleeve is a miss. "
+        "Cash 20 is a soft buffer a sleeve may spend. Hard floor is 10. "
+        "cash_target falls when you buy and stays at or above 10. "
         "Take the book target; do not hold a loser hoping for a bounce. "
         "Devil is advisory. Do not repeat negative-signal names "
         "unless the tape is clearly different. "

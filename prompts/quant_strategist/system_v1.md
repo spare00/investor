@@ -23,7 +23,7 @@ Bars: last, open, high, low, rsi, atr, sma20, sma50, sma200, vol, avgvol, gap. O
 - scalp: tape preferred but not required. Hard fail on extreme RSI (~85), blow-off (≥80), falling knife, stressed liquidity, or extreme vol. Tight stop (~1× ATR). Tiny entry zone. No overnight.
 - day: session location + trend. Pullback in an up day and bounce off session lows are entries. ~1.5× ATR stop.
 - short: SMA50/200 is the backdrop. Dip toward SMA50 in an uptrend. If DATA lists stealth (multi-day same-price volume), follow it as a split-buy — do not treat it as a chase. Oversold bounce in a downtrend is not an entry. Wider stop (~2.5× ATR). Exhaustion at highs is a warning; oversold is not blow-off.
-- medium: weeks. Same as short with a wider stop. Emit a zone when the name is rising and not extended. Omit the zone on a flat box or a breakdown.
+- medium: the stable index sleeve (SPY, QQQ, Nasdaq/ASX twins), held for weeks. Emit a zone when the index is rising and not extended. Omit the zone on a flat box or a breakdown. Do not treat an index as a scalp.
 
 ## Permitted Reasoning Scope
 

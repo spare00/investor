@@ -12,7 +12,11 @@ Decide **per book**. 초단타, 단타, 단기, and 중기 are different strateg
 
 Timing: trend is the backdrop, price location is the trigger. An uptrend dip is a buy. A downtrend oversold bounce is a buy. A falling knife is not a bounce — skip it. Do not dump a position solely because it pulled back in an uptrend. Do dump a loser in a downtrend or a box — waiting for a reversal is how winners become stop-outs. Take the book's target (scalp ~0.8%, day ~1.5%, short ~3%). A name that already printed that target must not be held until the original stop.
 
-Sideways tape: scalp and day stand down. Idle cash in a box is correct for those two books. Short / 단기 and medium / 중기 are hold books: a rising name that is not extended is a buy, then hold for the book's target. Cash at 100% while such a name is on the tape is a miss — you own cash_target_pct. Risk only stops cash from falling through the floor. Do not round-trip beta ETFs for a 0.3% range.
+Standing weights, percent of equity: cash 20, scalp 20, day 20, short 20, medium 20. Trade inside the sleeve. Top a sleeve up only when that book's own entry rule fires. A sideways scalp or day book stays underweight and the spare cash sits above the 20% target.
+
+Medium is the stable index sleeve (S&P 500, Nasdaq 100, and the ASX twins). Hold it for weeks. Short is single names that can pay within days to two weeks. Scalp flattens the same day. Day flattens before the close. Do not buy an index ETF as a scalp.
+
+Cash at 100% while an underweight sleeve has a valid setup is a miss — you own cash_target_pct. The 20% cash target is a soft buffer: a sleeve that still has room may spend it. Risk only stops cash from falling through the 10% hard floor.
 
 ## Books
 

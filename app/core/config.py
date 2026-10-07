@@ -157,13 +157,18 @@ class Settings(BaseSettings):
     starting_cash: float = 25_000.0
     max_position_pct: float = 10.0
     max_sector_pct: float = 30.0
-    max_gross_exposure_pct: float = 70.0
-    # Cap gross exposure within a single venue book (US or AU), as % of equity.
-    max_venue_gross_pct: float = 50.0
+    # Hard cash floor is 10%, so gross may reach 90%. One venue may hold
+    # that book while the other market is closed.
+    max_gross_exposure_pct: float = 90.0
+    max_venue_gross_pct: float = 90.0
     # Static FX for dual-book sizing, e.g. AUDUSD:0.65 (1 AUD = 0.65 USD).
     # Empty → cross-currency new entries hard-veto (currency_mismatch).
     fx_rates: str = ""
-    min_cash_pct: float = 30.0
+    # Hard floor. A buy that would leave less cash than this is vetoed.
+    min_cash_pct: float = 10.0
+    # Preferred cash. The horizon books may use the gap down to min_cash_pct
+    # as a buffer when their own sleeve still has room.
+    cash_soft_pct: float = 20.0
     risk_per_trade_pct: float = 0.5
     daily_max_loss_pct: float = 1.5
     max_drawdown_pct: float = 8.0

@@ -77,8 +77,8 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         overnight_event_strict=True,
         news_lookback_minutes=60,
         selection_notes=(
-            "Ultra-liquid names only; tight spreads; avoid overnight gap risk; "
-            "cut quickly on thesis break; no illiquid small caps."
+            "Same-day liquid single names. Not the index sleeve. "
+            "Tight spreads; flatten before the close; no illiquid small caps."
         ),
         stop_notes="Tight structure/ATR stops (~1× ATR or ~1%); flatten on noise break.",
     ),
@@ -103,8 +103,8 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         overnight_event_strict=True,
         news_lookback_minutes=90,
         selection_notes=(
-            "Intraday catalysts, clean levels, enough volume to enter/exit; "
-            "prefer flatten before close unless overnight thesis is explicit."
+            "Same session, not the index sleeve. Flatten before the close. "
+            "A hold of several days belongs on the short book."
         ),
         stop_notes="Session structure stops (~1.5× ATR or ~1.5%); avoid holding through close.",
     ),
@@ -129,8 +129,8 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         overnight_event_strict=True,
         news_lookback_minutes=180,
         selection_notes=(
-            "Multi-day swings with defined invalidation; tolerate normal noise; "
-            "revalidate on regime/news shifts."
+            "Single names that can pay within about two weeks. Not the index sleeve. "
+            "Tolerate normal noise; revalidate on regime or news shifts."
         ),
         stop_notes=(
             "Wider swing stops (~2.5× ATR or ~3%); overnight ok but flatten/review "
@@ -158,8 +158,8 @@ HORIZON_POLICIES: dict[UniverseHorizon, HorizonPolicy] = {
         overnight_event_strict=False,
         news_lookback_minutes=360,
         selection_notes=(
-            "Theme/regime aligned; wider stops vs noise; size smaller relative to "
-            "volatility; review on weekly structure breaks, not tick noise."
+            "Stable long-uptrend indexes (S&P 500, Nasdaq 100, ASX twins). "
+            "Hold for weeks. Review on a weekly structure break, not tick noise."
         ),
         stop_notes=(
             "Position-style invalidation (~3.5× ATR or ~5%); overnight default; "

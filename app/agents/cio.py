@@ -20,9 +20,9 @@ from app.schemas.common import (
     TraceMetadata,
     TrendState,
 )
+from app.universe.allocation import deployable_cash_pct, entry_notional_pct
 from app.universe.book_strategy import (
     horizon_for_symbol,
-    notional_pct_for_risk,
     playbook_for,
     should_propose_entry,
     tape_from_view,
@@ -35,10 +35,6 @@ _ENTRY_ACTIONS = {
     SymbolAction.SCALE_IN,
 }
 
-# Short and medium are hold books. Scalp and day are not filled from a cash pile.
-_HOLD_BOOKS = frozenset({"short", "medium"})
-_CASH_DRAG_BUFFER_PCT = 10.0
-
 
 def cash_target_after_plans(
     *,
@@ -46,7 +42,7 @@ def cash_target_after_plans(
     min_cash_pct: float,
     plans: list,
 ) -> float:
-    """Cash target falls when we buy. Never below the floor; never freeze at today's pile."""
+    """Cash target falls when we buy. Never below the hard floor; never freeze at today's pile."""
     deployed = 0.0
     for plan in plans or []:
         action = getattr(plan, "action", None)
@@ -68,12 +64,16 @@ def quant_entry_plans(
     allowlist: list[str] | None = None,
     new_counts: dict[str, int] | None = None,
     minutes_to_close: float | None = None,
+    sleeve_used: dict[str, float] | None = None,
+    cash_room_pct: float | None = None,
 ) -> list[SymbolActionPlan]:
-    """Turn Quant views into SCALE_IN plans (playbook + book caps)."""
+    """Turn Quant views into SCALE_IN plans inside each sleeve's budget."""
     allow = {s.upper() for s in (allowlist or []) if s} or None
     held = [s.upper() for s in held_symbols]
     hz_map = {s: horizon_for_symbol(s, watchlist) for s in held}
     new_by_book: dict[str, int] = dict(new_counts or {})
+    used = {str(k): float(v) for k, v in (sleeve_used or {}).items()}
+    cash_left = None if cash_room_pct is None else [float(cash_room_pct)]
     plans: list[SymbolActionPlan] = []
     ranked = sorted(
         views,
@@ -121,12 +121,19 @@ def quant_entry_plans(
         )
         if cap:
             continue
-        size = notional_pct_for_risk(
+        size = entry_notional_pct(
             horizon=hz,
-            entry=float(view.entry_zone.max + view.entry_zone.min) / 2.0,
-            stop=float(view.stop_or_invalidation),
+            used_pct=used.get(hz, 0.0),
             max_position_pct=max_position_pct,
+            target_size_pct=book.target_size_pct,
         )
+        if cash_left is not None:
+            size = round(min(size, cash_left[0]), 2)
+        if size < 1.0:
+            continue
+        used[hz] = used.get(hz, 0.0) + size
+        if cash_left is not None:
+            cash_left[0] = round(cash_left[0] - size, 2)
         from app.universe.entry_attribution import SOURCE_INJECTED, stamp_plan
 
         plan = SymbolActionPlan(
@@ -162,22 +169,26 @@ def ensure_cio_takes_setups(
     max_position_pct: float,
     enabled: bool,
     cash_pct: float = 100.0,
-    min_cash_pct: float = 30.0,
+    min_cash_pct: float = 10.0,
     minutes_to_close: float | None = None,
 ) -> CIODecision:
-    """CIO owns the cash pile. Scalp/day may sit out a box. Short/medium may not.
+    """Top up any sleeve that is under its weight and has its own setup.
 
-    Risk only stops cash from falling through the floor. Leaving the account at
-    100% while a short or medium name is rising and not extended is the CIO
-    skipping that job. A sideways box is still not bought.
+    Scalp and day still stand down in a box. Short and medium still need a
+    rising name that is not extended. The 20% cash target is a buffer: a
+    sleeve with room may spend it. min_cash_pct is the hard floor.
     """
     if not enabled or not risk_ok or not decision.risk_approval:
         return decision
     watch = watchlist or []
     entering = [p for p in decision.symbol_actions if p.action in _ENTRY_ACTIONS]
-    hold_entries = [p for p in entering if horizon_for_symbol(p.symbol, watch) in _HOLD_BOOKS]
-    cash_heavy = float(cash_pct) >= float(min_cash_pct) + _CASH_DRAG_BUFFER_PCT
-    if hold_entries and not cash_heavy:
+    deployed = sum(float(p.target_position_pct or 0) for p in entering)
+    cash_left = round(
+        deployable_cash_pct(cash_pct=float(cash_pct), hard_floor_pct=float(min_cash_pct))
+        - deployed,
+        2,
+    )
+    if cash_left < 1.0:
         return decision
     held = [
         str(p.symbol).upper()
@@ -186,23 +197,31 @@ def ensure_cio_takes_setups(
     ]
     already = {p.symbol.upper() for p in entering}
     new_counts: dict[str, int] = {}
+    used: dict[str, float] = {}
+    for pos in positions or []:
+        if abs(getattr(pos, "quantity", 0) or 0) <= 1e-9:
+            continue
+        hz = horizon_for_symbol(getattr(pos, "symbol", ""), watch)
+        weight = abs(float(getattr(pos, "weight_pct", 0) or 0))
+        if weight <= 0:
+            weight = float(max_position_pct)
+        used[hz] = used.get(hz, 0.0) + weight
     for plan in entering:
         hz = horizon_for_symbol(plan.symbol, watch)
         new_counts[hz] = new_counts.get(hz, 0) + 1
-    extras = [
-        plan
-        for plan in quant_entry_plans(
-            views=list(getattr(quant, "symbol_views", None) or []),
-            watchlist=watch,
-            held_symbols=held + list(already),
-            regime=regime,
-            max_position_pct=max_position_pct,
-            allowlist=allowlist,
-            new_counts=new_counts,
-            minutes_to_close=minutes_to_close,
-        )
-        if horizon_for_symbol(plan.symbol, watch) in _HOLD_BOOKS
-    ]
+        used[hz] = used.get(hz, 0.0) + float(plan.target_position_pct or 0)
+    extras = quant_entry_plans(
+        views=list(getattr(quant, "symbol_views", None) or []),
+        watchlist=watch,
+        held_symbols=held + list(already),
+        regime=regime,
+        max_position_pct=max_position_pct,
+        allowlist=allowlist,
+        new_counts=new_counts,
+        minutes_to_close=minutes_to_close,
+        sleeve_used=used,
+        cash_room_pct=cash_left,
+    )
     if not extras:
         return decision
     from app.universe.book_strategy import portfolio_action_from_symbol_actions

@@ -38,14 +38,20 @@ ACTIVE_STRATEGY_HORIZONS: frozenset[str] = frozenset(
 )
 
 # Used when agents get bars before watchlist context is attached.
+# Index and tape rosters also live in allocation.assigned_horizon.
 _DEFAULT_HORIZON: dict[str, str] = {
-    "SPY": "scalp",
-    "QQQ": "scalp",
+    "SPY": "medium",
+    "QQQ": "medium",
+    "DIA": "medium",
+    "VAS": "medium",
+    "NDQ": "medium",
+    "IOZ": "medium",
+    "NVDA": "scalp",
+    "TSLA": "scalp",
     "IWM": "day",
-    "DIA": "day",
-    "VAS": "day",
-    "NDQ": "scalp",
-    "IOZ": "short",
+    "META": "day",
+    "AMZN": "day",
+    "GOOGL": "day",
     "BHP": "short",
     "CBA": "short",
 }
@@ -65,9 +71,10 @@ class BookPlaybook:
     min_probability: float
     entry_zone_pct: float
     target_pct: float
-    # Concentration cap (notional % of equity). Actual size = risk_budget / stop.
+    # One slot of the 20% sleeve. Two names fill the book. Also the order cap.
     target_size_pct: float
-    # Capital-at-risk target, % of equity. Shares = budget / stop_distance.
+    # Capital-at-risk target, % of equity. 0.5 lets one slot reach the 10% position cap
+    # when the stop is about 5% or tighter.
     risk_budget_pct: float
     require_uptrend: bool
     allow_sideways_momentum: bool
@@ -95,16 +102,15 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         horizon="scalp",
         label_ko="초단타",
         summary=(
-            "Trend is the backdrop; location is the trigger. "
-            "Buy dips in strength and bounces off weakness. "
-            "Haircut chases; skip falling knives / blow-off / stressed / extreme. "
-            "Tight stop, no overnight."
+            "Same-day liquid single names, not the index sleeve. "
+            "Buy dips in strength; skip a box, a chase, and a blow-off. "
+            "Tight stop. Flatten the same day."
         ),
         min_probability=0.50,
         entry_zone_pct=0.0015,
         target_pct=0.008,
-        target_size_pct=8.0,
-        risk_budget_pct=0.15,
+        target_size_pct=10.0,
+        risk_budget_pct=0.50,
         require_uptrend=False,
         allow_sideways_momentum=True,
         require_accelerating=False,
@@ -131,14 +137,15 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         horizon="day",
         label_ko="단타",
         summary=(
-            "Session location + trend. Buy pullbacks in an up day; buy bounces "
-            "off session lows. Do not dump a dip. Flatten before close."
+            "Same session, not the index sleeve. Buy a pullback in an up day. "
+            "Skip a sideways box. Flatten before the close. "
+            "A hold of several days belongs on the short book."
         ),
         min_probability=0.50,
         entry_zone_pct=0.003,
         target_pct=0.015,
         target_size_pct=10.0,
-        risk_budget_pct=0.15,
+        risk_budget_pct=0.50,
         require_uptrend=False,
         allow_sideways_momentum=True,
         require_accelerating=False,
@@ -165,16 +172,15 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         horizon="short",
         label_ko="단기",
         summary=(
-            "Swing trend is the backdrop. Buy dips toward SMA50 in an uptrend, "
-            "or follow multi-day same-price accumulation (split institutional bids). "
-            "Do not buy oversold bounces in a downtrend. Overnight ok. "
-            "Size from risk budget."
+            "Single names that can pay within days to about two weeks. "
+            "Not the index sleeve. Buy a dip in an uptrend. "
+            "Do not buy an oversold bounce in a downtrend. Hold overnight."
         ),
         min_probability=0.48,
         entry_zone_pct=0.008,
         target_pct=0.03,
         target_size_pct=10.0,
-        risk_budget_pct=0.15,
+        risk_budget_pct=0.50,
         require_uptrend=False,
         allow_sideways_momentum=True,
         require_accelerating=False,
@@ -201,15 +207,15 @@ PLAYBOOKS: dict[str, BookPlaybook] = {
         horizon="medium",
         label_ko="중기",
         summary=(
-            "Hold a name that is already rising and not extended. "
-            "Weeks, not a same-day round trip. Wider stop. "
-            "Sell a break of the trend, not a quiet pullback."
+            "Stable long-uptrend indexes (S&P 500, Nasdaq 100, ASX twins). "
+            "Hold for weeks. Buy a rise that is not extended. "
+            "Sell a trend break, not a quiet day."
         ),
         min_probability=0.52,
         entry_zone_pct=0.015,
         target_pct=0.06,
-        target_size_pct=12.0,
-        risk_budget_pct=0.20,
+        target_size_pct=10.0,
+        risk_budget_pct=0.50,
         require_uptrend=False,
         allow_sideways_momentum=False,
         require_accelerating=False,
@@ -264,6 +270,11 @@ def horizon_for_symbol(symbol: str, watchlist: list[dict] | None = None) -> str:
         hz = str(row.get("horizon") or "").strip().lower()
         if hz:
             return hz
+    from app.universe.allocation import assigned_horizon
+
+    forced = assigned_horizon(sym)
+    if forced:
+        return forced
     return _DEFAULT_HORIZON.get(sym, UniverseHorizon.SHORT.value)
 
 

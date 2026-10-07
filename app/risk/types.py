@@ -40,9 +40,9 @@ class RiskLimits:
     starting_cash: float = 25_000.0
     max_position_pct: float = 10.0
     max_sector_pct: float = 30.0
-    max_gross_exposure_pct: float = 70.0
-    max_venue_gross_pct: float = 50.0
-    min_cash_pct: float = 30.0
+    max_gross_exposure_pct: float = 90.0
+    max_venue_gross_pct: float = 90.0
+    min_cash_pct: float = 10.0
     risk_per_trade_pct: float = 0.5
     daily_max_loss_pct: float = 1.5
     max_drawdown_pct: float = 8.0

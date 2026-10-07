@@ -95,7 +95,7 @@ async def test_promoted_candidate_is_entry_eligible(session: AsyncSession) -> No
 
 
 @pytest.mark.asyncio
-async def test_au_seed_puts_ndq_on_scalp(session: AsyncSession) -> None:
+async def test_au_seed_puts_indexes_on_the_medium_sleeve(session: AsyncSession) -> None:
     from sqlalchemy import select
 
     from app.models import WatchlistSymbol
@@ -113,8 +113,9 @@ async def test_au_seed_puts_ndq_on_scalp(session: AsyncSession) -> None:
         r.symbol: r.horizon
         for r in (await session.execute(select(WatchlistSymbol))).scalars().all()
     }
-    assert rows.get("NDQ") == "scalp"
-    assert rows.get("VAS") == "day"
+    assert rows.get("NDQ") == "medium"
+    assert rows.get("VAS") == "medium"
+    assert rows.get("SPY") == "medium"
     assert rows.get("BHP") == "short"
 
 
@@ -212,7 +213,7 @@ async def test_collection_uses_watch_setups_not_seed(session: AsyncSession) -> N
     )
     svc = UniverseService(session, settings=settings)
     await svc.ensure_seeded()
-    now = datetime(2026, 9, 28, 4, 0, tzinfo=UTC)
+    now = datetime.now(UTC)
     for sym, horizon in (("PLTR", "day"), ("BAD", "day"), ("NVDA", "day")):
         session.add(
             WatchlistSymbol(
